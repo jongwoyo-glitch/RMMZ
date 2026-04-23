@@ -20,7 +20,7 @@
                     <button class="projectPickerBtn" style="flex:1;" onclick="document.getElementById('projectInput').click()">
                         로컬 폴더
                     </button>
-                    <button class="projectPickerBtn" id="btnGitHubMode" style="flex:1;background:#24292e;" onclick="UI._showGitHubLogin()">
+                    <button class="projectPickerBtn" id="btnGitHubMode" style="flex:1;background:#24292e;" onclick="var p=document.getElementById('githubLoginPanel');if(p){p.style.display=p.style.display==='block'?'none':'block';if(window.GitHubAdapter&&GitHubAdapter.loadConfig){GitHubAdapter.loadConfig().then(function(c){if(c){if(c.owner&&c.repo)document.getElementById('ghRepo').value=c.owner+'/'+c.repo;if(c.branch)document.getElementById('ghBranch').value=c.branch;if(c.token)document.getElementById('ghToken').value=c.token;}});}}">
                         GitHub
                     </button>
                 </div>
@@ -37,7 +37,7 @@
                         <input type="checkbox" id="ghRemember" checked>
                         <label for="ghRemember" style="font-size:0.75em;color:#888;">이 브라우저에 기억하기</label>
                     </div>
-                    <button onclick="UI._connectGitHub()" style="width:100%;padding:8px;background:#238636;border:none;border-radius:6px;color:#fff;font-weight:bold;cursor:pointer;">연결</button>
+                    <button onclick="(window.UI||UI)._connectGitHub()" style="width:100%;padding:8px;background:#238636;border:none;border-radius:6px;color:#fff;font-weight:bold;cursor:pointer;">연결</button>
                     <div id="ghError" style="color:#f85149;font-size:0.8em;margin-top:8px;display:none;"></div>
                 </div>
                 <div id="progressBar">
