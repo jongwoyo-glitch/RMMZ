@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RMMZ Event Editor</title>
+<style>
+:root {
+  --bg-dark: #1a1a2e;
+  --bg-panel: #16213e;
+  --bg-card: #0f3460;
+  --bg-input: #1a1a3e;
+  --accent: #e94560;
+  --accent2: #533483;
+  --text: #e0e0e0;
+  --text-dim: #8899aa;
+  --text-bright: #ffffff;
+  --border: #2a3a5e;
+  --success: #4ecca3;
+  --warning: #f5a623;
+  --rmmz-window: rgba(0, 0, 32, 0.85);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI','Malgun Gothic',sans-serif; background:var(--bg-dark); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+/* ---- PROJECT SELECTOR SCREEN ---- */
+#project-screen { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; gap:24px; }
+#project-screen h1 { font-size:28px; color:var(--text-bright); }
+#project-screen p { color:var(--text-dim); font-size:14px; max-width:500px; text-align:center; line-height:1.6; }
+#project-screen .project-btn { padding:14px 32px; font-size:16px; background:var(--accent); border:none; color:#fff; border-radius:8px; cursor:pointer; transition:all 0.2s; }
+#project-screen .project-btn:hover { background:#ff5577; transform:scale(1.03); }
+#project-name-display { font-size:16px; color:var(--success); display:none; }
+#recent-projects { margin-top:12px; }
+#recent-projects h3 { font-size:13px; color:var(--text-dim); margin-bottom:8px; }
+.recent-item { padding:8px 16px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; margin-bottom:4px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; }
+.recent-item:hover { border-color:var(--accent); }
+.recent-item .path { color:var(--text-dim); font-size:11px; }
+
+/* ---- EDITOR SCREEN (hidden until project loaded) ---- */
+#editor-screen { display:none; flex-direction:column; height:100vh; }
+
+header { background:linear-gradient(135deg,var(--bg-panel),var(--accent2)); padding:8px 20px; display:flex; align-items:center; gap:16px; border-bottom:2px solid var(--accent); }
+header h1 { font-size:16px; color:var(--text-bright); }
+header .project-info { font-size:12px; color:var(--text-dim); background:rgba(0,0,0,0.3); padding:3px 10px; border-radius:10px; cursor:pointer; }
+header .project-info:hover { color:var(--text); }
+header .toolbar { display:flex; gap:8px; margin-left:auto; }
+
+.btn { padding:6px 14px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); border-radius:4px; cursor:pointer; font-size:13px; transition:all 0.15s; }
+.btn:hover { background:var(--accent2); border-color:var(--accent); }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.primary:hover { background:#ff5577; }
+.btn.success { background:var(--success); border-color:var(--success); color:#111; }
+.btn.small { padding:3px 8px; font-size:12px; }
+
+#main { display:flex; flex:1; overflow:hidden; }
+
+/* Editor Panel */
+#editor-panel { width:340px; min-width:280px; background:var(--bg-panel); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+.panel-header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.panel-header h2 { font-size:14px; color:var(--text-bright); }
+#cmd-list { flex:1; overflow-y:auto; padding:4px; }
+.cmd-item { padding:6px 10px; margin:2px 0; border-radius:4px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:6px; border:1px solid transparent; transition:all 0.1s; }
+.cmd-item:hover { background:rgba(255,255,255,0.05); }
+.cmd-item.selected { background:var(--bg-card); border-color:var(--accent); }
+.cmd-item .cmd-text { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cmd-item .cmd-actions { display:none; gap:2px; }
+.cmd-item:hover .cmd-actions,.cmd-item.selected .cmd-actions { display:flex; }
+
+/* Props Panel */
+#props-panel { width:340px; min-width:280px; background:var(--bg-panel); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+#props-content { flex:1; overflow-y:auto; padding:14px; }
+.prop-group { margin-bottom:14px; }
+.prop-label { font-size:12px; color:var(--text-dim); margin-bottom:4px; display:block; }
+.prop-input { width:100%; padding:6px 10px; background:var(--bg-input); border:1px solid var(--border); color:var(--text); border-radius:4px; font-size:13px; }
+.prop-input:focus { outline:none; border-color:var(--accent); }
+textarea.prop-input { resize:vertical; min-height:80px; font-family:inherit; }
+
+/* Face Picker */
+.face-picker { display:flex; gap:8px; align-items:center; }
+.face-preview { width:72px; height:72px; border:2px solid var(--border); border-radius:4px; background:var(--bg-input); cursor:pointer; overflow:hidden; }
+.face-preview img,.face-preview canvas { width:100%; height:100%; image-rendering:pixelated; }
+.face-preview:hover { border-color:var(--accent); }
+.face-none { display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-dim); height:100%; }
+
+/* Modals */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; display:none; align-items:center; justify-content:center; }
+.modal-overlay.active { display:flex; }
+.modal { background:var(--bg-panel); border:2px solid var(--accent); border-radius:8px; padding:20px; max-width:650px; max-height:80vh; overflow-y:auto; }
+.modal h3 { margin-bottom:12px; color:var(--text-bright); }
+.face-sheet-section { margin-bottom:16px; }
+.face-sheet-section .sheet-name { font-size:12px; color:var(--text-dim); margin-bottom:6px; }
+.face-grid { display:grid; grid-template-columns:repeat(4,72px); gap:4px; }
+.face-cell { width:72px; height:72px; border:2px solid var(--border); border-radius:3px; cursor:pointer; overflow:hidden; }
+.face-cell:hover { border-color:var(--accent); transform:scale(1.05); }
+.face-cell.selected { border-color:var(--success); box-shadow:0 0 8px var(--success); }
+.face-cell canvas { width:72px; height:72px; }
+
+/* Preview Panel */
+#preview-panel { flex:1; background:#111; display:flex; flex-direction:column; }
+.preview-controls { display:flex; gap:6px; align-items:center; }
+#preview-container { flex:1; display:flex; align-items:center; justify-content:center; padding:20px; background:#0a0a0a; }
+#game-screen { width:816px; height:624px; background:#222; position:relative; overflow:hidden; transform-origin:center; border:2px solid #333; }
+#game-screen.scaled { transform:scale(var(--preview-scale,0.75)); }
+
+/* RMMZ Message Window */
+.msg-window { position:absolute; left:4px; right:4px; height:168px; padding:12px; display:none; }
+.msg-window.bottom { bottom:4px; }
+.msg-window.middle { top:228px; }
+.msg-window.top { top:4px; }
+.msg-window .window-bg { position:absolute; inset:0; background:var(--rmmz-window); border:3px solid rgba(68,136,204,0.6); border-radius:4px; }
+.msg-window .window-bg::after { content:''; position:absolute; inset:3px; border:1px solid rgba(68,136,204,0.3); border-radius:2px; }
+.msg-window.bg-dim .window-bg { background:rgba(0,0,0,0.75); border-color:transparent; }
+.msg-window.bg-dim .window-bg::after { display:none; }
+.msg-window.bg-transparent .window-bg { background:transparent; border-color:transparent; }
+.msg-window.bg-transparent .window-bg::after { display:none; }
+.msg-content { position:relative; display:flex; gap:14px; height:100%; }
+.msg-face { width:144px; height:144px; flex-shrink:0; image-rendering:pixelated; }
+.msg-face canvas { width:144px; height:144px; }
+.msg-text-area { flex:1; display:flex; flex-direction:column; justify-content:flex-start; padding-top:4px; }
+.msg-text { font-size:26px; line-height:1.5; color:#fff; white-space:pre-wrap; text-shadow:1px 1px 2px rgba(0,0,0,0.8); }
+
+/* Choice Window */
+.choice-window { position:absolute; right:4px; display:none; min-width:200px; }
+.choice-window .window-bg { position:absolute; inset:0; background:var(--rmmz-window); border:3px solid rgba(68,136,204,0.6); border-radius:4px; }
+.choice-window .window-bg::after { content:''; position:absolute; inset:3px; border:1px solid rgba(68,136,204,0.3); border-radius:2px; }
+.choice-list { position:relative; padding:12px 16px; }
+.choice-item { font-size:24px; color:#fff; padding:6px 12px; text-shadow:1px 1px 2px rgba(0,0,0,0.8); cursor:pointer; }
+.choice-item.highlighted { background:rgba(255,255,255,0.15); border-radius:3px; }
+
+/* Command Picker */
+#cmd-picker .cmd-category { margin-bottom:14px; }
+#cmd-picker .cmd-category h4 { font-size:12px; color:var(--accent); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+#cmd-picker .cmd-option { padding:8px 12px; cursor:pointer; border-radius:4px; font-size:13px; }
+#cmd-picker .cmd-option:hover { background:var(--bg-card); }
+#cmd-picker .cmd-option .cmd-desc { font-size:11px; color:var(--text-dim); margin-top:2px; }
+
+/* Export */
+#export-panel { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:200; align-items:center; justify-content:center; }
+#export-panel.active { display:flex; }
+#export-panel .modal { width:700px; max-height:85vh; }
+#export-json { width:100%; height:400px; background:#0d1117; color:#7ee787; border:1px solid var(--border); border-radius:4px; font-family:'Consolas',monospace; font-size:12px; padding:12px; resize:vertical; }
+
+/* Event settings */
+.event-settings { padding:10px 14px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.2); }
+.event-settings .row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+.event-settings .row:last-child { margin-bottom:0; }
+.event-settings label { font-size:12px; color:var(--text-dim); min-width:60px; }
+.event-settings input,.event-settings select { padding:3px 8px; background:var(--bg-input); border:1px solid var(--border); color:var(--text); border-radius:3px; font-size:12px; }
+.event-settings input:focus,.event-settings select:focus { outline:none; border-color:var(--accent); }
+.event-settings input[type=number] { width:60px; }
+
+/* Toast */
+.toast { position:fixed; bottom:20px; right:20px; padding:10px 20px; background:var(--success); color:#111; border-radius:6px; font-size:13px; z-index:999; opacity:0; transition:opacity 0.3s; pointer-events:none; }
+.toast.show { opacity:1; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:8px; }
+::-webkit-scrollbar-track { background:var(--bg-dark); }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+
+/* Loading Bar */
+#loading-area { display:none; width:400px; text-align:center; }
+#loading-area.active { display:block; }
+#loading-bar-wrap { width:100%; height:22px; background:var(--bg-input); border:1px solid var(--border); border-radius:11px; overflow:hidden; position:relative; margin-bottom:8px; }
+#loading-bar-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:11px; transition:width 0.25s ease; }
+#loading-bar-pct { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:bold; color:var(--text-bright); text-shadow:0 1px 3px rgba(0,0,0,0.7); }
+#loading-status { font-size:13px; color:var(--text-dim); margin-top:6px; min-height:20px; }
+#loading-detail { font-size:11px; color:var(--text-dim); margin-top:2px; opacity:0.7; min-height:16px; }
+</style>
+</head>
+<body>
+
+<!-- ================ PROJECT SELECTOR ================ -->
+<div id="project-screen">
+  <h1>RMMZ Event Editor</h1>
+  <p>RPG Maker MZ 프로젝트 폴더를 선택하세요.<br>
+    프로젝트 내의 페이스칩, 액터, 아이템 등의 데이터를 자동으로 읽어옵니다.</p>
+  <button class="project-btn" onclick="document.getElementById('folder-input').click()">
+    📁 프로젝트 폴더 선택
+  </button>
+  <input type="file" id="folder-input" webkitdirectory style="display:none" onchange="onFolderSelected(this)">
+  <div id="loading-area">
+    <div id="loading-bar-wrap">
+      <div id="loading-bar-fill"></div>
+      <div id="loading-bar-pct">0%</div>
+    </div>
+    <div id="loading-status"></div>
+    <div id="loading-detail"></div>
+  </div>
+  <div id="recent-projects"></div>
+</div>
+
+<!-- ================ EDITOR SCREEN ================ -->
+<div id="editor-screen">
+  <header>
+    <h1>RMMZ Event Editor</h1>
+    <span class="project-info" id="header-project-name" onclick="backToProjectSelect()" title="프로젝트 변경">📁 (프로젝트명)</span>
+    <div class="toolbar">
+      <button class="btn" onclick="importJSON()">JSON 불러오기</button>
+      <button class="btn primary" onclick="showExport()">JSON 내보내기</button>
+    </div>
+  </header>
+  <div id="main">
+    <div id="editor-panel">
+      <div class="event-settings">
+        <div class="row">
+          <label>이벤트명</label>
+          <input type="text" id="ev-name" value="EV001" style="flex:1">
+        </div>
+        <div class="row">
+          <label>트리거</label>
+          <select id="ev-trigger">
+            <option value="0">결정 버튼</option>
+            <option value="1">플레이어 접촉</option>
+            <option value="2">이벤트 접촉</option>
+            <option value="3">자동 실행</option>
+            <option value="4">병렬 처리</option>
+          </select>
+          <label style="margin-left:8px">위치</label>
+          <input type="number" id="ev-x" value="8" min="0" style="width:45px">
+          <input type="number" id="ev-y" value="6" min="0" style="width:45px">
+        </div>
+      </div>
+      <div class="panel-header">
+        <h2>커맨드 목록</h2>
+        <button class="btn small primary" onclick="showCmdPicker()">+ 추가</button>
+      </div>
+      <div id="cmd-list"></div>
+    </div>
+    <div id="props-panel">
+      <div class="panel-header"><h2>속성</h2></div>
+      <div id="props-content">
+        <p style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">커맨드를 선택하세요</p>
+      </div>
+    </div>
+    <div id="preview-panel">
+      <div class="panel-header">
+        <h2>미리보기</h2>
+        <div class="preview-controls">
+          <button class="btn small" onclick="previewReset()">⏮</button>
+          <button class="btn small" onclick="previewPrev()">◀</button>
+          <button class="btn small primary" onclick="previewNext()">▶ 다음</button>
+          <button class="btn small" onclick="previewAutoPlay()" id="btn-autoplay">⏩</button>
+          <span id="preview-step" style="font-size:12px;color:var(--text-dim);margin-left:8px"></span>
+        </div>
+      </div>
+      <div id="preview-container">
+        <div id="game-screen" class="scaled">
+          <div id="game-bg" style="width:100%;height:100%;background:#222;display:flex;align-items:center;justify-content:center">
+            <span style="color:#555;font-size:14px">게임 화면 (816×624)</span>
+          </div>
+          <div class="msg-window bottom" id="msg-window">
+            <div class="window-bg"></div>
+            <div class="msg-content">
+              <div class="msg-face" id="msg-face" style="display:none"><canvas width="144" height="144"></canvas></div>
+              <div class="msg-text-area"><div class="msg-text" id="msg-text"></div></div>
+            </div>
+          </div>
+          <div class="choice-window" id="choice-window">
+            <div class="window-bg"></div>
+            <div class="choice-list" id="choice-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================ MODALS ================ -->
+<!-- Command Picker -->
+<div class="modal-overlay" id="cmd-picker-modal">
+  <div class="modal" style="width:480px" id="cmd-picker">
+    <h3>커맨드 추가</h3>
+    <div class="cmd-category"><h4>메시지</h4>
+      <div class="cmd-option" onclick="addCmd('showText')">💬 텍스트 표시<div class="cmd-desc">대화 메시지 (페이스칩, 배경, 위치)</div></div>
+      <div class="cmd-option" onclick="addCmd('showChoices')">🔀 선택지 표시<div class="cmd-desc">플레이어에게 선택지 제시</div></div>
+      <div class="cmd-option" onclick="addCmd('showScrollingText')">📜 스크롤 텍스트<div class="cmd-desc">오프닝/엔딩용 스크롤 텍스트</div></div>
+    </div>
+    <div class="cmd-category"><h4>게임 진행</h4>
+      <div class="cmd-option" onclick="addCmd('controlSwitches')">🔲 스위치 조작<div class="cmd-desc">게임 스위치 ON/OFF</div></div>
+      <div class="cmd-option" onclick="addCmd('controlVariables')">📊 변수 조작<div class="cmd-desc">게임 변수 값 설정</div></div>
+      <div class="cmd-option" onclick="addCmd('conditionalBranch')">🔀 조건 분기<div class="cmd-desc">조건에 따라 처리 분기</div></div>
+      <div class="cmd-option" onclick="addCmd('changeItems')">🎒 아이템 증감<div class="cmd-desc">아이템 추가/제거</div></div>
+      <div class="cmd-option" onclick="addCmd('changeGold')">💰 소지금 증감<div class="cmd-desc">소지금 증가/감소</div></div>
+    </div>
+    <div class="cmd-category"><h4>이동</h4>
+      <div class="cmd-option" onclick="addCmd('transferPlayer')">🚪 장소 이동<div class="cmd-desc">다른 맵으로 이동</div></div>
+    </div>
+    <div class="cmd-category"><h4>화면/연출</h4>
+      <div class="cmd-option" onclick="addCmd('fadeout')">⬛ 페이드아웃</div>
+      <div class="cmd-option" onclick="addCmd('fadein')">⬜ 페이드인</div>
+      <div class="cmd-option" onclick="addCmd('wait')">⏳ 대기</div>
+      <div class="cmd-option" onclick="addCmd('shakeScreen')">📳 화면 흔들기</div>
+    </div>
+    <div class="cmd-category"><h4>오디오</h4>
+      <div class="cmd-option" onclick="addCmd('playBgm')">🎵 BGM 재생</div>
+      <div class="cmd-option" onclick="addCmd('playSe')">🔊 SE 재생</div>
+    </div>
+    <div class="cmd-category"><h4>전투</h4>
+      <div class="cmd-option" onclick="addCmd('battleProcessing')">⚔️ 전투 처리</div>
+    </div>
+    <div class="cmd-category"><h4>기타</h4>
+      <div class="cmd-option" onclick="addCmd('comment')">📝 주석</div>
+      <div class="cmd-option" onclick="addCmd('label')">🏷 라벨</div>
+      <div class="cmd-option" onclick="addCmd('jumpToLabel')">↩ 라벨로 이동</div>
+    </div>
+    <div style="text-align:right;margin-top:12px"><button class="btn" onclick="closeCmdPicker()">닫기</button></div>
+  </div>
+</div>
+
+<!-- Face Picker -->
+<div class="modal-overlay" id="face-picker-modal">
+  <div class="modal" style="width:640px">
+    <h3>페이스칩 선택</h3>
+    <button class="btn small" onclick="selectFace('',0)" style="margin-bottom:12px">없음 (제거)</button>
+    <div id="face-grid-container"></div>
+    <div style="text-align:right;margin-top:12px"><button class="btn" onclick="closeFacePicker()">닫기</button></div>
+  </div>
+</div>
+
+<!-- Export -->
+<div id="export-panel">
+  <div class="modal">
+    <h3 style="margin-bottom:12px">이벤트 JSON</h3>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Map JSON의 events 배열에 삽입하거나, Claude에게 전달하세요.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn small" onclick="copyExport('commands')">커맨드만 복사</button>
+      <button class="btn small primary" onclick="copyExport('full')">전체 이벤트 복사</button>
+    </div>
+    <textarea id="export-json" readonly></textarea>
+    <div style="text-align:right;margin-top:12px"><button class="btn" onclick="closeExport()">닫기</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ================================================================
+// PROJECT LOADING
+// ================================================================
+let projectData = { name:'', actors:[], items:[], troops:[], faceSheets:[], faceImages:{} };
+
+// Loading UI helpers
+function setLoading(pct, status, detail) {
+  const area = document.getElementById('loading-area');
+  area.classList.add('active');
+  document.getElementById('loading-bar-fill').style.width = pct + '%';
+  document.getElementById('loading-bar-pct').textContent = Math.round(pct) + '%';
+  if (status !== undefined) document.getElementById('loading-status').textContent = status;
+  if (detail !== undefined) document.getElementById('loading-detail').textContent = detail;
+}
+
+async function onFolderSelected(input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
+
+  setLoading(0, '프로젝트 검증 중...', 'game.rmmzproject 파일 탐색');
+
+  // Detect project root
+  const rmmzFile = files.find(f => f.name === 'game.rmmzproject');
+  if (!rmmzFile) {
+    alert('유효한 RMMZ 프로젝트를 찾을 수 없습니다.\ngame.rmmzproject 파일이 포함된 폴더를 선택하세요.');
+    document.getElementById('loading-area').classList.remove('active');
+    return;
+  }
+
+  setLoading(5, '파일 목록 구성 중...', `총 ${files.length}개 파일 스캔`);
+
+  // Build file lookup
+  const rootPrefix = rmmzFile.webkitRelativePath.split('/').slice(0, -1).join('/');
+  const fileMap = {};
+  for (const f of files) {
+    const rel = f.webkitRelativePath.substring(rootPrefix.length + 1);
+    fileMap[rel] = f;
+  }
+  projectData.name = rootPrefix.split('/').pop() || 'Project';
+
+  setLoading(10, '프로젝트 데이터 로딩 중...', `${projectData.name} — Actors.json 읽는 중`);
+  await new Promise(r => setTimeout(r, 50)); // yield to UI
+
+  // Load JSON data files one by one with progress
+  async function loadJson(path) {
+    const file = fileMap[path];
+    if (!file) return null;
+    try { return JSON.parse(await file.text()); } catch(e) { return null; }
+  }
+
+  setLoading(15, '데이터 로딩: Actors.json', 'data/Actors.json');
+  const actorsRaw = await loadJson('data/Actors.json');
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(22, '데이터 로딩: Items.json', 'data/Items.json');
+  const itemsRaw = await loadJson('data/Items.json');
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(29, '데이터 로딩: Troops.json', 'data/Troops.json');
+  const troopsRaw = await loadJson('data/Troops.json');
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(36, '데이터 로딩: System.json', 'data/System.json');
+  const systemRaw = await loadJson('data/System.json');
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(42, '데이터 파싱 중...', '액터, 아이템, 적 그룹 정리');
+  projectData.actors = (actorsRaw||[]).filter(a=>a).map(a=>({id:a.id,name:a.name,face:a.faceName,fi:a.faceIndex}));
+  projectData.items = (itemsRaw||[]).filter(i=>i&&i.name&&!i.name.startsWith('---')&&i.name.trim()).map(i=>({id:i.id,name:i.name}));
+  projectData.troops = (troopsRaw||[]).filter(t=>t&&t.name).map(t=>({id:t.id,name:t.name}));
+
+  // Load face images with individual progress
+  projectData.faceSheets = [];
+  projectData.faceImages = {};
+  const faceFiles = Object.keys(fileMap).filter(k => k.startsWith('img/faces/') && k.endsWith('.png'));
+  const totalFaces = faceFiles.length;
+
+  setLoading(45, `페이스칩 로딩 중... (0/${totalFaces})`, '이미지 파일 준비');
+  await new Promise(r => setTimeout(r, 30));
+
+  let faceLoaded = 0;
+  const faceLoadPromises = faceFiles.map(path => {
+    const name = path.replace('img/faces/','').replace('.png','');
+    projectData.faceSheets.push(name);
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          projectData.faceImages[name] = img;
+          faceLoaded++;
+          const facePct = 45 + (faceLoaded / totalFaces) * 45; // 45% ~ 90%
+          setLoading(facePct, `페이스칩 로딩 중... (${faceLoaded}/${totalFaces})`, `img/faces/${name}.png`);
+          resolve();
+        };
+        img.onerror = () => { faceLoaded++; resolve(); };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(fileMap[path]);
+    });
+  });
+  await Promise.all(faceLoadPromises);
+  projectData.faceSheets.sort();
+
+  setLoading(92, '에디터 초기화 중...', 'UI 구성 준비');
+  await new Promise(r => setTimeout(r, 100));
+
+  setLoading(100, `${projectData.name} 로드 완료!`,
+    `액터 ${projectData.actors.length}명 · 아이템 ${projectData.items.length}개 · 적그룹 ${projectData.troops.length}개 · 페이스 ${totalFaces}장`);
+
+  // Switch to editor
+  setTimeout(() => {
+    document.getElementById('project-screen').style.display = 'none';
+    document.getElementById('editor-screen').style.display = 'flex';
+    document.getElementById('header-project-name').textContent = '📁 ' + projectData.name;
+    renderCmdList();
+    updatePreviewStep();
+    updatePreviewScale();
+  }, 500);
+}
+
+function backToProjectSelect() {
+  if (!confirm('프로젝트 선택 화면으로 돌아갑니까?\n현재 작업 내용은 유지됩니다.')) return;
+  document.getElementById('editor-screen').style.display = 'none';
+  document.getElementById('project-screen').style.display = 'flex';
+}
+
+// ================================================================
+// FACE IMAGE HELPERS
+// ================================================================
+function drawFace(canvas, faceName, faceIndex) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const img = projectData.faceImages[faceName];
+  if (!img) return;
+  const sw=144, sh=144;
+  const sx=(faceIndex%4)*sw, sy=Math.floor(faceIndex/4)*sh;
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+}
+
+// ================================================================
+// STATE
+// ================================================================
+let commands = [];
+let selectedIdx = -1;
+let insertAfterIdx = -1;
+let previewState = { step:-1, autoPlay:false };
+let currentFaceCallback = null;
+let cmdIdCounter = 0;
+function newId() { return ++cmdIdCounter; }
+
+// ================================================================
+// COMMAND FACTORY
+// ================================================================
+function createCmd(type) {
+  const id = newId();
+  const defaults = {
+    showText: { faceName:'',faceIndex:0,background:0,positionType:2,lines:[''] },
+    showChoices: { choices:['선택1','선택2'],cancelType:-2,branches:[[],[]] },
+    showScrollingText: { speed:2,noFast:false,lines:[''] },
+    controlSwitches: { startId:1,endId:1,value:0 },
+    controlVariables: { startId:1,endId:1,operationType:0,operand:0,value:0 },
+    conditionalBranch: { condType:0,switchId:1,switchValue:0,hasElse:true,trueBranch:[],falseBranch:[] },
+    transferPlayer: { mapId:1,x:0,y:0,direction:0,fadeType:0 },
+    fadeout: {},
+    fadein: {},
+    wait: { frames:60 },
+    shakeScreen: { power:5,speed:5,duration:60,waitForCompletion:true },
+    playBgm: { name:'',volume:90,pitch:100,pan:0 },
+    playSe: { name:'',volume:90,pitch:100,pan:0 },
+    battleProcessing: { troopId:(projectData.troops[0]?.id||1),canEscape:true,canLose:false },
+    comment: { text:'' },
+    label: { name:'' },
+    jumpToLabel: { name:'' },
+    changeItems: { itemId:(projectData.items[0]?.id||1),operation:0,operandType:0,value:1 },
+    changeGold: { operation:0,operandType:0,value:100 },
+  };
+  return { id, type, ...(defaults[type]||{}) };
+}
+
+function cmdDisplayText(cmd) {
+  const map = {
+    showText: () => { const f=cmd.faceName?`[${cmd.faceName}:${cmd.faceIndex}] `:''; return `💬 ${f}${cmd.lines.join(' ').substring(0,35)||'(비어있음)'}`; },
+    showChoices: () => `🔀 선택지: ${cmd.choices.join(', ')}`,
+    showScrollingText: () => `📜 스크롤: ${cmd.lines.join(' ').substring(0,30)}`,
+    controlSwitches: () => `🔲 스위치[${cmd.startId}${cmd.endId>cmd.startId?'~'+cmd.endId:''}] = ${cmd.value===0?'ON':'OFF'}`,
+    controlVariables: () => `📊 변수[${cmd.startId}] ${['=','+=','-=','*=','/=','%='][cmd.operationType]} ${cmd.value}`,
+    conditionalBranch: () => `🔀 조건: 스위치[${cmd.switchId}]==${cmd.switchValue===0?'ON':'OFF'}`,
+    transferPlayer: () => `🚪 맵${cmd.mapId} (${cmd.x},${cmd.y})`,
+    fadeout: () => '⬛ 페이드아웃',
+    fadein: () => '⬜ 페이드인',
+    wait: () => `⏳ ${cmd.frames}F (${(cmd.frames/60).toFixed(1)}초)`,
+    shakeScreen: () => `📳 흔들기 (강도:${cmd.power})`,
+    playBgm: () => `🎵 BGM: ${cmd.name||'(없음)'}`,
+    playSe: () => `🔊 SE: ${cmd.name||'(없음)'}`,
+    battleProcessing: () => `⚔️ 전투: ${projectData.troops.find(t=>t.id===cmd.troopId)?.name||cmd.troopId}`,
+    comment: () => `📝 ${cmd.text.substring(0,30)||'(주석)'}`,
+    label: () => `🏷 라벨: ${cmd.name}`,
+    jumpToLabel: () => `↩ 이동: ${cmd.name}`,
+    changeItems: () => `🎒 ${projectData.items.find(i=>i.id===cmd.itemId)?.name||cmd.itemId} ${cmd.operation===0?'+':'-'}${cmd.value}`,
+    changeGold: () => `💰 ${cmd.operation===0?'+':'-'}${cmd.value}G`,
+  };
+  return (map[cmd.type]||(() => cmd.type))();
+}
+
+// ================================================================
+// EDITOR UI
+// ================================================================
+function renderCmdList() {
+  const el = document.getElementById('cmd-list');
+  el.innerHTML = '';
+  commands.forEach((cmd,idx) => {
+    const div = document.createElement('div');
+    div.className = 'cmd-item'+(idx===selectedIdx?' selected':'');
+    div.onclick = () => selectCmd(idx);
+    div.innerHTML = `<span class="cmd-text">${cmdDisplayText(cmd)}</span>
+      <span class="cmd-actions">
+        <button class="btn small" onclick="event.stopPropagation();moveCmd(${idx},-1)">▲</button>
+        <button class="btn small" onclick="event.stopPropagation();moveCmd(${idx},1)">▼</button>
+        <button class="btn small" onclick="event.stopPropagation();duplicateCmd(${idx})">📋</button>
+        <button class="btn small" onclick="event.stopPropagation();deleteCmd(${idx})" style="color:var(--accent)">✕</button>
+      </span>`;
+    el.appendChild(div);
+  });
+  const end = document.createElement('div');
+  end.className = 'cmd-item';
+  end.style.cssText = 'color:var(--text-dim);font-style:italic';
+  end.innerHTML = '<span class="cmd-text">◇ 이벤트 끝</span>';
+  el.appendChild(end);
+}
+
+function selectCmd(idx) { selectedIdx=idx; insertAfterIdx=idx; renderCmdList(); renderProps(); }
+function moveCmd(idx,dir) {
+  const n=idx+dir; if(n<0||n>=commands.length) return;
+  [commands[idx],commands[n]]=[commands[n],commands[idx]];
+  if(selectedIdx===idx) selectedIdx=n; else if(selectedIdx===n) selectedIdx=idx;
+  renderCmdList();
+}
+function duplicateCmd(idx) {
+  const c=JSON.parse(JSON.stringify(commands[idx])); c.id=newId();
+  commands.splice(idx+1,0,c); selectedIdx=idx+1; renderCmdList(); renderProps();
+}
+function deleteCmd(idx) {
+  commands.splice(idx,1);
+  if(selectedIdx>=commands.length) selectedIdx=commands.length-1;
+  renderCmdList(); renderProps();
+}
+
+// ================================================================
+// PROPERTIES
+// ================================================================
+function renderProps() {
+  const el = document.getElementById('props-content');
+  if (selectedIdx<0||selectedIdx>=commands.length) {
+    el.innerHTML='<p style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">커맨드를 선택하세요</p>';
+    return;
+  }
+  const cmd = commands[selectedIdx];
+  let h = '';
+  switch(cmd.type) {
+    case 'showText':
+      h=`<div class="prop-group"><label class="prop-label">페이스칩</label>
+        <div class="face-picker"><div class="face-preview" onclick="openFacePicker(${selectedIdx})">
+          ${cmd.faceName?`<canvas width="72" height="72" id="prop-face-cv"></canvas>`:'<div class="face-none">없음</div>'}
+        </div><div style="font-size:12px;color:var(--text-dim)">${cmd.faceName?`${cmd.faceName} [${cmd.faceIndex}]`:'클릭하여 선택'}</div></div></div>
+        <div class="prop-group"><label class="prop-label">배경</label>
+          <select class="prop-input" onchange="uP('background',+this.value)">
+            <option value="0"${cmd.background===0?' selected':''}>윈도우</option>
+            <option value="1"${cmd.background===1?' selected':''}>어둡게</option>
+            <option value="2"${cmd.background===2?' selected':''}>투명</option></select></div>
+        <div class="prop-group"><label class="prop-label">위치</label>
+          <select class="prop-input" onchange="uP('positionType',+this.value)">
+            <option value="0"${cmd.positionType===0?' selected':''}>상단</option>
+            <option value="1"${cmd.positionType===1?' selected':''}>중앙</option>
+            <option value="2"${cmd.positionType===2?' selected':''}>하단</option></select></div>
+        <div class="prop-group"><label class="prop-label">텍스트 (최대 4줄)</label>
+          <textarea class="prop-input" rows="4" oninput="commands[${selectedIdx}].lines=this.value.split('\\n').slice(0,4);renderCmdList()" placeholder="대화 내용...">${cmd.lines.join('\n')}</textarea></div>`;
+      break;
+    case 'showChoices':
+      h=`<div class="prop-group"><label class="prop-label">선택지 (최대 6개)</label>
+        ${cmd.choices.map((c,i)=>`<div style="display:flex;gap:4px;margin-bottom:4px">
+          <input class="prop-input" value="${esc(c)}" onchange="commands[${selectedIdx}].choices[${i}]=this.value;renderCmdList()" style="flex:1">
+          ${cmd.choices.length>2?`<button class="btn small" onclick="rmChoice(${i})" style="color:var(--accent)">✕</button>`:''}</div>`).join('')}
+        ${cmd.choices.length<6?`<button class="btn small" onclick="addChoice()">+ 추가</button>`:''}
+        </div>
+        <div class="prop-group"><label class="prop-label">취소 시</label>
+          <select class="prop-input" onchange="uP('cancelType',+this.value)">
+            <option value="-2"${cmd.cancelType===-2?' selected':''}>취소 불가</option>
+            <option value="-1"${cmd.cancelType===-1?' selected':''}>분기</option>
+            ${cmd.choices.map((c,i)=>`<option value="${i}"${cmd.cancelType===i?' selected':''}>${c}</option>`).join('')}
+          </select></div>`;
+      break;
+    case 'showScrollingText':
+      h=`<div class="prop-group"><label class="prop-label">속도 (1-8)</label>
+        <input type="number" class="prop-input" value="${cmd.speed}" min="1" max="8" onchange="uP('speed',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">텍스트</label>
+          <textarea class="prop-input" rows="8" oninput="uP('lines',this.value.split('\\n'))">${cmd.lines.join('\n')}</textarea></div>`;
+      break;
+    case 'controlSwitches':
+      h=`<div class="prop-group"><label class="prop-label">스위치 시작 ID</label>
+        <input type="number" class="prop-input" value="${cmd.startId}" min="1" onchange="uP('startId',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">스위치 끝 ID</label>
+        <input type="number" class="prop-input" value="${cmd.endId}" min="1" onchange="uP('endId',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">값</label>
+          <select class="prop-input" onchange="uP('value',+this.value)">
+            <option value="0"${cmd.value===0?' selected':''}>ON</option>
+            <option value="1"${cmd.value===1?' selected':''}>OFF</option></select></div>`;
+      break;
+    case 'controlVariables':
+      h=`<div class="prop-group"><label class="prop-label">변수 번호</label>
+        <input type="number" class="prop-input" value="${cmd.startId}" min="1" onchange="uP('startId',+this.value);uP('endId',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">조작</label>
+          <select class="prop-input" onchange="uP('operationType',+this.value)">
+            ${['대입(=)','가산(+=)','감산(-=)','곱셈(*=)','나눗셈(/=)','나머지(%=)'].map((t,i)=>`<option value="${i}"${cmd.operationType===i?' selected':''}>${t}</option>`).join('')}
+          </select></div>
+        <div class="prop-group"><label class="prop-label">값</label>
+        <input type="number" class="prop-input" value="${cmd.value}" onchange="uP('value',+this.value)"></div>`;
+      break;
+    case 'conditionalBranch':
+      h=`<div class="prop-group"><label class="prop-label">스위치 번호</label>
+        <input type="number" class="prop-input" value="${cmd.switchId}" min="1" onchange="uP('switchId',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">조건</label>
+          <select class="prop-input" onchange="uP('switchValue',+this.value)">
+            <option value="0"${cmd.switchValue===0?' selected':''}>ON</option>
+            <option value="1"${cmd.switchValue===1?' selected':''}>OFF</option></select></div>
+        <div class="prop-group"><label class="prop-label">Else 분기</label>
+          <select class="prop-input" onchange="uP('hasElse',this.value==='true')">
+            <option value="true"${cmd.hasElse?' selected':''}>있음</option>
+            <option value="false"${!cmd.hasElse?' selected':''}>없음</option></select></div>`;
+      break;
+    case 'transferPlayer':
+      h=`<div class="prop-group"><label class="prop-label">맵 ID</label>
+        <input type="number" class="prop-input" value="${cmd.mapId}" min="1" onchange="uP('mapId',+this.value)"></div>
+        <div class="prop-group" style="display:flex;gap:8px">
+          <div style="flex:1"><label class="prop-label">X</label><input type="number" class="prop-input" value="${cmd.x}" min="0" onchange="uP('x',+this.value)"></div>
+          <div style="flex:1"><label class="prop-label">Y</label><input type="number" class="prop-input" value="${cmd.y}" min="0" onchange="uP('y',+this.value)"></div></div>
+        <div class="prop-group"><label class="prop-label">방향</label>
+          <select class="prop-input" onchange="uP('direction',+this.value)">
+            <option value="0"${cmd.direction===0?' selected':''}>그대로</option>
+            <option value="2"${cmd.direction===2?' selected':''}>아래</option>
+            <option value="4"${cmd.direction===4?' selected':''}>왼쪽</option>
+            <option value="6"${cmd.direction===6?' selected':''}>오른쪽</option>
+            <option value="8"${cmd.direction===8?' selected':''}>위</option></select></div>
+        <div class="prop-group"><label class="prop-label">페이드</label>
+          <select class="prop-input" onchange="uP('fadeType',+this.value)">
+            <option value="0"${cmd.fadeType===0?' selected':''}>검정</option>
+            <option value="1"${cmd.fadeType===1?' selected':''}>흰색</option>
+            <option value="2"${cmd.fadeType===2?' selected':''}>없음</option></select></div>`;
+      break;
+    case 'wait':
+      h=`<div class="prop-group"><label class="prop-label">프레임 (60=1초)</label>
+        <input type="number" class="prop-input" value="${cmd.frames}" min="1" onchange="uP('frames',+this.value)">
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${(cmd.frames/60).toFixed(2)}초</div></div>`;
+      break;
+    case 'shakeScreen':
+      h=`<div class="prop-group"><label class="prop-label">강도</label>
+        <input type="number" class="prop-input" value="${cmd.power}" min="1" max="9" onchange="uP('power',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">속도</label>
+        <input type="number" class="prop-input" value="${cmd.speed}" min="1" max="9" onchange="uP('speed',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">프레임</label>
+        <input type="number" class="prop-input" value="${cmd.duration}" min="1" onchange="uP('duration',+this.value)"></div>`;
+      break;
+    case 'playBgm': case 'playSe':
+      h=`<div class="prop-group"><label class="prop-label">파일명</label>
+        <input class="prop-input" value="${esc(cmd.name)}" onchange="uP('name',this.value)" placeholder="예: Battle1"></div>
+        <div class="prop-group"><label class="prop-label">볼륨 (0-100)</label>
+        <input type="number" class="prop-input" value="${cmd.volume}" min="0" max="100" onchange="uP('volume',+this.value)"></div>
+        <div class="prop-group"><label class="prop-label">피치 (50-150)</label>
+        <input type="number" class="prop-input" value="${cmd.pitch}" min="50" max="150" onchange="uP('pitch',+this.value)"></div>`;
+      break;
+    case 'battleProcessing':
+      h=`<div class="prop-group"><label class="prop-label">적 그룹</label>
+        <select class="prop-input" onchange="uP('troopId',+this.value)">
+          ${projectData.troops.map(t=>`<option value="${t.id}"${cmd.troopId===t.id?' selected':''}>${t.name}</option>`).join('')}
+        </select></div>
+        <div class="prop-group"><label class="prop-label">도주 허용</label>
+          <select class="prop-input" onchange="uP('canEscape',this.value==='true')">
+            <option value="true"${cmd.canEscape?' selected':''}>예</option>
+            <option value="false"${!cmd.canEscape?' selected':''}>아니오</option></select></div>
+        <div class="prop-group"><label class="prop-label">패배 허용</label>
+          <select class="prop-input" onchange="uP('canLose',this.value==='true')">
+            <option value="true"${cmd.canLose?' selected':''}>예</option>
+            <option value="false"${!cmd.canLose?' selected':''}>아니오</option></select></div>`;
+      break;
+    case 'comment':
+      h=`<div class="prop-group"><label class="prop-label">주석</label>
+        <textarea class="prop-input" rows="4" oninput="uP('text',this.value)">${esc(cmd.text)}</textarea></div>`;
+      break;
+    case 'label': case 'jumpToLabel':
+      h=`<div class="prop-group"><label class="prop-label">라벨명</label>
+        <input class="prop-input" value="${esc(cmd.name)}" onchange="uP('name',this.value)"></div>`;
+      break;
+    case 'changeItems':
+      h=`<div class="prop-group"><label class="prop-label">아이템</label>
+        <select class="prop-input" onchange="uP('itemId',+this.value)">
+          ${projectData.items.map(i=>`<option value="${i.id}"${cmd.itemId===i.id?' selected':''}>${i.name}</option>`).join('')}
+        </select></div>
+        <div class="prop-group"><label class="prop-label">증감</label>
+          <select class="prop-input" onchange="uP('operation',+this.value)">
+            <option value="0"${cmd.operation===0?' selected':''}>증가</option>
+            <option value="1"${cmd.operation===1?' selected':''}>감소</option></select></div>
+        <div class="prop-group"><label class="prop-label">수량</label>
+        <input type="number" class="prop-input" value="${cmd.value}" min="1" onchange="uP('value',+this.value)"></div>`;
+      break;
+    case 'changeGold':
+      h=`<div class="prop-group"><label class="prop-label">증감</label>
+          <select class="prop-input" onchange="uP('operation',+this.value)">
+            <option value="0"${cmd.operation===0?' selected':''}>증가</option>
+            <option value="1"${cmd.operation===1?' selected':''}>감소</option></select></div>
+        <div class="prop-group"><label class="prop-label">금액</label>
+        <input type="number" class="prop-input" value="${cmd.value}" min="0" onchange="uP('value',+this.value)"></div>`;
+      break;
+  }
+  el.innerHTML = h;
+  if (cmd.type==='showText'&&cmd.faceName) {
+    const cv=document.getElementById('prop-face-cv');
+    if(cv) drawFace(cv,cmd.faceName,cmd.faceIndex);
+  }
+}
+
+function uP(k,v) { if(selectedIdx<0||selectedIdx>=commands.length) return; commands[selectedIdx][k]=v; renderCmdList(); }
+function addChoice() { if(selectedIdx<0) return; const c=commands[selectedIdx]; if(c.choices.length>=6) return; c.choices.push(`선택지 ${c.choices.length+1}`); c.branches.push([]); renderCmdList(); renderProps(); }
+function rmChoice(i) { if(selectedIdx<0) return; const c=commands[selectedIdx]; if(c.choices.length<=2) return; c.choices.splice(i,1); c.branches.splice(i,1); renderCmdList(); renderProps(); }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ================================================================
+// COMMAND PICKER
+// ================================================================
+function showCmdPicker() { document.getElementById('cmd-picker-modal').classList.add('active'); }
+function closeCmdPicker() { document.getElementById('cmd-picker-modal').classList.remove('active'); }
+function addCmd(type) {
+  const cmd=createCmd(type);
+  const idx=insertAfterIdx>=0?insertAfterIdx+1:commands.length;
+  commands.splice(idx,0,cmd); selectedIdx=idx; insertAfterIdx=idx;
+  closeCmdPicker(); renderCmdList(); renderProps();
+}
+
+// ================================================================
+// FACE PICKER
+// ================================================================
+function openFacePicker(cidx) {
+  currentFaceCallback=cidx;
+  const container=document.getElementById('face-grid-container');
+  container.innerHTML='';
+  for (const sheet of projectData.faceSheets) {
+    const img=projectData.faceImages[sheet];
+    if(!img) continue;
+    const sec=document.createElement('div'); sec.className='face-sheet-section';
+    sec.innerHTML=`<div class="sheet-name">${sheet}</div>`;
+    const grid=document.createElement('div'); grid.className='face-grid';
+    for(let i=0;i<8;i++){
+      const cell=document.createElement('div'); cell.className='face-cell';
+      const c=document.createElement('canvas'); c.width=72; c.height=72;
+      const ctx=c.getContext('2d');
+      ctx.drawImage(img,(i%4)*144,Math.floor(i/4)*144,144,144,0,0,72,72);
+      cell.appendChild(c);
+      cell.onclick=()=>selectFace(sheet,i);
+      if(commands[cidx]?.faceName===sheet&&commands[cidx]?.faceIndex===i) cell.classList.add('selected');
+      grid.appendChild(cell);
+    }
+    sec.appendChild(grid); container.appendChild(sec);
+  }
+  document.getElementById('face-picker-modal').classList.add('active');
+}
+function selectFace(sheet,idx) {
+  if(currentFaceCallback!==null&&commands[currentFaceCallback]) {
+    commands[currentFaceCallback].faceName=sheet;
+    commands[currentFaceCallback].faceIndex=idx;
+    renderCmdList(); renderProps();
+  }
+  closeFacePicker();
+}
+function closeFacePicker() { document.getElementById('face-picker-modal').classList.remove('active'); currentFaceCallback=null; }
+
+// ================================================================
+// PREVIEW
+// ================================================================
+function getPreviewable() { return commands.filter(c=>['showText','showChoices','showScrollingText','fadeout','fadein','wait'].includes(c.type)); }
+function previewReset() { previewState.step=-1; previewState.autoPlay=false; hidePreview(); updatePreviewStep(); }
+function previewPrev() { const p=getPreviewable(); if(previewState.step>0){previewState.step--;showPStep(p[previewState.step]);}else{previewState.step=-1;hidePreview();} updatePreviewStep(); }
+function previewNext() { const p=getPreviewable(); if(previewState.step<p.length-1){previewState.step++;showPStep(p[previewState.step]);}else previewState.autoPlay=false; updatePreviewStep(); }
+function previewAutoPlay() {
+  previewState.autoPlay=!previewState.autoPlay;
+  document.getElementById('btn-autoplay').style.background=previewState.autoPlay?'var(--accent)':'';
+  if(previewState.autoPlay) autoStep();
+}
+function autoStep() {
+  if(!previewState.autoPlay) return;
+  const p=getPreviewable();
+  if(previewState.step>=p.length-1){previewState.autoPlay=false;document.getElementById('btn-autoplay').style.background='';return;}
+  previewNext();
+  const cmd=p[previewState.step];
+  setTimeout(autoStep,cmd?.type==='wait'?Math.max(500,(cmd.frames/60)*1000):1500);
+}
+function updatePreviewStep() {
+  const p=getPreviewable(), el=document.getElementById('preview-step');
+  el.textContent=previewState.step<0?`대기 (${p.length}개)`:`${previewState.step+1}/${p.length}`;
+}
+function hidePreview() {
+  document.getElementById('msg-window').style.display='none';
+  document.getElementById('choice-window').style.display='none';
+  document.getElementById('game-screen').style.background='#222';
+}
+function showPStep(cmd) {
+  if(!cmd) return;
+  const mw=document.getElementById('msg-window'), cw=document.getElementById('choice-window');
+  cw.style.display='none';
+  switch(cmd.type) {
+    case 'showText': {
+      mw.className='msg-window '+['top','middle','bottom'][cmd.positionType];
+      if(cmd.background===1) mw.classList.add('bg-dim');
+      else if(cmd.background===2) mw.classList.add('bg-transparent');
+      const fe=document.getElementById('msg-face');
+      if(cmd.faceName&&projectData.faceImages[cmd.faceName]){fe.style.display='block';drawFace(fe.querySelector('canvas'),cmd.faceName,cmd.faceIndex);}else fe.style.display='none';
+      document.getElementById('msg-text').textContent=cmd.lines.join('\n');
+      mw.style.display='block'; break;
+    }
+    case 'showChoices': {
+      const p=getPreviewable(), prev=previewState.step>0?p.slice(0,previewState.step).reverse().find(c=>c.type==='showText'):null;
+      if(prev) showPStep(prev);
+      document.getElementById('choice-list').innerHTML=cmd.choices.map((c,i)=>
+        `<div class="choice-item${i===0?' highlighted':''}" onmouseenter="hlChoice(this)">${i===0?'▶ ':'  '}${esc(c)}</div>`
+      ).join('');
+      cw.style.bottom='176px'; cw.style.display='block'; break;
+    }
+    case 'fadeout': mw.style.display='none'; document.getElementById('game-screen').style.background='#000'; break;
+    case 'fadein': document.getElementById('game-screen').style.background='#222'; break;
+    case 'showScrollingText': {
+      mw.className='msg-window middle bg-transparent'; mw.style.display='block';
+      document.getElementById('msg-face').style.display='none';
+      document.getElementById('msg-text').textContent=cmd.lines.join('\n'); break;
+    }
+  }
+}
+function hlChoice(el) {
+  el.parentElement.querySelectorAll('.choice-item').forEach(c=>c.classList.remove('highlighted'));
+  el.classList.add('highlighted');
+}
+
+// ================================================================
+// JSON EXPORT / IMPORT
+// ================================================================
+function genRmmzCmds(indent=0) {
+  const r=[];
+  for(const cmd of commands){
+    switch(cmd.type){
+      case 'showText': r.push({code:101,indent,parameters:[cmd.faceName,cmd.faceIndex,cmd.background,cmd.positionType]}); cmd.lines.forEach(l=>r.push({code:401,indent,parameters:[l]})); break;
+      case 'showChoices': r.push({code:102,indent,parameters:[cmd.choices,cmd.cancelType,0,2,0]});
+        cmd.choices.forEach((c,i)=>{r.push({code:402,indent,parameters:[i,c]});r.push({code:0,indent:indent+1,parameters:[]});});
+        if(cmd.cancelType===-1){r.push({code:403,indent,parameters:[]});r.push({code:0,indent:indent+1,parameters:[]});}
+        r.push({code:404,indent,parameters:[]}); break;
+      case 'showScrollingText': r.push({code:105,indent,parameters:[cmd.speed,cmd.noFast]}); cmd.lines.forEach(l=>r.push({code:405,indent,parameters:[l]})); break;
+      case 'controlSwitches': r.push({code:121,indent,parameters:[cmd.startId,cmd.endId,cmd.value]}); break;
+      case 'controlVariables': r.push({code:122,indent,parameters:[cmd.startId,cmd.endId,cmd.operationType,cmd.operand,cmd.value]}); break;
+      case 'conditionalBranch': r.push({code:111,indent,parameters:[cmd.condType,cmd.switchId,cmd.switchValue]});
+        r.push({code:0,indent:indent+1,parameters:[]});
+        if(cmd.hasElse){r.push({code:411,indent,parameters:[]});r.push({code:0,indent:indent+1,parameters:[]});}
+        r.push({code:412,indent,parameters:[]}); break;
+      case 'transferPlayer': r.push({code:201,indent,parameters:[0,cmd.mapId,cmd.x,cmd.y,cmd.direction,cmd.fadeType]}); break;
+      case 'fadeout': r.push({code:221,indent,parameters:[]}); break;
+      case 'fadein': r.push({code:222,indent,parameters:[]}); break;
+      case 'wait': r.push({code:230,indent,parameters:[cmd.frames]}); break;
+      case 'shakeScreen': r.push({code:235,indent,parameters:[cmd.power,cmd.speed,cmd.duration,cmd.waitForCompletion]}); break;
+      case 'playBgm': r.push({code:241,indent,parameters:[{name:cmd.name,volume:cmd.volume,pitch:cmd.pitch,pan:cmd.pan}]}); break;
+      case 'playSe': r.push({code:250,indent,parameters:[{name:cmd.name,volume:cmd.volume,pitch:cmd.pitch,pan:cmd.pan}]}); break;
+      case 'battleProcessing': r.push({code:301,indent,parameters:[0,cmd.troopId,cmd.canEscape,cmd.canLose]}); break;
+      case 'comment': {const ls=cmd.text.split('\n'); r.push({code:108,indent,parameters:[ls[0]||'']}); for(let i=1;i<ls.length;i++) r.push({code:408,indent,parameters:[ls[i]]}); break;}
+      case 'label': r.push({code:118,indent,parameters:[cmd.name]}); break;
+      case 'jumpToLabel': r.push({code:119,indent,parameters:[cmd.name]}); break;
+      case 'changeItems': r.push({code:126,indent,parameters:[cmd.itemId,cmd.operation,cmd.operandType,cmd.value]}); break;
+      case 'changeGold': r.push({code:125,indent,parameters:[cmd.operation,cmd.operandType,cmd.value]}); break;
+    }
+  }
+  r.push({code:0,indent:0,parameters:[]});
+  return r;
+}
+
+function genFullEvent() {
+  return {
+    id:1, name:document.getElementById('ev-name').value||'EV001', note:'',
+    pages:[{
+      conditions:{actorId:1,actorValid:false,itemId:1,itemValid:false,selfSwitchCh:'A',selfSwitchValid:false,switch1Id:1,switch1Valid:false,switch2Id:1,switch2Valid:false,variableId:1,variableValid:false,variableValue:0},
+      directionFix:false,
+      image:{tileId:0,characterName:'',direction:2,pattern:1,characterIndex:0},
+      list:genRmmzCmds(),
+      moveFrequency:3,moveRoute:{list:[{code:0,parameters:[]}],repeat:true,skippable:false,wait:false},
+      moveSpeed:3,moveType:0,priorityType:1,stepAnime:false,through:false,
+      trigger:+document.getElementById('ev-trigger').value,walkAnime:true
+    }],
+    x:+document.getElementById('ev-x').value, y:+document.getElementById('ev-y').value
+  };
+}
+
+function showExport() {
+  document.getElementById('export-json').value=JSON.stringify(genFullEvent(),null,2);
+  document.getElementById('export-panel').classList.add('active');
+}
+function closeExport() { document.getElementById('export-panel').classList.remove('active'); }
+function copyExport(mode) {
+  const json=JSON.stringify(mode==='full'?genFullEvent():genRmmzCmds(),null,2);
+  navigator.clipboard.writeText(json).then(()=>toast(mode==='full'?'전체 이벤트 복사됨':'커맨드 복사됨'));
+}
+
+function importJSON() {
+  const input=prompt('이벤트 JSON 붙여넣기:');
+  if(!input) return;
+  try {
+    const data=JSON.parse(input);
+    let list;
+    if(Array.isArray(data)) list=data;
+    else if(data.pages?.[0]) {
+      list=data.pages[0].list;
+      if(data.name) document.getElementById('ev-name').value=data.name;
+      if(data.pages[0].trigger!==undefined) document.getElementById('ev-trigger').value=data.pages[0].trigger;
+      if(data.x!==undefined) document.getElementById('ev-x').value=data.x;
+      if(data.y!==undefined) document.getElementById('ev-y').value=data.y;
+    } else throw new Error('Invalid');
+    importCmdList(list); toast('불러오기 완료');
+  } catch(e) { alert('파싱 실패: '+e.message); }
+}
+
+function importCmdList(list) {
+  commands=[];
+  let i=0;
+  while(i<list.length){
+    const c=list[i];
+    switch(c.code){
+      case 101:{const cmd=createCmd('showText');cmd.faceName=c.parameters[0]||'';cmd.faceIndex=c.parameters[1]||0;cmd.background=c.parameters[2]||0;cmd.positionType=c.parameters[3]||2;cmd.lines=[];i++;while(i<list.length&&list[i].code===401){cmd.lines.push(list[i].parameters[0]);i++;}if(!cmd.lines.length)cmd.lines=[''];commands.push(cmd);continue;}
+      case 102:{const cmd=createCmd('showChoices');cmd.choices=c.parameters[0]||[];cmd.cancelType=c.parameters[1]||-2;cmd.branches=cmd.choices.map(()=>[]);commands.push(cmd);i++;let d=0;while(i<list.length&&!(list[i].code===404&&d===0)){if(list[i].code===102)d++;if(list[i].code===404)d--;i++;}i++;continue;}
+      case 105:{const cmd=createCmd('showScrollingText');cmd.speed=c.parameters[0]||2;cmd.noFast=c.parameters[1]||false;cmd.lines=[];i++;while(i<list.length&&list[i].code===405){cmd.lines.push(list[i].parameters[0]);i++;}commands.push(cmd);continue;}
+      case 108:{const cmd=createCmd('comment');cmd.text=c.parameters[0]||'';i++;while(i<list.length&&list[i].code===408){cmd.text+='\n'+list[i].parameters[0];i++;}commands.push(cmd);continue;}
+      case 111:{const cmd=createCmd('conditionalBranch');cmd.condType=c.parameters[0]||0;cmd.switchId=c.parameters[1]||1;cmd.switchValue=c.parameters[2]||0;commands.push(cmd);break;}
+      case 118:{const cmd=createCmd('label');cmd.name=c.parameters[0]||'';commands.push(cmd);break;}
+      case 119:{const cmd=createCmd('jumpToLabel');cmd.name=c.parameters[0]||'';commands.push(cmd);break;}
+      case 121:{const cmd=createCmd('controlSwitches');cmd.startId=c.parameters[0];cmd.endId=c.parameters[1];cmd.value=c.parameters[2];commands.push(cmd);break;}
+      case 122:{const cmd=createCmd('controlVariables');cmd.startId=c.parameters[0];cmd.endId=c.parameters[1];cmd.operationType=c.parameters[2];cmd.operand=c.parameters[3];cmd.value=c.parameters[4];commands.push(cmd);break;}
+      case 125:{const cmd=createCmd('changeGold');cmd.operation=c.parameters[0];cmd.operandType=c.parameters[1];cmd.value=c.parameters[2];commands.push(cmd);break;}
+      case 126:{const cmd=createCmd('changeItems');cmd.itemId=c.parameters[0];cmd.operation=c.parameters[1];cmd.operandType=c.parameters[2];cmd.value=c.parameters[3];commands.push(cmd);break;}
+      case 201:{const cmd=createCmd('transferPlayer');cmd.mapId=c.parameters[1];cmd.x=c.parameters[2];cmd.y=c.parameters[3];cmd.direction=c.parameters[4]||0;cmd.fadeType=c.parameters[5]||0;commands.push(cmd);break;}
+      case 221:commands.push(createCmd('fadeout'));break;
+      case 222:commands.push(createCmd('fadein'));break;
+      case 230:{const cmd=createCmd('wait');cmd.frames=c.parameters[0]||60;commands.push(cmd);break;}
+      case 235:{const cmd=createCmd('shakeScreen');cmd.power=c.parameters[0];cmd.speed=c.parameters[1];cmd.duration=c.parameters[2];commands.push(cmd);break;}
+      case 241:{const cmd=createCmd('playBgm');const p=c.parameters[0]||{};cmd.name=p.name||'';cmd.volume=p.volume||90;cmd.pitch=p.pitch||100;commands.push(cmd);break;}
+      case 250:{const cmd=createCmd('playSe');const p=c.parameters[0]||{};cmd.name=p.name||'';cmd.volume=p.volume||90;cmd.pitch=p.pitch||100;commands.push(cmd);break;}
+      case 301:{const cmd=createCmd('battleProcessing');cmd.troopId=c.parameters[1]||1;cmd.canEscape=c.parameters[2]!==false;cmd.canLose=c.parameters[3]===true;commands.push(cmd);break;}
+    }
+    i++;
+  }
+  selectedIdx=commands.length>0?0:-1;
+  renderCmdList(); renderProps();
+}
+
+// ================================================================
+// UTIL
+// ================================================================
+function toast(msg) { const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2000); }
+
+function updatePreviewScale() {
+  const c=document.getElementById('preview-container');
+  if(!c) return;
+  const s=document.getElementById('game-screen');
+  const scale=Math.min((c.clientWidth-40)/816,(c.clientHeight-40)/624,1);
+  s.style.setProperty('--preview-scale',scale);
+}
+window.addEventListener('resize',updatePreviewScale);
+
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
+  if(e.code==='Space'){e.preventDefault();previewNext();}
+  if(e.code==='Backspace'){e.preventDefault();previewPrev();}
+  if(e.code==='Escape'){closeCmdPicker();closeFacePicker();closeExport();}
+  if(e.code==='Delete'&&selectedIdx>=0) deleteCmd(selectedIdx);
+});
+
+document.querySelectorAll('.modal-overlay').forEach(el=>{
+  el.addEventListener('click',e=>{if(e.target===el) el.classList.remove('active');});
+});
+document.getElementById('export-panel').addEventListener('click',e=>{
+  if(e.target.id==='export-panel') closeExport();
+});
+
+// ================================================================
+// PROGRAMMATIC API (for Claude browser automation)
+// ================================================================
+// Usage: call these from JS console or javascript_tool
+
+/**
+ * Load project data directly (bypasses folder picker).
+ * @param {Object} data - { name, actors[], items[], troops[], faceImages:{name:dataURL} }
+ * faceImages values are data:image/png;base64,... strings
+ */
+window.API = {};
+
+window.API.loadProject = async function(data) {
+  projectData.name = data.name || 'Project';
+  projectData.actors = data.actors || [];
+  projectData.items = data.items || [];
+  projectData.troops = data.troops || [];
+  projectData.faceSheets = [];
+  projectData.faceImages = {};
+
+  // Load face images from data URLs
+  if (data.faceImages) {
+    const entries = Object.entries(data.faceImages);
+    for (const [name, dataUrl] of entries) {
+      projectData.faceSheets.push(name);
+      await new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => { projectData.faceImages[name] = img; resolve(); };
+        img.onerror = () => resolve();
+        img.src = dataUrl;
+      });
+    }
+    projectData.faceSheets.sort();
+  }
+
+  // Switch to editor
+  document.getElementById('project-screen').style.display = 'none';
+  document.getElementById('editor-screen').style.display = 'flex';
+  document.getElementById('header-project-name').textContent = '📁 ' + projectData.name;
+  renderCmdList(); updatePreviewStep(); updatePreviewScale();
+  return `Project "${projectData.name}" loaded: ${projectData.actors.length} actors, ${projectData.items.length} items, ${projectData.troops.length} troops, ${projectData.faceSheets.length} face sheets`;
+};
+
+/**
+ * Load project metadata only (no face images - faster).
+ */
+window.API.loadProjectMeta = function(data) {
+  projectData.name = data.name || 'Project';
+  projectData.actors = data.actors || [];
+  projectData.items = data.items || [];
+  projectData.troops = data.troops || [];
+  projectData.faceSheets = data.faceSheetNames || [];
+  document.getElementById('project-screen').style.display = 'none';
+  document.getElementById('editor-screen').style.display = 'flex';
+  document.getElementById('header-project-name').textContent = '📁 ' + projectData.name;
+  renderCmdList(); updatePreviewStep(); updatePreviewScale();
+  return 'OK: project meta loaded (no face images)';
+};
+
+/**
+ * Add a command programmatically and select it.
+ * @param {string} type - command type
+ * @param {Object} props - properties to override
+ * @returns {number} index of added command
+ */
+window.API.addCommand = function(type, props) {
+  const cmd = createCmd(type);
+  Object.assign(cmd, props || {});
+  cmd.id = newId();
+  commands.push(cmd);
+  selectedIdx = commands.length - 1;
+  insertAfterIdx = selectedIdx;
+  renderCmdList(); renderProps();
+  return selectedIdx;
+};
+
+/**
+ * Insert a command at a specific index.
+ */
+window.API.insertCommand = function(index, type, props) {
+  const cmd = createCmd(type);
+  Object.assign(cmd, props || {});
+  cmd.id = newId();
+  commands.splice(index, 0, cmd);
+  selectedIdx = index;
+  renderCmdList(); renderProps();
+  return index;
+};
+
+/**
+ * Update properties of a command at index.
+ */
+window.API.updateCommand = function(index, props) {
+  if (index < 0 || index >= commands.length) return 'Error: invalid index';
+  Object.assign(commands[index], props);
+  selectedIdx = index;
+  renderCmdList(); renderProps();
+  return 'OK';
+};
+
+/**
+ * Delete command at index.
+ */
+window.API.deleteCommand = function(index) {
+  if (index < 0 || index >= commands.length) return 'Error: invalid index';
+  commands.splice(index, 1);
+  if (selectedIdx >= commands.length) selectedIdx = commands.length - 1;
+  renderCmdList(); renderProps();
+  return 'OK';
+};
+
+/**
+ * Clear all commands.
+ */
+window.API.clearCommands = function() {
+  commands = []; selectedIdx = -1;
+  renderCmdList(); renderProps();
+  return 'OK';
+};
+
+/**
+ * Batch add multiple commands at once.
+ * @param {Array} cmdList - [{type, ...props}, ...]
+ */
+window.API.batchAddCommands = function(cmdList) {
+  for (const {type, ...props} of cmdList) {
+    const cmd = createCmd(type);
+    Object.assign(cmd, props);
+    cmd.id = newId();
+    commands.push(cmd);
+  }
+  selectedIdx = commands.length > 0 ? 0 : -1;
+  renderCmdList(); renderProps();
+  return `OK: ${cmdList.length} commands added`;
+};
+
+/**
+ * Set event metadata (name, trigger, position).
+ */
+window.API.setEventMeta = function(opts) {
+  if (opts.name) document.getElementById('ev-name').value = opts.name;
+  if (opts.trigger !== undefined) document.getElementById('ev-trigger').value = opts.trigger;
+  if (opts.x !== undefined) document.getElementById('ev-x').value = opts.x;
+  if (opts.y !== undefined) document.getElementById('ev-y').value = opts.y;
+  return 'OK';
+};
+
+/**
+ * Get current commands as array (for inspection).
+ */
+window.API.getCommands = function() { return JSON.parse(JSON.stringify(commands)); };
+
+/**
+ * Export as RMMZ-format JSON.
+ * @param {string} mode - 'commands' or 'full'
+ */
+window.API.exportJSON = function(mode) {
+  return mode === 'full' ? genFullEvent() : genRmmzCmds();
+};
+
+/**
+ * Import from RMMZ command list JSON.
+ */
+window.API.importCommands = function(list) {
+  importCmdList(list);
+  return `OK: ${commands.length} commands imported`;
+};
+
+/**
+ * Preview control.
+ */
+window.API.previewNext = function() { previewNext(); return `step: ${previewState.step}`; };
+window.API.previewPrev = function() { previewPrev(); return `step: ${previewState.step}`; };
+window.API.previewReset = function() { previewReset(); return 'OK'; };
+window.API.previewGoTo = function(step) {
+  previewReset();
+  const p = getPreviewable();
+  for (let i = 0; i <= Math.min(step, p.length - 1); i++) {
+    previewState.step = i;
+    showPStep(p[i]);
+  }
+  updatePreviewStep();
+  return `step: ${previewState.step}`;
+};
+
+/**
+ * Get status summary.
+ */
+window.API.status = function() {
+  return {
+    project: projectData.name,
+    commandCount: commands.length,
+    selectedIndex: selectedIdx,
+    previewStep: previewState.step,
+    previewableCount: getPreviewable().length,
+    commands: commands.map((c,i) => `[${i}] ${cmdDisplayText(c)}`)
+  };
+};
+
+console.log('%c[RMMZ Event Editor] API ready. Use window.API.* for programmatic control.', 'color:#4ecca3;font-weight:bold');
+</script>
+</body>
+</html>

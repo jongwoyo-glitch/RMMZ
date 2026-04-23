@@ -1,0 +1,24 @@
+# Node
+node_modules/
+
+# 백업 파일 (로컬 전용)
+**/backup/
+RMMZStudio_backup_*.html
+DatabaseEditor_backup_*.html
+*.docx
+
+# Python 캐시
+__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# RMMZ 세이브/임시
+*.rpgsave
+save/
+*.log
+
+# Cowork 세션
+.claude/

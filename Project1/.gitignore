@@ -1,0 +1,18 @@
+# Node
+node_modules/
+
+# 백업 (로컬 전용)
+backup/
+js/plugins/backup/
+
+# RMMZ 에디터 임시 파일
+*.rpgsave
+save/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 검증/감시 도구 로그
+*.log

@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>RMMZ Database Editor</title>
+<style>
+:root{--bg:#12131a;--bg2:#1a1c2e;--bg3:#222540;--bg4:#2a2d4a;--accent:#e94560;--accent2:#533483;--text:#d0d0e0;--dim:#667;--bright:#fff;--border:#333560;--ok:#4ecca3;--warn:#f5a623;--err:#e94560}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font:13px/1.4 'Segoe UI','Malgun Gothic',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+/* Header */
+.hdr{background:linear-gradient(135deg,var(--bg2),var(--accent2));padding:6px 16px;display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--accent)}
+.hdr h1{font-size:15px;color:var(--bright)}
+.hdr .info{font-size:11px;color:var(--dim);background:rgba(0,0,0,.3);padding:2px 10px;border-radius:10px}
+.hdr .tools{margin-left:auto;display:flex;gap:6px}
+.b{padding:5px 12px;border:1px solid var(--border);background:var(--bg3);color:var(--text);border-radius:4px;cursor:pointer;font-size:12px}
+.b:hover{background:var(--accent2);border-color:var(--accent)}
+.b.p{background:var(--accent);border-color:var(--accent);color:#fff}
+.b.ok{background:var(--ok);color:#111}
+.b.sm{padding:2px 7px;font-size:11px}
+/* Tabs */
+.tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);overflow-x:auto;flex-shrink:0}
+.tab{padding:8px 16px;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;color:var(--dim)}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(233,69,96,.05)}
+.tab .cnt{font-size:10px;color:var(--dim);margin-left:4px}
+/* Main */
+#main{flex:1;display:flex;overflow:hidden}
+/* List */
+#list-panel{width:280px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column}
+#list-panel .lhdr{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center}
+#list-panel .lhdr input{flex:1;padding:4px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:12px}
+#item-list{flex:1;overflow-y:auto}
+.li{padding:6px 10px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px;border-left:3px solid transparent}
+.li:hover{background:rgba(255,255,255,.03)}
+.li.sel{background:var(--bg3);border-left-color:var(--accent)}
+.li .lid{color:var(--dim);font-size:11px;width:32px;text-align:right;flex-shrink:0}
+.li .lnm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.li .lnm.empty{color:var(--dim);font-style:italic}
+/* Detail */
+#detail-panel{flex:1;overflow-y:auto;padding:16px 20px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
+.field input,.field select,.field textarea{width:100%;padding:5px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:12px}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
+.field textarea{min-height:60px;font-family:inherit;resize:vertical}
+.field-row{display:flex;gap:10px}
+.field-row .field{flex:1}
+.section{margin:16px 0 8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--accent);font-weight:bold}
+/* Params grid */
+.params-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.params-grid .field{margin-bottom:4px}
+.params-grid label{font-size:10px}
+.params-grid input{padding:3px 6px;font-size:11px}
+/* Traits/Effects table */
+.trait-tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:4px}
+.trait-tbl th{text-align:left;padding:4px 6px;background:var(--bg3);color:var(--dim);font-weight:normal}
+.trait-tbl td{padding:3px 6px;border-bottom:1px solid rgba(255,255,255,.05)}
+.trait-tbl tr:hover{background:rgba(255,255,255,.02)}
+/* JSON panel */
+.json-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:none;align-items:center;justify-content:center}
+.json-overlay.show{display:flex}
+.json-box{background:var(--bg2);border:2px solid var(--accent);border-radius:8px;padding:16px;width:750px;max-height:85vh;display:flex;flex-direction:column}
+.json-box textarea{flex:1;min-height:400px;background:#0d1117;color:#7ee787;border:1px solid var(--border);border-radius:4px;font:12px 'Consolas',monospace;padding:10px;resize:none}
+/* Loading */
+#load-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:20px}
+#load-screen h1{font-size:24px;color:var(--bright)}
+#load-screen p{color:var(--dim);font-size:13px;max-width:450px;text-align:center}
+#load-screen .lb{padding:12px 28px;font-size:15px;background:var(--accent);border:none;color:#fff;border-radius:8px;cursor:pointer}
+#load-screen .lb:hover{background:#ff5577}
+#load-bar-wrap{width:380px;height:20px;background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;display:none}
+#load-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:10px;transition:width .2s}
+#load-bar-pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:var(--bright)}
+#load-status{font-size:12px;color:var(--dim);min-height:18px}
+#load-detail{font-size:11px;color:var(--dim);opacity:.7;min-height:14px}
+/* Editor screen */
+#editor-screen{display:none;flex-direction:column;height:100vh}
+.toast{position:fixed;bottom:16px;right:16px;padding:8px 16px;background:var(--ok);color:#111;border-radius:6px;font-size:12px;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+/* Grid Range Editor */
+.srpg-range-editor{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:8px}
+.srpg-range-editor .sre-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.srpg-range-editor .sre-header h3{font-size:13px;color:var(--accent);margin:0;white-space:nowrap}
+.srpg-range-editor .sre-header select,.srpg-range-editor .sre-header label{font-size:11px;color:var(--text)}
+.srpg-range-editor .sre-header select{padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px}
+.srpg-range-editor .sre-header label input{margin-right:4px}
+.srpg-range-editor .sre-grids{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.srpg-range-editor .sre-grid-wrap{flex:0 0 auto}
+.srpg-range-editor .sre-grid-wrap h4{font-size:11px;color:var(--dim);margin:0 0 4px;text-align:center}
+.srpg-range-editor .sre-grid-wrap canvas{border:1px solid var(--border);border-radius:3px;cursor:crosshair;display:block}
+.srpg-range-editor .sre-legend{display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--dim);flex-wrap:wrap}
+.srpg-range-editor .sre-legend span{display:flex;align-items:center;gap:3px}
+.srpg-range-editor .sre-legend .dot{width:10px;height:10px;border-radius:2px;display:inline-block}
+.srpg-range-editor .sre-tools{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.srpg-range-editor .sre-tools button{padding:2px 8px;font-size:10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer}
+.srpg-range-editor .sre-tools button:hover{background:var(--accent2);border-color:var(--accent)}
+.srpg-range-editor .sre-note{margin-top:8px;font-size:10px;color:var(--dim);font-family:'Consolas',monospace;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;word-break:break-all;max-height:40px;overflow-y:auto}
+.srpg-range-editor .sre-preview-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.srpg-range-editor .sre-preview-wrap{text-align:center}
+.srpg-range-editor .sre-preview-wrap span{font-size:10px;color:var(--dim);display:block;margin-bottom:2px}
+.srpg-range-editor .sre-preview-wrap canvas{border:1px solid var(--border);border-radius:2px}
+.srpg-range-editor .sre-override{margin-bottom:8px;font-size:11px;color:var(--dim);display:flex;align-items:center;gap:8px}
+.srpg-range-editor .sre-override button{padding:2px 8px;font-size:10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer}
+.srpg-range-editor .sre-override button:hover{background:var(--accent2);border-color:var(--accent)}
+.srpg-range-editor.sre-readonly canvas{cursor:default;opacity:.5}
+
+/* SRPG Phase Panel */
+.srpg-phase-panel{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-top:8px}
+.srpg-phase-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.srpg-phase-hdr h3{font-size:13px;color:var(--accent);margin:0}
+.srpg-phase-hdr .b{font-size:11px;padding:3px 10px}
+.srpg-phase-chain{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-bottom:6px;min-height:22px}
+.srpg-phase-atom{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;color:#fff;white-space:nowrap;cursor:default}
+.srpg-phase-arrow{color:var(--dim);font-size:10px;margin:0 1px}
+.srpg-phase-summ{font-size:11px;color:var(--dim);margin-top:4px}
+.srpg-phase-opts{font-size:10px;color:#77aacc;margin-top:2px}
+.srpg-phase-empty{color:var(--dim);font-size:11px;font-style:italic}
+.srpg-phase-maps{display:flex;gap:8px;margin-top:6px}
+.srpg-phase-maps canvas{border:1px solid var(--border);border-radius:2px}
+.srpg-phase-maps .pm-label{font-size:9px;color:var(--dim);text-align:center;margin-top:1px}
+</style>
+</head>
+<body>
+<div id="load-screen">
+  <h1>RMMZ Database Editor</h1>
+  <p>RPG Maker MZ 프로젝트 폴더를 선택하면 모든 데이터베이스를 편집할 수 있습니다.</p>
+  <button class="lb" onclick="document.getElementById('fi').click()">📁 프로젝트 폴더 선택</button>
+  <input type="file" id="fi" webkitdirectory style="display:none" onchange="loadFolder(this)">
+  <div id="load-bar-wrap"><div id="load-bar-fill"></div><div id="load-bar-pct">0%</div></div>
+  <div id="load-status"></div>
+  <div id="load-detail"></div>
+</div>
+
+<div id="editor-screen">
+  <div class="hdr">
+    <h1>RMMZ Database Editor</h1>
+    <span class="info" id="proj-name">📁 Project</span>
+    <div class="tools">
+      <button class="b" onclick="showJsonAll()">전체 JSON 보기</button>
+      <button class="b p" onclick="showJsonCurrent()">현재 탭 JSON</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="main">
+    <div id="list-panel">
+      <div class="lhdr">
+        <input placeholder="검색..." oninput="filterList(this.value)" id="search-input">
+        <button class="b sm p" onclick="addEntry()">+추가</button>
+        <button class="b sm" onclick="delEntry()" style="color:var(--err)">삭제</button>
+      </div>
+      <div id="item-list"></div>
+    </div>
+    <div id="detail-panel"></div>
+  </div>
+</div>
+
+<div class="json-overlay" id="json-overlay">
+  <div class="json-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="color:var(--bright);font-size:14px" id="json-title">JSON</h3>
+      <div style="display:flex;gap:6px">
+        <button class="b sm ok" onclick="copyJson()">복사</button>
+        <button class="b sm" onclick="closeJson()">닫기</button>
+      </div>
+    </div>
+    <textarea id="json-area" readonly></textarea>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="Project1/js/plugins/src/srpgPhaseParser.js"></script>
+<script>
+// ================================================================
+// RMMZ DATA DEFINITIONS
+// ================================================================
+const TABS = [
+  {key:'actors',label:'액터',file:'Actors.json'},
+  {key:'classes',label:'직업',file:'Classes.json'},
+  {key:'skills',label:'스킬',file:'Skills.json'},
+  {key:'items',label:'아이템',file:'Items.json'},
+  {key:'weapons',label:'무기',file:'Weapons.json'},
+  {key:'armors',label:'방어구',file:'Armors.json'},
+  {key:'enemies',label:'적',file:'Enemies.json'},
+  {key:'troops',label:'적그룹',file:'Troops.json'},
+  {key:'states',label:'상태',file:'States.json'},
+  {key:'commonEvents',label:'커먼이벤트',file:'CommonEvents.json'},
+  {key:'system',label:'시스템',file:'System.json'},
+  {key:'tilesets',label:'타일셋',file:'Tilesets.json'},
+];
+
+const PARAM_NAMES = ['최대HP','최대MP','공격력','방어력','마법력','마법방어','민첩성','운'];
+const SCOPE = {0:'없음',1:'적 단체',2:'적 전체',3:'적 1~2체',4:'적 2체',5:'적 3체',6:'적 4체',7:'아군 단체',8:'아군 전체',9:'아군 전사자',10:'아군 전사자 전체',11:'사용자',12:'아군 단체(전사자 포함)',13:'아군 전체(전사자 포함)',14:'전체'};
+const HIT_TYPE = {0:'확정',1:'물리',2:'마법'};
+const OCCASION = {0:'항상',1:'전투만',2:'메뉴만',3:'사용불가'};
+const DAMAGE_TYPE = {0:'없음',1:'HP 데미지',2:'MP 데미지',3:'HP 회복',4:'MP 회복',5:'HP 흡수',6:'MP 흡수'};
+const RESTRICTION = {0:'없음',1:'적 공격',2:'아군 랜덤 공격',3:'아군 공격',4:'행동 불가'};
+const MOTION = {0:'일반',1:'이상',2:'수면',3:'전사',4:'피해',5:'회피'};
+const TRIGGER_CE = {0:'없음',1:'자동실행',2:'병렬처리'};
+const WTYPE = {0:'없음',1:'단검',2:'검',3:'도끼',4:'창',5:'활',6:'철퇴',7:'지팡이',8:'활',9:'격투',10:'총',11:'클로',12:'글러브'};
+const ATYPE = {0:'없음',1:'일반방어구',2:'마법방어구',3:'경장',4:'중장',5:'소형방패',6:'대형방패'};
+const ETYPE = {0:'없음',1:'무기',2:'방패',3:'머리',4:'몸',5:'장신구'};
+const TRAIT_CODES = {11:'속성내성',12:'약화내성',13:'상태내성',14:'상태무효',21:'능력치',22:'추가능력치',23:'특수능력치',31:'공격속성',32:'공격상태',33:'공격속도',34:'공격추가횟수',41:'스킬타입추가',42:'스킬타입봉인',43:'스킬추가',44:'스킬봉인',51:'무기타입장착',52:'방어구타입장착',53:'장비고정',54:'장비봉인',55:'슬롯타입',61:'행동추가',62:'특수플래그',63:'소멸효과',64:'파티능력'};
+
+// ================================================================
+// STATE
+// ================================================================
+let DB = {}; // key -> raw JSON array
+let activeTab = 'actors';
+let selectedId = -1;
+let projectName = '';
+
+// ================================================================
+// LOADING
+// ================================================================
+function setLoad(p,s,d){
+  document.getElementById('load-bar-wrap').style.display='block';
+  document.getElementById('load-bar-fill').style.width=p+'%';
+  document.getElementById('load-bar-pct').textContent=Math.round(p)+'%';
+  if(s!==undefined)document.getElementById('load-status').textContent=s;
+  if(d!==undefined)document.getElementById('load-detail').textContent=d;
+}
+
+async function loadFolder(input){
+  const files=Array.from(input.files);if(!files.length)return;
+  setLoad(0,'프로젝트 검증 중...','game.rmmzproject 탐색');
+  const rf=files.find(f=>f.name==='game.rmmzproject');
+  if(!rf){alert('유효한 RMMZ 프로젝트를 찾을 수 없습니다.');return;}
+  const root=rf.webkitRelativePath.split('/').slice(0,-1).join('/');
+  const fm={};for(const f of files){fm[f.webkitRelativePath.substring(root.length+1)]=f;}
+  projectName=root.split('/').pop()||'Project';
+  setLoad(5,`${projectName} 로딩 중...`,`총 ${files.length}개 파일`);
+  await new Promise(r=>setTimeout(r,50));
+  const total=TABS.length;
+  for(let i=0;i<TABS.length;i++){
+    const t=TABS[i];
+    const pct=5+(i/total)*90;
+    setLoad(pct,`데이터 로딩: ${t.label}`,`data/${t.file}`);
+    const file=fm[`data/${t.file}`];
+    if(file){try{DB[t.key]=JSON.parse(await file.text());}catch(e){DB[t.key]=[];}}
+    else DB[t.key]=[];
+    await new Promise(r=>setTimeout(r,30));
+  }
+  setLoad(98,'에디터 초기화..','');
+  await new Promise(r=>setTimeout(r,100));
+  const counts=TABS.map(t=>{const d=DB[t.key];return Array.isArray(d)?d.filter(x=>x).length:(typeof d==='object'?1:0);});
+  setLoad(100,'로드 완료!',TABS.map((t,i)=>`${t.label}:${counts[i]}`).join(' · '));
+  setTimeout(()=>{
+    document.getElementById('load-screen').style.display='none';
+    document.getElementById('editor-screen').style.display='flex';
+    document.getElementById('proj-name').textContent='📁 '+projectName;
+    buildTabs();switchTab('actors');
+  },600);
+}
+
+// ================================================================
+// TABS
+// ================================================================
+function buildTabs(){
+  const el=document.getElementById('tabs');
+  el.innerHTML=TABS.map(t=>{
+    const d=DB[t.key];
+    const cnt=Array.isArray(d)?d.filter(x=>x).length:(t.key==='system'?'':'0');
+    return `<div class="tab${t.key===activeTab?' active':''}" onclick="switchTab('${t.key}')">${t.label}<span class="cnt">${cnt}</span></div>`;
+  }).join('');
+}
+
+function switchTab(key){
+  activeTab=key;selectedId=-1;
+  buildTabs();renderList();
+  document.getElementById('detail-panel').innerHTML='<p style="color:var(--dim);text-align:center;padding:40px">항목을 선택하세요</p>';
+  if(key==='system') renderSystemDetail();
+}
+
+// ================================================================
+// LIST
+// ================================================================
+function getEntries(){
+  const d=DB[activeTab];
+  if(!Array.isArray(d))return[];
+  return d.map((item,i)=>({idx:i,item})).filter(e=>e.item);
+}
+
+function renderList(filter=''){
+  if(activeTab==='system'){document.getElementById('item-list').innerHTML='<div class="li sel"><span class="lid">-</span><span class="lnm">System</span></div>';return;}
+  const entries=getEntries();
+  const fl=filter.toLowerCase();
+  const el=document.getElementById('item-list');
+  el.innerHTML=entries.filter(e=>{
+    if(!fl)return true;
+    const n=(e.item.name||'').toLowerCase();
+    return n.includes(fl)||String(e.item.id).includes(fl);
+  }).map(e=>{
+    const nm=e.item.name||'';
+    return `<div class="li${e.item.id===selectedId?' sel':''}" onclick="selectItem(${e.item.id})">
+      <span class="lid">${e.item.id}</span>
+      <span class="lnm${nm?'':' empty'}">${esc(nm)||'(빈 항목)'}</span>
+    </div>`;
+  }).join('');
+}
+
+function filterList(v){renderList(v);}
+
+function selectItem(id){
+  selectedId=id;renderList(document.getElementById('search-input').value);renderDetail();
+}
+
+function addEntry(){
+  if(activeTab==='system')return;
+  const d=DB[activeTab];if(!Array.isArray(d))return;
+  const maxId=d.reduce((m,x)=>x&&x.id>m?x.id:m,0);
+  const newId=maxId+1;
+  const tpl=createTemplate(activeTab,newId);
+  d.push(tpl);
+  selectedId=newId;buildTabs();renderList();renderDetail();
+}
+
+function delEntry(){
+  if(activeTab==='system'||selectedId<0)return;
+  const d=DB[activeTab];
+  const idx=d.findIndex(x=>x&&x.id===selectedId);
+  if(idx<0)return;
+  d[idx]=null;selectedId=-1;buildTabs();renderList();
+  document.getElementById('detail-panel').innerHTML='<p style="color:var(--dim);text-align:center;padding:40px">삭제됨</p>';
+}
+
+// ================================================================
+// TEMPLATES
+// ================================================================
+function createTemplate(tab,id){
+  const base={id,name:'',note:''};
+  switch(tab){
+    case 'actors':return{...base,battlerName:'',characterIndex:0,characterName:'',classId:1,equips:[0,0,0,0,0],faceIndex:0,faceName:'',traits:[],initialLevel:1,maxLevel:99,nickname:'',profile:''};
+    case 'classes':return{...base,expParams:[30,20,30,30],traits:[],learnings:[],params:Array(8).fill(null).map(()=>Array(100).fill(10))};
+    case 'skills':return{...base,animationId:-1,damage:{critical:false,elementId:0,formula:'0',type:0,variance:20},description:'',effects:[],hitType:0,iconIndex:0,message1:'',message2:'',mpCost:0,occasion:1,repeats:1,requiredWtypeId1:0,requiredWtypeId2:0,scope:0,speed:0,stypeId:1,successRate:100,tpCost:0,tpGain:0,messageType:0};
+    case 'items':return{...base,animationId:-1,consumable:true,damage:{critical:false,elementId:0,formula:'0',type:0,variance:20},description:'',effects:[],hitType:0,iconIndex:0,itypeId:1,occasion:0,price:0,repeats:1,scope:0,speed:0,successRate:100,tpGain:0};
+    case 'weapons':return{...base,animationId:-1,description:'',etypeId:1,traits:[],iconIndex:0,params:[0,0,0,0,0,0,0,0],price:0,wtypeId:1};
+    case 'armors':return{...base,atypeId:1,description:'',etypeId:2,traits:[],iconIndex:0,params:[0,0,0,0,0,0,0,0],price:0};
+    case 'enemies':return{...base,actions:[],battlerHue:0,battlerName:'',dropItems:[{dataId:1,denominator:1,kind:0},{dataId:1,denominator:1,kind:0},{dataId:1,denominator:1,kind:0}],exp:0,traits:[],gold:0,params:[100,0,10,10,10,10,10,10]};
+    case 'troops':return{...base,members:[],pages:[]};
+    case 'states':return{...base,autoRemovalTiming:0,chanceByDamage:100,iconIndex:0,maxTurns:1,message1:'',message2:'',message3:'',message4:'',minTurns:1,motion:0,overlay:0,priority:50,releaseByDamage:false,removeAtBattleEnd:false,removeByDamage:false,removeByRestriction:false,removeByWalking:false,restriction:0,stepsToRemove:100,traits:[],messageType:0};
+    case 'commonEvents':return{...base,list:[{code:0,indent:0,parameters:[]}],switchId:1,trigger:0};
+    case 'tilesets':return{...base,flags:[],mode:1,tilesetNames:['','','','','','','','','']};
+    default:return base;
+  }
+}
+
+// ================================================================
+// DETAIL RENDERERS
+// ================================================================
+function renderDetail(){
+  if(activeTab==='system'){renderSystemDetail();return;}
+  const item=findItem(activeTab,selectedId);
+  if(!item){document.getElementById('detail-panel').innerHTML='';return;}
+  const el=document.getElementById('detail-panel');
+  let h='';
+  switch(activeTab){
+    case 'actors':h=renderActor(item);break;
+    case 'classes':h=renderClass(item);break;
+    case 'skills':h=renderSkill(item);break;
+    case 'items':h=renderItem(item);break;
+    case 'weapons':h=renderWeapon(item);break;
+    case 'armors':h=renderArmor(item);break;
+    case 'enemies':h=renderEnemy(item);break;
+    case 'troops':h=renderTroop(item);break;
+    case 'states':h=renderState(item);break;
+    case 'commonEvents':h=renderCE(item);break;
+    case 'tilesets':h=renderTileset(item);break;
+    default:h=`<pre style="font-size:11px;color:var(--dim)">${esc(JSON.stringify(item,null,2))}</pre>`;
+  }
+  el.innerHTML=h;
+  // SRPG 그리드 범위 에디터 초기화
+  SRE._activeEditors = [];
+  requestAnimationFrame(() => {
+    if (activeTab === 'skills' && document.getElementById('sre-skill-editor')) {
+      SRE.createEditor('sre-skill-editor', 'skill');
+      if (document.getElementById('srpg-phase-skill')) SrpgPhaseUI.create('srpg-phase-skill');
+    } else if (activeTab === 'items' && document.getElementById('sre-item-editor')) {
+      SRE.createEditor('sre-item-editor', 'item');
+    } else if (activeTab === 'weapons' && document.getElementById('sre-weapon-editor')) {
+      SRE.createEditor('sre-weapon-editor', 'weapon');
+      if (document.getElementById('srpg-phase-weapon')) SrpgPhaseUI.create('srpg-phase-weapon');
+    }
+  });
+}
+
+function F(label,field,val,type='text',extra=''){
+  const v=esc(val??'');
+  if(type==='textarea')return`<div class="field"><label>${label}</label><textarea onchange="setF('${field}',this.value)">${v}</textarea></div>`;
+  if(type==='number')return`<div class="field"><label>${label}</label><input type="number" value="${v}" onchange="setF('${field}',+this.value)" ${extra}></div>`;
+  if(type==='checkbox')return`<div class="field"><label><input type="checkbox" ${val?'checked':''} onchange="setF('${field}',this.checked)"> ${label}</label></div>`;
+  if(type==='select')return`<div class="field"><label>${label}</label><select onchange="setF('${field}',+this.value)">${extra}</select></div>`;
+  return`<div class="field"><label>${label}</label><input value="${v}" onchange="setF('${field}',this.value)" ${extra}></div>`;
+}
+function opts(map,sel){return Object.entries(map).map(([k,v])=>`<option value="${k}"${+k===sel?' selected':''}>${k}: ${v}</option>`).join('');}
+
+function renderActor(a){
+  return`<div class="section">기본 정보</div>
+  <div class="field-row">${F('이름','name',a.name)} ${F('별명','nickname',a.nickname)}</div>
+  <div class="field-row">${F('직업 ID','classId',a.classId,'number')} ${F('초기 레벨','initialLevel',a.initialLevel,'number')} ${F('최대 레벨','maxLevel',a.maxLevel,'number')}</div>
+  <div class="section">그래픽</div>
+  <div class="field-row">${F('페이스','faceName',a.faceName)} ${F('인덱스','faceIndex',a.faceIndex,'number')}</div>
+  <div class="field-row">${F('캐릭터','characterName',a.characterName)} ${F('인덱스','characterIndex',a.characterIndex,'number')}</div>
+  ${F('배틀러','battlerName',a.battlerName)}
+  <div class="section">초기 장비 (ID)</div>
+  <div class="params-grid">${(a.equips||[]).map((v,i)=>`<div class="field"><label>${['무기','방패','머리','몸','장신구'][i]||i}</label><input type="number" value="${v}" onchange="setFA('equips',${i},+this.value)"></div>`).join('')}</div>
+  ${F('프로필','profile',a.profile,'textarea')}
+  ${F('메모','note',a.note,'textarea')}
+  ${renderTraits(a.traits)}`;
+}
+
+function renderClass(c){
+  return`<div class="section">기본</div>
+  ${F('이름','name',c.name)}
+  <div class="section">경험치 곡선</div>
+  <div class="params-grid">${['기본값','보정','증가도A','증가도B'].map((l,i)=>`<div class="field"><label>${l}</label><input type="number" value="${(c.expParams||[])[i]||0}" onchange="setFA('expParams',${i},+this.value)"></div>`).join('')}</div>
+  <div class="section">스킬 학습</div>
+  <table class="trait-tbl"><tr><th>레벨</th><th>스킬ID</th><th>메모</th></tr>
+  ${(c.learnings||[]).map((l,i)=>`<tr><td><input type="number" value="${l.level}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('learnings',${i},'level',+this.value)"></td><td><input type="number" value="${l.skillId}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('learnings',${i},'skillId',+this.value)"></td><td>${l.note||''}</td></tr>`).join('')}
+  </table>
+  ${F('메모','note',c.note,'textarea')}
+  ${renderTraits(c.traits)}`;
+}
+
+function renderSkill(s){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',s.name)} ${F('아이콘','iconIndex',s.iconIndex,'number')} ${F('스킬타입','stypeId',s.stypeId,'number')}</div>
+  ${F('설명','description',s.description,'textarea')}
+  <div class="field-row">${F('범위','scope',s.scope,'select',opts(SCOPE,s.scope))} ${F('적중','hitType',s.hitType,'select',opts(HIT_TYPE,s.hitType))}</div>
+  <div class="field-row">${F('사용 가능','occasion',s.occasion,'select',opts(OCCASION,s.occasion))} ${F('성공률','successRate',s.successRate,'number')}</div>
+  <div class="field-row">${F('MP 소비','mpCost',s.mpCost,'number')} ${F('TP 소비','tpCost',s.tpCost,'number')} ${F('TP 획득','tpGain',s.tpGain,'number')}</div>
+  <div class="field-row">${F('속도보정','speed',s.speed,'number')} ${F('반복','repeats',s.repeats,'number')} ${F('애니메이션','animationId',s.animationId,'number')}</div>
+  <div class="section">데미지</div>
+  ${renderDamage(s.damage)}
+  <div class="section">메시지</div>
+  <div class="field-row">${F('메시지1','message1',s.message1)} ${F('메시지2','message2',s.message2)}</div>
+  <div class="section">SRPG 범위</div>
+  <div id="sre-skill-editor"></div>
+  <div class="section">SRPG Phase 파이프라인</div>
+  <div id="srpg-phase-skill"></div>
+  ${F('메모','note',s.note,'textarea')}
+  ${renderEffects(s.effects)}`;
+}
+
+function renderItem(it){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',it.name)} ${F('아이콘','iconIndex',it.iconIndex,'number')} ${F('가격','price',it.price,'number')}</div>
+  ${F('설명','description',it.description,'textarea')}
+  <div class="field-row">${F('범위','scope',it.scope,'select',opts(SCOPE,it.scope))} ${F('사용 가능','occasion',it.occasion,'select',opts(OCCASION,it.occasion))}</div>
+  <div class="field-row">${F('적중','hitType',it.hitType,'select',opts(HIT_TYPE,it.hitType))} ${F('성공률','successRate',it.successRate,'number')}</div>
+  ${F('소비','consumable',it.consumable,'checkbox')}
+  <div class="section">데미지</div>
+  ${renderDamage(it.damage)}
+  <div class="section">SRPG 범위</div>
+  <div id="sre-item-editor"></div>
+  ${F('메모','note',it.note,'textarea')}
+  ${renderEffects(it.effects)}`;
+}
+
+function renderWeapon(w){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',w.name)} ${F('아이콘','iconIndex',w.iconIndex,'number')} ${F('가격','price',w.price,'number')}</div>
+  ${F('설명','description',w.description,'textarea')}
+  <div class="field-row">${F('무기타입','wtypeId',w.wtypeId,'select',opts(WTYPE,w.wtypeId))} ${F('애니메이션','animationId',w.animationId,'number')}</div>
+  <div class="section">능력치 보정</div>
+  <div class="params-grid">${PARAM_NAMES.map((n,i)=>`<div class="field"><label>${n}</label><input type="number" value="${(w.params||[])[i]||0}" onchange="setFA('params',${i},+this.value)"></div>`).join('')}</div>
+  <div class="section">SRPG 범위</div>
+  <div id="sre-weapon-editor"></div>
+  <div class="section">SRPG Phase 파이프라인</div>
+  <div id="srpg-phase-weapon"></div>
+  ${F('메모','note',w.note,'textarea')}
+  ${renderTraits(w.traits)}`;
+}
+
+function renderArmor(a){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',a.name)} ${F('아이콘','iconIndex',a.iconIndex,'number')} ${F('가격','price',a.price,'number')}</div>
+  ${F('설명','description',a.description,'textarea')}
+  <div class="field-row">${F('방어구타입','atypeId',a.atypeId,'select',opts(ATYPE,a.atypeId))} ${F('장비타입','etypeId',a.etypeId,'select',opts(ETYPE,a.etypeId))}</div>
+  <div class="section">능력치 보정</div>
+  <div class="params-grid">${PARAM_NAMES.map((n,i)=>`<div class="field"><label>${n}</label><input type="number" value="${(a.params||[])[i]||0}" onchange="setFA('params',${i},+this.value)"></div>`).join('')}</div>
+  ${F('메모','note',a.note,'textarea')}
+  ${renderTraits(a.traits)}`;
+}
+
+function renderEnemy(e){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',e.name)} ${F('배틀러','battlerName',e.battlerName)} ${F('배틀러 색조','battlerHue',e.battlerHue,'number')}</div>
+  <div class="field-row">${F('경험치','exp',e.exp,'number')} ${F('골드','gold',e.gold,'number')}</div>
+  <div class="section">능력치</div>
+  <div class="params-grid">${PARAM_NAMES.map((n,i)=>`<div class="field"><label>${n}</label><input type="number" value="${(e.params||[])[i]||0}" onchange="setFA('params',${i},+this.value)"></div>`).join('')}</div>
+  <div class="section">드롭 아이템</div>
+  <table class="trait-tbl"><tr><th>종류</th><th>ID</th><th>확률(1/N)</th></tr>
+  ${(e.dropItems||[]).map((d,i)=>`<tr>
+    <td><select style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('dropItems',${i},'kind',+this.value)">
+      <option value="0"${d.kind===0?' selected':''}>없음</option><option value="1"${d.kind===1?' selected':''}>아이템</option><option value="2"${d.kind===2?' selected':''}>무기</option><option value="3"${d.kind===3?' selected':''}>방어구</option></select></td>
+    <td><input type="number" value="${d.dataId}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('dropItems',${i},'dataId',+this.value)"></td>
+    <td><input type="number" value="${d.denominator}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('dropItems',${i},'denominator',+this.value)"></td></tr>`).join('')}
+  </table>
+  ${F('메모','note',e.note,'textarea')}
+  ${renderTraits(e.traits)}`;
+}
+
+function renderTroop(t){
+  return`<div class="section">기본</div>
+  ${F('이름','name',t.name)}
+  <div class="section">멤버</div>
+  <table class="trait-tbl"><tr><th>적ID</th><th>X</th><th>Y</th><th>숨김</th></tr>
+  ${(t.members||[]).map((m,i)=>`<tr>
+    <td><input type="number" value="${m.enemyId}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('members',${i},'enemyId',+this.value)"></td>
+    <td><input type="number" value="${m.x}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('members',${i},'x',+this.value)"></td>
+    <td><input type="number" value="${m.y}" style="width:50px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px" onchange="setNested('members',${i},'y',+this.value)"></td>
+    <td>${m.hidden?'Y':'N'}</td></tr>`).join('')}
+  </table>
+  ${F('메모','note',t.note||'','textarea')}`;
+}
+
+function renderState(s){
+  return`<div class="section">기본</div>
+  <div class="field-row">${F('이름','name',s.name)} ${F('아이콘','iconIndex',s.iconIndex,'number')} ${F('우선도','priority',s.priority,'number')}</div>
+  ${F('제한','restriction',s.restriction,'select',opts(RESTRICTION,s.restriction))}
+  <div class="section">자동 해제</div>
+  <div class="field-row">${F('해제 타이밍','autoRemovalTiming',s.autoRemovalTiming,'select',`<option value="0"${s.autoRemovalTiming===0?' selected':''}>없음</option><option value="1"${s.autoRemovalTiming===1?' selected':''}>행동 종료</option><option value="2"${s.autoRemovalTiming===2?' selected':''}>턴 종료</option>`)}</div>
+  <div class="field-row">${F('최소 턴','minTurns',s.minTurns,'number')} ${F('최대 턴','maxTurns',s.maxTurns,'number')}</div>
+  ${F('전투 종료 시 해제','removeAtBattleEnd',s.removeAtBattleEnd,'checkbox')}
+  ${F('데미지로 해제','removeByDamage',s.removeByDamage,'checkbox')}
+  ${F('걸어서 해제','removeByWalking',s.removeByWalking,'checkbox')}
+  <div class="section">메시지</div>
+  ${F('메시지1','message1',s.message1)} ${F('메시지2','message2',s.message2)}
+  ${F('메시지3','message3',s.message3)} ${F('메시지4','message4',s.message4)}
+  <div class="field-row">${F('모션','motion',s.motion,'select',opts(MOTION,s.motion))}</div>
+  ${F('메모','note',s.note,'textarea')}
+  ${renderTraits(s.traits)}`;
+}
+
+function renderCE(ce){
+  return`<div class="section">기본</div>
+  ${F('이름','name',ce.name)}
+  ${F('트리거','trigger',ce.trigger,'select',opts(TRIGGER_CE,ce.trigger))}
+  ${F('스위치 ID','switchId',ce.switchId,'number')}
+  <div class="section">이벤트 커맨드</div>
+  <p style="font-size:11px;color:var(--dim)">커맨드 ${(ce.list||[]).length}개 — EventEditor에서 편집 가능</p>
+  <pre style="font-size:10px;color:var(--dim);max-height:300px;overflow:auto;background:var(--bg);padding:8px;border-radius:4px;margin-top:6px">${esc(JSON.stringify(ce.list,null,1).substring(0,2000))}</pre>`;
+}
+
+function renderTileset(ts){
+  return`<div class="section">기본</div>
+  ${F('이름','name',ts.name)}
+  ${F('모드','mode',ts.mode,'number')}
+  <div class="section">타일셋 이미지</div>
+  ${(ts.tilesetNames||[]).map((n,i)=>`<div class="field"><label>타일셋 ${['A1','A2','A3','A4','A5','B','C','D','E'][i]||i}</label><input value="${esc(n)}" onchange="setFA('tilesetNames',${i},this.value)"></div>`).join('')}
+  ${F('메모','note',ts.note||'','textarea')}`;
+}
+
+function renderSystemDetail(){
+  const s=DB.system;if(!s||typeof s!=='object'){document.getElementById('detail-panel').innerHTML='<p style="color:var(--dim)">System 데이터 없음</p>';return;}
+  selectedId=-1;
+  document.getElementById('detail-panel').innerHTML=`
+  <div class="section">게임 정보</div>
+  <div class="field-row">
+    <div class="field"><label>게임 제목</label><input value="${esc(s.gameTitle||'')}" onchange="DB.system.gameTitle=this.value"></div>
+    <div class="field"><label>통화 단위</label><input value="${esc(s.currencyUnit||'')}" onchange="DB.system.currencyUnit=this.value"></div>
+    <div class="field"><label>로케일</label><input value="${esc(s.locale||'')}" onchange="DB.system.locale=this.value"></div>
+  </div>
+  <div class="section">파티 초기 멤버</div>
+  <div class="params-grid">${(s.partyMembers||[]).map((m,i)=>`<div class="field"><label>멤버${i+1}</label><input type="number" value="${m}" onchange="DB.system.partyMembers[${i}]=+this.value"></div>`).join('')}</div>
+  <div class="section">장비 타입</div>
+  ${(s.equipTypes||[]).map((t,i)=>i===0?'':`<div class="field"><label>슬롯 ${i}</label><input value="${esc(t)}" onchange="DB.system.equipTypes[${i}]=this.value"></div>`).join('')}
+  <div class="section">용어 (elements)</div>
+  ${(s.elements||[]).map((e,i)=>i===0?'':`<div class="field"><label>속성 ${i}</label><input value="${esc(e)}" onchange="DB.system.elements[${i}]=this.value"></div>`).join('')}
+  <div class="section">스킬 타입</div>
+  ${(s.skillTypes||[]).map((t,i)=>i===0?'':`<div class="field"><label>타입 ${i}</label><input value="${esc(t)}" onchange="DB.system.skillTypes[${i}]=this.value"></div>`).join('')}
+  `;
+}
+
+// Shared sub-renderers
+function renderDamage(d){
+  if(!d)return'';
+  return`<div class="field-row">
+    <div class="field"><label>타입</label><select onchange="setDF('type',+this.value)">${opts(DAMAGE_TYPE,d.type)}</select></div>
+    <div class="field"><label>속성 ID</label><input type="number" value="${d.elementId}" onchange="setDF('elementId',+this.value)"></div>
+  </div>
+  <div class="field"><label>공식</label><input value="${esc(d.formula||'')}" onchange="setDF('formula',this.value)" style="font-family:monospace"></div>
+  <div class="field-row">
+    <div class="field"><label>분산도</label><input type="number" value="${d.variance}" onchange="setDF('variance',+this.value)"></div>
+    <div class="field"><label><input type="checkbox" ${d.critical?'checked':''} onchange="setDF('critical',this.checked)"> 크리티컬</label></div>
+  </div>`;
+}
+
+function renderTraits(traits){
+  if(!traits||!traits.length)return'<div class="section">특성 <span style="color:var(--dim);font-weight:normal">(없음)</span></div>';
+  return`<div class="section">특성 (${traits.length}개)</div>
+  <table class="trait-tbl"><tr><th>코드</th><th>타입</th><th>데이터ID</th><th>값</th></tr>
+  ${traits.map(t=>`<tr><td>${t.code}</td><td>${TRAIT_CODES[t.code]||'?'}</td><td>${t.dataId}</td><td>${t.value}</td></tr>`).join('')}
+  </table>`;
+}
+
+function renderEffects(effects){
+  if(!effects||!effects.length)return'<div class="section">효과 <span style="color:var(--dim);font-weight:normal">(없음)</span></div>';
+  return`<div class="section">효과 (${effects.length}개)</div>
+  <table class="trait-tbl"><tr><th>코드</th><th>데이터ID</th><th>값1</th><th>값2</th></tr>
+  ${effects.map(e=>`<tr><td>${e.code}</td><td>${e.dataId}</td><td>${e.value1}</td><td>${e.value2}</td></tr>`).join('')}
+  </table>`;
+}
+
+// ================================================================
+// DATA SETTERS
+// ================================================================
+function findItem(tab,id){
+  const d=DB[tab];if(!Array.isArray(d))return null;
+  return d.find(x=>x&&x.id===id)||null;
+}
+
+function setF(field,val){
+  const item=findItem(activeTab,selectedId);if(!item)return;
+  item[field]=val;renderList(document.getElementById('search-input').value);
+}
+
+function setFA(field,idx,val){
+  const item=findItem(activeTab,selectedId);if(!item||!item[field])return;
+  item[field][idx]=val;
+}
+
+function setNested(field,idx,key,val){
+  const item=findItem(activeTab,selectedId);if(!item||!item[field]||!item[field][idx])return;
+  item[field][idx][key]=val;
+}
+
+function setDF(key,val){
+  const item=findItem(activeTab,selectedId);if(!item||!item.damage)return;
+  item.damage[key]=val;
+}
+
+// ================================================================
+// JSON EXPORT
+// ================================================================
+function showJsonCurrent(){
+  const d=DB[activeTab];
+  const title=TABS.find(t=>t.key===activeTab)?.label||activeTab;
+  document.getElementById('json-title').textContent=`${title} JSON`;
+  document.getElementById('json-area').value=JSON.stringify(d,null,2);
+  document.getElementById('json-overlay').classList.add('show');
+}
+
+function showJsonAll(){
+  document.getElementById('json-title').textContent='전체 Database JSON';
+  const out={};TABS.forEach(t=>{out[t.file]=DB[t.key];});
+  document.getElementById('json-area').value=JSON.stringify(out,null,2);
+  document.getElementById('json-overlay').classList.add('show');
+}
+
+function closeJson(){document.getElementById('json-overlay').classList.remove('show');}
+function copyJson(){navigator.clipboard.writeText(document.getElementById('json-area').value).then(()=>toast('클립보드에 복사됨'));}
+
+// ================================================================
+// SRPG GRID RANGE EDITOR
+// ================================================================
+const SRE = {
+  // ─── 상수 ───
+  CELL: 22,               // 셀 크기 (px)
+  REACH_SIZE: 13,          // Reach 그리드 최대 크기
+  AREA_SIZE: 7,            // Area 그리드 최대 크기
+  PREVIEW_CELL: 8,         // 미리보기 셀 크기
+
+  // 색상
+  CLR_BG: '#181a2a',
+  CLR_GRID: '#2a2d4a',
+  CLR_UNIT: '#44cc88',     // 사용 주체 (녹색)
+  CLR_TARGET: '#ee3355',   // 탄착점 (빨간색)
+  CLR_REACH: '#3388ff',    // 도달 가능 (파란색)
+  CLR_AREA: '#ff8833',     // 효과 범위 (주황색)
+  CLR_EMPTY: '#222540',    // 비활성 셀
+  CLR_READONLY: '#333',    // 읽기전용
+
+  // ADJ4 폴백
+  ADJ4: [{dx:0,dy:1},{dx:0,dy:-1},{dx:1,dy:0},{dx:-1,dy:0}],
+
+  // ─── note 태그 파싱/직렬화 ───
+  parseTileList(str) {
+    if (!str || !str.trim()) return null;
+    return str.split('|').map(p => {
+      const [dx, dy] = p.split(',').map(Number);
+      return {dx, dy};
+    }).filter(t => !isNaN(t.dx) && !isNaN(t.dy));
+  },
+
+  serializeTileList(tiles) {
+    if (!tiles || !tiles.length) return '';
+    return tiles.map(t => `${t.dx},${t.dy}`).join('|');
+  },
+
+  noteTagValue(note, tag) {
+    const m = note.match(new RegExp(`<${tag}:([^>]+)>`, 'i'));
+    return m ? m[1].trim() : null;
+  },
+
+  noteTagBool(note, tag) {
+    return new RegExp(`<${tag}(\\s*>|:true\\s*>)`, 'i').test(note);
+  },
+
+  parseNoteRange(note) {
+    const reach = this.parseTileList(this.noteTagValue(note, 'srpgReach'));
+    const area = this.parseTileList(this.noteTagValue(note, 'srpgArea'));
+    const rotate = this.noteTagBool(note, 'srpgRotate');
+    const selfTarget = this.noteTagBool(note, 'srpgSelfTarget');
+    return { reach, area, rotate, selfTarget };
+  },
+
+  buildNoteTags(reach, area, rotate, selfTarget) {
+    let tags = '';
+    if (reach && reach.length) tags += `<srpgReach:${this.serializeTileList(reach)}>\n`;
+    if (area && area.length) tags += `<srpgArea:${this.serializeTileList(area)}>\n`;
+    if (rotate) tags += '<srpgRotate>\n';
+    if (selfTarget) tags += '<srpgSelfTarget>\n';
+    return tags;
+  },
+
+  // note에서 SRPG 태그만 제거
+  stripSrpgTags(note) {
+    return (note || '').replace(/<srpg(Reach|Area|Rotate|SelfTarget)(:[^>]*)?\>\s*/gi, '').trim();
+  },
+
+  // note 업데이트: 기존 태그 제거 후 새 태그 추가
+  updateNote(note, reach, area, rotate, selfTarget) {
+    let clean = this.stripSrpgTags(note);
+    const tags = this.buildNoteTags(reach, area, rotate, selfTarget);
+    if (tags) clean = (clean ? clean + '\n' : '') + tags;
+    return clean.trim();
+  },
+
+  // ─── 방향 회전 ───
+  rotateTile(t, dir) {
+    switch(dir) {
+      case 8: return {dx: t.dx, dy: t.dy};
+      case 6: return {dx: -t.dy, dy: t.dx};
+      case 2: return {dx: -t.dx, dy: -t.dy};
+      case 4: return {dx: t.dy, dy: -t.dx};
+      default: return {dx: t.dx, dy: t.dy};
+    }
+  },
+
+  // ─── 그리드 캔버스 그리기 ───
+  drawGrid(canvas, size, tiles, centerColor, tileColor, readonly) {
+    const ctx = canvas.getContext('2d');
+    const C = this.CELL;
+    const half = Math.floor(size / 2);
+    canvas.width = size * C;
+    canvas.height = size * C;
+
+    const tileSet = new Set(tiles.map(t => `${t.dx},${t.dy}`));
+
+    for (let gy = 0; gy < size; gy++) {
+      for (let gx = 0; gx < size; gx++) {
+        const dx = gx - half;
+        const dy = gy - half;
+        const x = gx * C, y = gy * C;
+
+        // 배경
+        ctx.fillStyle = this.CLR_EMPTY;
+        ctx.fillRect(x, y, C, C);
+
+        // 중심점
+        if (dx === 0 && dy === 0) {
+          ctx.fillStyle = centerColor;
+          ctx.fillRect(x, y, C, C);
+        } else if (tileSet.has(`${dx},${dy}`)) {
+          ctx.fillStyle = readonly ? this.CLR_READONLY : tileColor;
+          ctx.fillRect(x, y, C, C);
+        }
+
+        // 그리드 선
+        ctx.strokeStyle = this.CLR_GRID;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(x + 0.5, y + 0.5, C - 1, C - 1);
+      }
+    }
+  },
+
+  // 미리보기 그리드 (방사형 4방향)
+  drawPreview(canvas, reachTiles, areaTiles, dir) {
+    const C = this.PREVIEW_CELL;
+    const size = 9; // 미리보기 크기
+    const half = Math.floor(size / 2);
+    canvas.width = size * C;
+    canvas.height = size * C;
+    const ctx = canvas.getContext('2d');
+
+    const rotReach = (reachTiles || []).map(t => this.rotateTile(t, dir));
+    const rotArea = (areaTiles || []).map(t => this.rotateTile(t, dir));
+    const reachSet = new Set(rotReach.map(t => `${t.dx},${t.dy}`));
+    const areaSet = new Set(rotArea.map(t => `${t.dx},${t.dy}`));
+
+    for (let gy = 0; gy < size; gy++) {
+      for (let gx = 0; gx < size; gx++) {
+        const dx = gx - half, dy = gy - half;
+        const x = gx * C, y = gy * C;
+        ctx.fillStyle = this.CLR_BG;
+        ctx.fillRect(x, y, C, C);
+        if (dx === 0 && dy === 0) {
+          ctx.fillStyle = this.CLR_UNIT;
+        } else if (reachSet.has(`${dx},${dy}`)) {
+          ctx.fillStyle = this.CLR_REACH;
+        } else if (areaSet.has(`${dx},${dy}`)) {
+          ctx.fillStyle = this.CLR_AREA;
+        }
+        ctx.fillRect(x + 0.5, y + 0.5, C - 1, C - 1);
+      }
+    }
+  },
+
+  // ─── 프리셋 생성기 ───
+  makeDiamond(r) {
+    const t = [];
+    for (let dx = -r; dx <= r; dx++)
+      for (let dy = -r; dy <= r; dy++)
+        if (Math.abs(dx) + Math.abs(dy) <= r && !(dx === 0 && dy === 0))
+          t.push({dx, dy});
+    return t;
+  },
+  makeCross(r) {
+    const t = [];
+    for (let i = 1; i <= r; i++) {
+      t.push({dx: i, dy: 0}, {dx: -i, dy: 0}, {dx: 0, dy: i}, {dx: 0, dy: -i});
+    }
+    return t;
+  },
+  makeLine(len) {
+    const t = [];
+    for (let i = 1; i <= len; i++) t.push({dx: 0, dy: -i});
+    return t;
+  },
+  makeRing(minR, maxR) {
+    const t = [];
+    for (let dx = -maxR; dx <= maxR; dx++)
+      for (let dy = -maxR; dy <= maxR; dy++) {
+        const d = Math.abs(dx) + Math.abs(dy);
+        if (d >= minR && d <= maxR && !(dx === 0 && dy === 0)) t.push({dx, dy});
+      }
+    return t;
+  },
+
+  // ─── 에디터 인스턴스 생성 ───
+  // type: 'skill' | 'weapon' | 'item'
+  _activeEditors: [],
+
+  createEditor(containerId, type) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    const item = findItem(activeTab, selectedId);
+    if (!item) return;
+
+    const note = item.note || '';
+    const parsed = this.parseNoteRange(note);
+
+    // 무기인 경우 오버라이드 체크
+    let isOverride = false;
+    let wtypeDefault = null;
+    if (type === 'weapon') {
+      const wt = item.wtypeId || 0;
+      // 무기 유형 기본값 확인 (WTYPE_RANGE_DEFAULTS 에 해당)
+      wtypeDefault = this._getWtypeDefault(wt);
+      isOverride = !!(parsed.reach || parsed.area);
+    }
+
+    const readonly = (type === 'weapon' && !isOverride);
+
+    // 현재 상태
+    let reachTiles = parsed.reach || (type === 'weapon' && wtypeDefault ? wtypeDefault.reach : null) || [...this.ADJ4];
+    let areaTiles = parsed.area || [{dx:0, dy:0}];
+    let rotate = parsed.rotate;
+    let selfTarget = parsed.selfTarget;
+
+    const editor = { containerId, type, reachTiles, areaTiles, rotate, selfTarget, readonly };
+    this._activeEditors.push(editor);
+
+    // ─── DOM 생성 ───
+    const wrap = document.createElement('div');
+    wrap.className = 'srpg-range-editor' + (readonly ? ' sre-readonly' : '');
+
+    // 무기 오버라이드 토글
+    if (type === 'weapon') {
+      const ovDiv = document.createElement('div');
+      ovDiv.className = 'sre-override';
+      const wtName = WTYPE[item.wtypeId] || '?';
+      if (isOverride) {
+        ovDiv.innerHTML = `<span>개별 오버라이드 활성 (유형: ${wtName})</span>`;
+        const btnReset = document.createElement('button');
+        btnReset.textContent = '유형 기본값으로 되돌리기';
+        btnReset.onclick = () => {
+          item.note = this.stripSrpgTags(item.note);
+          this.createEditor(containerId, type);
+          renderList(document.getElementById('search-input').value);
+        };
+        ovDiv.appendChild(btnReset);
+      } else {
+        ovDiv.innerHTML = `<span>현재 적용: 유형 기본값 (${wtName})</span>`;
+        const btnOv = document.createElement('button');
+        btnOv.textContent = '개별 오버라이드 활성화';
+        btnOv.onclick = () => {
+          // 기본값을 복사하여 note에 기록
+          const defReach = wtypeDefault ? wtypeDefault.reach : this.ADJ4;
+          item.note = this.updateNote(item.note, defReach, null, false, false);
+          this.createEditor(containerId, type);
+          renderList(document.getElementById('search-input').value);
+        };
+        ovDiv.appendChild(btnOv);
+      }
+      wrap.appendChild(ovDiv);
+    }
+
+    // 헤더
+    const hdr = document.createElement('div');
+    hdr.className = 'sre-header';
+    hdr.innerHTML = '<h3>SRPG 범위 설정</h3>';
+
+    // 모드 선택
+    const modeSelect = document.createElement('select');
+    modeSelect.innerHTML = '<option value="targeted">탄착형 (타일 지정)</option><option value="radial">방사형 (방향 선택)</option>';
+    modeSelect.value = rotate ? 'radial' : 'targeted';
+    modeSelect.disabled = readonly;
+    modeSelect.onchange = () => {
+      rotate = modeSelect.value === 'radial';
+      editor.rotate = rotate;
+      syncToNote();
+      updatePreviews();
+    };
+    hdr.appendChild(modeSelect);
+
+    // 자기 대상 체크
+    const selfLbl = document.createElement('label');
+    const selfChk = document.createElement('input');
+    selfChk.type = 'checkbox';
+    selfChk.checked = selfTarget;
+    selfChk.disabled = readonly;
+    selfChk.onchange = () => {
+      selfTarget = selfChk.checked;
+      editor.selfTarget = selfTarget;
+      syncToNote();
+    };
+    selfLbl.appendChild(selfChk);
+    selfLbl.appendChild(document.createTextNode('자기 자신 대상'));
+    hdr.appendChild(selfLbl);
+
+    wrap.appendChild(hdr);
+
+    // 그리드 영역
+    const gridsDiv = document.createElement('div');
+    gridsDiv.className = 'sre-grids';
+
+    // Reach 그리드
+    const reachWrap = document.createElement('div');
+    reachWrap.className = 'sre-grid-wrap';
+    reachWrap.innerHTML = '<h4>Reach (도달 범위)</h4>';
+    const reachCanvas = document.createElement('canvas');
+    reachWrap.appendChild(reachCanvas);
+    gridsDiv.appendChild(reachWrap);
+
+    // Area 그리드
+    const areaWrap = document.createElement('div');
+    areaWrap.className = 'sre-grid-wrap';
+    areaWrap.innerHTML = '<h4>Area (효과 범위)</h4>';
+    const areaCanvas = document.createElement('canvas');
+    areaWrap.appendChild(areaCanvas);
+    gridsDiv.appendChild(areaWrap);
+
+    wrap.appendChild(gridsDiv);
+
+    // 범례
+    const legend = document.createElement('div');
+    legend.className = 'sre-legend';
+    legend.innerHTML = `
+      <span><span class="dot" style="background:${this.CLR_UNIT}"></span>사용 주체</span>
+      <span><span class="dot" style="background:${this.CLR_TARGET}"></span>탄착점</span>
+      <span><span class="dot" style="background:${this.CLR_REACH}"></span>도달 가능</span>
+      <span><span class="dot" style="background:${this.CLR_AREA}"></span>효과 범위</span>
+    `;
+    wrap.appendChild(legend);
+
+    // 프리셋 도구
+    if (!readonly) {
+      const tools = document.createElement('div');
+      tools.className = 'sre-tools';
+      const presets = [
+        ['인접4', () => { reachTiles = [...this.ADJ4]; editor.reachTiles = reachTiles; }],
+        ['다이아 2', () => { reachTiles = this.makeDiamond(2); editor.reachTiles = reachTiles; }],
+        ['다이아 3', () => { reachTiles = this.makeDiamond(3); editor.reachTiles = reachTiles; }],
+        ['십자 2', () => { reachTiles = this.makeCross(2); editor.reachTiles = reachTiles; }],
+        ['직선 3', () => { reachTiles = this.makeLine(3); editor.reachTiles = reachTiles; }],
+        ['링 2~4', () => { reachTiles = this.makeRing(2, 4); editor.reachTiles = reachTiles; }],
+        ['Reach 클리어', () => { reachTiles = [...this.ADJ4]; editor.reachTiles = reachTiles; }],
+        ['Area 클리어', () => { areaTiles = [{dx:0, dy:0}]; editor.areaTiles = areaTiles; }],
+      ];
+      for (const [label, fn] of presets) {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.onclick = () => { fn(); syncToNote(); redraw(); };
+        tools.appendChild(btn);
+      }
+      // 대칭 버튼
+      const symBtn = document.createElement('button');
+      symBtn.textContent = '4방향 대칭';
+      symBtn.onclick = () => {
+        const newTiles = new Set(reachTiles.map(t => `${t.dx},${t.dy}`));
+        for (const t of [...reachTiles]) {
+          newTiles.add(`${-t.dx},${t.dy}`);
+          newTiles.add(`${t.dx},${-t.dy}`);
+          newTiles.add(`${-t.dx},${-t.dy}`);
+        }
+        reachTiles = [...newTiles].map(s => { const [dx,dy] = s.split(',').map(Number); return {dx,dy}; })
+          .filter(t => !(t.dx === 0 && t.dy === 0));
+        editor.reachTiles = reachTiles;
+        syncToNote(); redraw();
+      };
+      tools.appendChild(symBtn);
+      wrap.appendChild(tools);
+    }
+
+    // 미리보기 (방사형일 때)
+    const previewRow = document.createElement('div');
+    previewRow.className = 'sre-preview-row';
+    previewRow.style.display = rotate ? 'flex' : 'none';
+    const previewCanvases = {};
+    for (const [dir, label] of [[8,'↑'],[6,'→'],[2,'↓'],[4,'←']]) {
+      const pw = document.createElement('div');
+      pw.className = 'sre-preview-wrap';
+      pw.innerHTML = `<span>${label}</span>`;
+      const pc = document.createElement('canvas');
+      pw.appendChild(pc);
+      previewRow.appendChild(pw);
+      previewCanvases[dir] = pc;
+    }
+    wrap.appendChild(previewRow);
+
+    // note 미리보기
+    const notePreview = document.createElement('div');
+    notePreview.className = 'sre-note';
+    wrap.appendChild(notePreview);
+
+    container.appendChild(wrap);
+
+    // ─── 그리기 함수 ───
+    const redraw = () => {
+      this.drawGrid(reachCanvas, this.REACH_SIZE, reachTiles, this.CLR_UNIT, this.CLR_REACH, readonly);
+      this.drawGrid(areaCanvas, this.AREA_SIZE, areaTiles.filter(t => !(t.dx===0&&t.dy===0)), this.CLR_TARGET, this.CLR_AREA, readonly);
+      updatePreviews();
+      notePreview.textContent = this.buildNoteTags(reachTiles, areaTiles.length > 1 ? areaTiles : null, rotate, selfTarget).trim() || '(기본값)';
+    };
+
+    const updatePreviews = () => {
+      previewRow.style.display = rotate ? 'flex' : 'none';
+      if (rotate) {
+        for (const dir of [8, 6, 2, 4]) {
+          this.drawPreview(previewCanvases[dir], reachTiles, areaTiles, dir);
+        }
+      }
+    };
+
+    // ─── note 동기화 ───
+    const syncToNote = () => {
+      if (readonly) return;
+      const currentItem = findItem(activeTab, selectedId);
+      if (!currentItem) return;
+      const hasCustomReach = reachTiles.length > 0;
+      const hasCustomArea = areaTiles.length > 1 || (areaTiles.length === 1 && !(areaTiles[0].dx===0 && areaTiles[0].dy===0));
+      currentItem.note = this.updateNote(
+        currentItem.note,
+        hasCustomReach ? reachTiles : null,
+        hasCustomArea ? areaTiles : null,
+        rotate,
+        selfTarget
+      );
+      redraw();
+    };
+
+    // ─── 마우스 이벤트 (Reach) ───
+    if (!readonly) {
+      this._setupCanvasEvents(reachCanvas, this.REACH_SIZE, reachTiles, editor, 'reachTiles', syncToNote, redraw);
+      this._setupCanvasEvents(areaCanvas, this.AREA_SIZE, areaTiles, editor, 'areaTiles', syncToNote, redraw);
+    }
+
+    // 초기 그리기
+    redraw();
+    return editor;
+  },
+
+  _setupCanvasEvents(canvas, size, tiles, editor, tilesKey, syncFn, redrawFn) {
+    const half = Math.floor(size / 2);
+    const C = this.CELL;
+    let painting = false;
+    let erasing = false;
+
+    const getCellFromEvent = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const gx = Math.floor((e.clientX - rect.left) / C);
+      const gy = Math.floor((e.clientY - rect.top) / C);
+      return { dx: gx - half, dy: gy - half };
+    };
+
+    const toggleCell = (dx, dy, forceRemove) => {
+      if (dx === 0 && dy === 0) return; // 중심 불가
+      const idx = tiles.findIndex(t => t.dx === dx && t.dy === dy);
+      if (forceRemove || (idx >= 0 && !painting)) {
+        if (idx >= 0) tiles.splice(idx, 1);
+      } else if (idx < 0) {
+        tiles.push({dx, dy});
+      }
+      editor[tilesKey] = tiles;
+    };
+
+    canvas.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const c = getCellFromEvent(e);
+      if (c.dx === 0 && c.dy === 0) return;
+      erasing = e.button === 2;
+      painting = !erasing;
+      if (erasing) {
+        toggleCell(c.dx, c.dy, true);
+      } else {
+        // 토글
+        const exists = tiles.some(t => t.dx === c.dx && t.dy === c.dy);
+        if (exists) {
+          painting = false; erasing = true;
+          toggleCell(c.dx, c.dy, true);
+        } else {
+          toggleCell(c.dx, c.dy, false);
+        }
+      }
+      syncFn();
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!painting && !erasing) return;
+      const c = getCellFromEvent(e);
+      if (c.dx === 0 && c.dy === 0) return;
+      if (erasing) {
+        toggleCell(c.dx, c.dy, true);
+      } else {
+        if (!tiles.some(t => t.dx === c.dx && t.dy === c.dy)) {
+          toggleCell(c.dx, c.dy, false);
+        }
+      }
+      syncFn();
+    });
+
+    canvas.addEventListener('mouseup', () => { painting = false; erasing = false; });
+    canvas.addEventListener('mouseleave', () => { painting = false; erasing = false; });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  },
+
+  // ─── 무기 유형 기본값 가져오기 ───
+  _getWtypeDefault(wtypeId) {
+    // 하드코딩 기본값 (SRPG_Core.js의 WTYPE_HARDCODED와 동기)
+    const ADJ4 = this.ADJ4;
+    const ADJ8 = [...ADJ4, {dx:1,dy:1},{dx:1,dy:-1},{dx:-1,dy:1},{dx:-1,dy:-1}];
+    const defaults = {
+      1: { reach: ADJ4 },        // 단검
+      2: { reach: ADJ4 },        // 검
+      3: { reach: ADJ4 },        // 철퇴
+      4: { reach: ADJ4 },        // 도끼
+      5: { reach: ADJ8 },        // 채찍
+      6: { reach: [...ADJ4, {dx:0,dy:-2}] }, // 지팡이
+      7: { reach: this.makeRing(2, 4) },     // 활
+      8: { reach: this.makeRing(2, 3) },     // 석궁
+      9: { reach: this.makeRing(2, 5) },     // 총
+      10: { reach: ADJ4 },       // 클로
+      11: { reach: ADJ4 },       // 글러브
+      12: { reach: [...ADJ4, {dx:0,dy:-2}] }, // 창
+    };
+    return defaults[wtypeId] || { reach: ADJ4 };
+  },
+
+  // ─── 무기 유형 기본값 에디터 (weapons 탭 전용) ───
+  createWtypeEditor(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    // $dataSystem에서 weaponTypes 읽기
+    const sys = DB.system;
+    const weaponTypes = sys ? (sys.weaponTypes || []) : [];
+    if (weaponTypes.length <= 1) {
+      container.innerHTML = '<div style="color:var(--dim);font-size:11px">무기 유형 없음 (System.json 로드 필요)</div>';
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'srpg-range-editor';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'sre-header';
+    hdr.innerHTML = '<h3>무기 유형별 기본 공격 범위</h3>';
+
+    const wtSelect = document.createElement('select');
+    for (let i = 1; i < weaponTypes.length; i++) {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `${i}: ${weaponTypes[i]}`;
+      wtSelect.appendChild(opt);
+    }
+    hdr.appendChild(wtSelect);
+    wrap.appendChild(hdr);
+
+    // 그리드
+    const gridsDiv = document.createElement('div');
+    gridsDiv.className = 'sre-grids';
+    const reachWrap = document.createElement('div');
+    reachWrap.className = 'sre-grid-wrap';
+    reachWrap.innerHTML = '<h4>Reach</h4>';
+    const reachCanvas = document.createElement('canvas');
+    reachWrap.appendChild(reachCanvas);
+    gridsDiv.appendChild(reachWrap);
+    wrap.appendChild(gridsDiv);
+
+    const noteDiv = document.createElement('div');
+    noteDiv.className = 'sre-note';
+    wrap.appendChild(noteDiv);
+
+    container.appendChild(wrap);
+
+    // 상태
+    let currentWtype = 1;
+    let currentTiles = [...(this._getWtypeDefault(1).reach)];
+
+    const redraw = () => {
+      this.drawGrid(reachCanvas, this.REACH_SIZE, currentTiles, this.CLR_UNIT, this.CLR_REACH, false);
+      noteDiv.textContent = `유형 ${currentWtype} (${weaponTypes[currentWtype]}): ${this.serializeTileList(currentTiles) || 'ADJ4'}`;
+    };
+
+    wtSelect.onchange = () => {
+      currentWtype = +wtSelect.value;
+      currentTiles = [...(this._getWtypeDefault(currentWtype).reach)];
+      redraw();
+      // 이벤트 재연결
+      setupEvents();
+    };
+
+    const setupEvents = () => {
+      // 기존 이벤트 제거를 위해 캔버스 교체
+      const newCanvas = reachCanvas.cloneNode(true);
+      reachCanvas.parentNode.replaceChild(newCanvas, reachCanvas);
+      Object.assign(reachCanvas, {remove: undefined}); // 참조 정리 안함, 단순 교체
+      // 새 캔버스에 이벤트 바인딩
+      this._setupCanvasEvents(newCanvas, this.REACH_SIZE, currentTiles,
+        {reachTiles: currentTiles}, 'reachTiles',
+        () => { redraw(); },
+        () => { redraw(); }
+      );
+      // reachCanvas 참조 갱신은 필요없음 — 이미 DOM에 있음
+    };
+
+    this._setupCanvasEvents(reachCanvas, this.REACH_SIZE, currentTiles,
+      {reachTiles: currentTiles}, 'reachTiles',
+      () => { redraw(); },
+      () => { redraw(); }
+    );
+
+    redraw();
+  },
+};
+
+// ================================================================
+// UTIL
+// ================================================================
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2000);}
+
+document.getElementById('json-overlay').addEventListener('click',e=>{if(e.target.id==='json-overlay')closeJson();});
+document.addEventListener('keydown',e=>{if(e.code==='Escape')closeJson();});
+
+// ================================================================
+// PROGRAMMATIC API (for Claude browser automation)
+// ================================================================
+window.API = {};
+
+/** Load all database from pre-read data. data = {Actors:[...], Skills:[...], ...} */
+window.API.loadDB = function(data){
+  TABS.forEach(t=>{
+    // Support multiple key formats: 'Actors.json', 'actors', 'Actors'
+    const capKey = t.key.charAt(0).toUpperCase() + t.key.slice(1);
+    if(data[t.file]) DB[t.key]=data[t.file];
+    else if(data[t.key]) DB[t.key]=data[t.key];
+    else if(data[capKey]) DB[t.key]=data[capKey];
+  });
+  projectName=data.projectName||'Project';
+  document.getElementById('load-screen').style.display='none';
+  document.getElementById('editor-screen').style.display='flex';
+  document.getElementById('proj-name').textContent='📁 '+projectName;
+  buildTabs();switchTab(activeTab);
+  return 'OK: DB loaded';
+};
+
+/** Switch to a tab. */
+window.API.switchTab = function(key){switchTab(key);return 'OK: '+key;};
+
+/** Select item by ID in current tab. */
+window.API.select = function(id){selectItem(id);return 'OK: selected '+id;};
+
+/** Get current item data. */
+window.API.getItem = function(tab,id){return findItem(tab||activeTab,id||selectedId);};
+
+/** Set field on current item. */
+window.API.setField = function(field,val){setF(field,val);renderDetail();return 'OK';};
+
+/** Set nested field. */
+window.API.setArrayField = function(field,idx,val){setFA(field,idx,val);return 'OK';};
+
+/** Bulk update: set multiple fields at once. */
+window.API.updateItem = function(tab,id,props){
+  const item=findItem(tab||activeTab,id);if(!item)return 'Error: not found';
+  Object.assign(item,props);
+  if(item.id===selectedId){renderList();renderDetail();}
+  return 'OK';
+};
+
+/** Add new entry. Returns new ID. */
+window.API.addItem = function(tab,props){
+  const key=tab||activeTab;
+  const d=DB[key];if(!Array.isArray(d))return'Error';
+  const maxId=d.reduce((m,x)=>x&&x.id>m?x.id:m,0);
+  const tpl=createTemplate(key,maxId+1);
+  Object.assign(tpl,props||{},{ id:maxId+1 });
+  d.push(tpl);buildTabs();renderList();
+  return tpl.id;
+};
+
+
+
+// ================================================================
+// SRPG PHASE PIPELINE UI — 요약 패널 + 팝업 에디터 연동
+// ================================================================
+const SrpgPhaseUI = {
+  CAT_COLORS: {
+    movement:'#4fc3f7', offense:'#ef5350',
+    placement:'#ab47bc', reaction:'#ffa726'
+  },
+  ATOM_CATS: {
+    dash:'movement',push:'movement',pull:'movement',escape:'movement',
+    leap:'movement',swap:'movement',throw:'movement',
+    hit:'offense',proj:'offense',chain:'offense',multi:'offense',dot:'offense',
+    summon:'placement',terrain:'placement',trap:'placement',
+    counter:'reaction',interrupt:'reaction',reflect:'reaction',trigger:'reaction'
+  },
+
+  _popup: null,
+  _currentContainer: null,
+
+  /** Phase 패널 생성 */
+  create(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    const P = window.SrpgPhaseParser;
+    if (!P) {
+      container.innerHTML = '<div class="srpg-phase-empty">srpgPhaseParser.js 로드 안됨</div>';
+      return;
+    }
+
+    const item = findItem(activeTab, selectedId);
+    if (!item) return;
+    const note = item.note || '';
+
+    const phases = P.parsePhases(note);
+    const reach = P.parseReach(note);
+    const area = P.parseArea(note);
+    const opts = P.parseOptions(note);
+    const legacy = P.parseLegacyProj(note);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'srpg-phase-panel';
+
+    // 헤더 + 버튼
+    const hdr = document.createElement('div');
+    hdr.className = 'srpg-phase-hdr';
+    hdr.innerHTML = '<h3>Phase 파이프라인</h3>';
+    const btn = document.createElement('button');
+    btn.className = 'b p';
+    btn.textContent = '\ud83d\udd27 \uc2a4\ud0ac \uc124\uacc4';
+    btn.onclick = () => this.openPopup(containerId);
+    hdr.appendChild(btn);
+    wrap.appendChild(hdr);
+
+    // Phase 체인
+    const chain = document.createElement('div');
+    chain.className = 'srpg-phase-chain';
+    if (!phases.length) {
+      chain.innerHTML = '<span class="srpg-phase-empty">(Phase \uc5c6\uc74c \u2014 \ubc94\uc704\ub9cc \uc124\uc815\ub428)</span>';
+    } else {
+      phases.forEach((p, i) => {
+        if (i > 0) {
+          const arrow = document.createElement('span');
+          arrow.className = 'srpg-phase-arrow';
+          arrow.textContent = '\u2192';
+          chain.appendChild(arrow);
+        }
+        const badge = document.createElement('span');
+        badge.className = 'srpg-phase-atom';
+        const cat = this.ATOM_CATS[p.type] || 'offense';
+        badge.style.background = this.CAT_COLORS[cat] || '#666';
+        let lbl = (P.ATOM_LABELS[p.type] || p.type);
+        if (p['if']) lbl += ' \u26a1';
+        if (p.repeat && p.repeat > 1) lbl += ' \u00d7' + p.repeat;
+        badge.textContent = lbl;
+        badge.title = JSON.stringify(p, null, 1);
+        chain.appendChild(badge);
+      });
+    }
+    wrap.appendChild(chain);
+
+    // 요약 텍스트
+    const summ = document.createElement('div');
+    summ.className = 'srpg-phase-summ';
+    const parts = [];
+    if (phases.length) parts.push(P.summarizePhases(phases));
+    if (reach.mode === 'range') parts.push('\uc0ac\uac70\ub9ac:' + reach.rangeN);
+    else if (reach.coords.length) parts.push('\uc0ac\uac70\ub9ac:\ucee4\uc2a4\ud140(' + reach.coords.length + '\uce78)');
+    if (area.length) parts.push('\ubc94\uc704:' + area.length + '\uce78');
+    if (legacy) parts.push('\ud22c\uc0ac\uccb4:' + (legacy.srpgProjectile || 'yes'));
+    summ.textContent = parts.join(' | ') || '(\uc124\uc815 \uc5c6\uc74c)';
+    wrap.appendChild(summ);
+
+    // 옵션
+    if (opts.rotate || opts.selfTarget) {
+      const optDiv = document.createElement('div');
+      optDiv.className = 'srpg-phase-opts';
+      const optParts = [];
+      if (opts.rotate) optParts.push('\ud68c\uc804');
+      if (opts.selfTarget) optParts.push('\uc790\uac00\ub300\uc0c1');
+      optDiv.textContent = '\u2699 ' + optParts.join(', ');
+      wrap.appendChild(optDiv);
+    }
+
+    container.appendChild(wrap);
+  },
+
+  /** skill_editor.html 팝업 열기 */
+  openPopup(containerId) {
+    this._currentContainer = containerId;
+    const item = findItem(activeTab, selectedId);
+    if (!item) return;
+
+    const url = 'Project1/tools/skill_editor.html';
+    const w = 1200, h = 850;
+    const left = Math.max(0, Math.round((screen.width - w) / 2));
+    const top = Math.max(0, Math.round((screen.height - h) / 2));
+
+    this._popup = window.open(url, 'srpg_skill_editor',
+      'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+      ',menubar=no,toolbar=no,status=no,resizable=yes');
+
+    if (this._popup) {
+      const note = item.note || '';
+      const name = item.name || '';
+      const self = this;
+      const send = () => {
+        try {
+          self._popup.postMessage({ type: 'srpgSkillLoad', note, name }, '*');
+        } catch(e) {}
+      };
+      // 팝업 로드 후 전송
+      this._popup.addEventListener('load', () => setTimeout(send, 300));
+      setTimeout(send, 1500); // 폴백
+    }
+  },
+
+  /** postMessage 수신 처리 */
+  handleMessage(e) {
+    if (!e.data || e.data.type !== 'srpgSkillSave') return;
+
+    const item = findItem(activeTab, selectedId);
+    if (!item) return;
+
+    // 노트 업데이트
+    item.note = e.data.note || '';
+
+    // 메모 textarea 동기화
+    const noteTA = document.querySelector('#detail-panel textarea');
+    if (noteTA) noteTA.value = item.note;
+
+    // Phase 패널 갱신
+    if (this._currentContainer) {
+      this.create(this._currentContainer);
+    }
+
+    // SRE 범위 에디터도 갱신 (노트가 바뀌었으므로)
+    SRE._activeEditors = [];
+    if (activeTab === 'skills' && document.getElementById('sre-skill-editor')) {
+      SRE.createEditor('sre-skill-editor', 'skill');
+    } else if (activeTab === 'weapons' && document.getElementById('sre-weapon-editor')) {
+      SRE.createEditor('sre-weapon-editor', 'weapon');
+    }
+
+    // 목록도 갱신
+    renderList(document.getElementById('search-input')?.value || '');
+    toast('Phase 데이터 반영됨');
+  }
+};
+
+// postMessage 리스너
+window.addEventListener('message', (e) => SrpgPhaseUI.handleMessage(e));
+
+/** Delete entry. */
+window.API.deleteItem = function(tab,id){
+  const d=DB[tab||activeTab];if(!Array.isArray(d))return'Error';
+  const idx=d.findIndex(x=>x&&x.id===id);if(idx<0)return'Error';
+  d[idx]=null;buildTabs();renderList();return 'OK';
+};
+
+/** Get full data for a tab as JSON. */
+window.API.getData = function(tab){return DB[tab||activeTab];};
+
+/** Export single tab as JSON string. */
+window.API.exportTab = function(tab){return JSON.stringify(DB[tab||activeTab]);};
+
+/** Export all as {filename: data} object. */
+window.API.exportAll = function(){
+  const out={};TABS.forEach(t=>{out[t.file]=DB[t.key];});return out;
+};
+
+/** Get status overview. */
+window.API.status = function(){
+  return{project:projectName,activeTab,selectedId,
+    counts:Object.fromEntries(TABS.map(t=>[t.key,Array.isArray(DB[t.key])?DB[t.key].filter(x=>x).length:1]))};
+};
+
+console.log('%c[RMMZ DB Editor] API ready. window.API.*','color:#4ecca3;font-weight:bold');
+</script>
+</body>
+</html>

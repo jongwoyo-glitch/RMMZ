@@ -1,0 +1,13070 @@
+// ===================== SECTION: GitHub Adapter =====================
+const GitHubAdapter = {
+    _token: null,
+    _owner: null,
+    _repo: null,
+    _branch: 'main',
+    _projectDir: 'Project1', // RMMZ 프로젝트 하위 폴더
+    _shaCache: {},   // path -> sha
+    _treeCache: null, // full repo tree
+
+    get configured() { return !!(this._token && this._owner && this._repo); },
+    get rawBase() { return `https://raw.githubusercontent.com/${this._owner}/${this._repo}/${this._branch}`; },
+    _projPath(path) { return this._projectDir ? this._projectDir + '/' + path : path; },
+    get apiBase() { return `https://api.github.com/repos/${this._owner}/${this._repo}`; },
+
+    init(owner, repo, token, branch, projectDir) {
+        this._owner = owner;
+        this._repo = repo;
+        this._token = token;
+        this._branch = branch || 'main';
+        this._projectDir = projectDir || 'Project1';
+        this._shaCache = {};
+        this._treeCache = null;
+    },
+
+    _headers() {
+        const h = { 'Accept': 'application/vnd.github.v3+json' };
+        if (this._token) h['Authorization'] = 'token ' + this._token;
+        return h;
+    },
+
+    // ── Tree: 전체 파일 목록 한 번에 가져오기 ──
+    async fetchTree() {
+        const resp = await fetch(this.apiBase + '/git/trees/' + this._branch + '?recursive=1', { headers: this._headers() });
+        if (!resp.ok) throw new Error('GitHub tree fetch failed: ' + resp.status);
+        const data = await resp.json();
+        this._treeCache = data.tree; // [{path, sha, type, size}, ...]
+        // sha 캐시 구축
+        for (const node of data.tree) {
+            this._shaCache[node.path] = node.sha;
+        }
+        return data.tree;
+    },
+
+    // ── 파일 읽기 (텍스트) ──
+    async readFile(path) {
+        // raw.githubusercontent.com 은 rate limit 없음
+        const resp = await fetch(this.rawBase + '/' + path, { cache: 'no-store' });
+        if (!resp.ok) return null;
+        return await resp.text();
+    },
+
+    // ── 파일 읽기 (JSON) ──
+    async readJSON(path) {
+        const text = await this.readFile(path);
+        if (!text) return null;
+        return JSON.parse(text);
+    },
+
+    // ── 파일 읽기 (base64 — 이미지용) ──
+    async readFileBase64(path) {
+        const resp = await fetch(this.rawBase + '/' + path, { cache: 'no-store' });
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const r = reader.result;
+                const idx = r.indexOf(',');
+                resolve(idx >= 0 ? r.substring(idx + 1) : r);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    },
+
+    // ── 파일 읽기 (DataURL — 이미지 프리뷰용) ──
+    async readFileDataUrl(path) {
+        const resp = await fetch(this.rawBase + '/' + path, { cache: 'no-store' });
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    },
+
+    // ── 이미지 URL (직접 접근용) ──
+    getImageUrl(path) {
+        return this.rawBase + '/' + path;
+    },
+
+    // ── 디렉토리 목록 ──
+    async listDir(dirPath) {
+        // 트리 캐시가 있으면 거기서 필터링
+        if (this._treeCache) {
+            const prefix = dirPath.endsWith('/') ? dirPath : dirPath + '/';
+            return this._treeCache
+                .filter(n => n.path.startsWith(prefix) && n.path.indexOf('/', prefix.length) === -1)
+                .map(n => ({
+                    name: n.path.substring(prefix.length),
+                    path: n.path,
+                    type: n.type === 'tree' ? 'dir' : 'file',
+                    size: n.size || 0,
+                    sha: n.sha
+                }));
+        }
+        // 캐시 없으면 API 호출
+        const resp = await fetch(this.apiBase + '/contents/' + dirPath + '?ref=' + this._branch, { headers: this._headers() });
+        if (!resp.ok) return [];
+        const items = await resp.json();
+        if (!Array.isArray(items)) return [];
+        return items.map(i => ({
+            name: i.name,
+            path: i.path,
+            type: i.type,
+            size: i.size || 0,
+            sha: i.sha
+        }));
+    },
+
+    // ── SHA 조회 (쓰기용) ──
+    async getSha(path) {
+        if (this._shaCache[path]) return this._shaCache[path];
+        const resp = await fetch(this.apiBase + '/contents/' + path + '?ref=' + this._branch, { headers: this._headers() });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        this._shaCache[path] = data.sha;
+        return data.sha;
+    },
+
+    // ── 단일 파일 쓰기 (커밋) ──
+    async writeFile(path, content, message) {
+        const sha = await this.getSha(path);
+        const body = {
+            message: message || '[RMMZStudio] Update ' + path,
+            content: btoa(unescape(encodeURIComponent(content))), // UTF-8 → base64
+            branch: this._branch
+        };
+        if (sha) body.sha = sha;
+        const resp = await fetch(this.apiBase + '/contents/' + path, {
+            method: 'PUT',
+            headers: { ...this._headers(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error('GitHub write failed: ' + resp.status + ' ' + (err.message || ''));
+        }
+        const result = await resp.json();
+        this._shaCache[path] = result.content.sha;
+        return result;
+    },
+
+    // ── 바이너리 파일 쓰기 (이미지 업로드용) ──
+    async writeFileBinary(path, base64Data, message) {
+        const sha = await this.getSha(path);
+        const body = {
+            message: message || '[RMMZStudio] Upload ' + path,
+            content: base64Data, // 이미 base64
+            branch: this._branch
+        };
+        if (sha) body.sha = sha;
+        const resp = await fetch(this.apiBase + '/contents/' + path, {
+            method: 'PUT',
+            headers: { ...this._headers(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error('GitHub binary write failed: ' + resp.status);
+        const result = await resp.json();
+        this._shaCache[path] = result.content.sha;
+        return result;
+    },
+
+    // ── 프로젝트 전체 로드 (loadProject 호환 포맷) ──
+    async loadProject() {
+        const tree = await this.fetchTree();
+        const dataPrefix = this._projectDir ? this._projectDir + '/data/' : 'data/';
+        const dataFiles = tree.filter(n => n.type === 'blob' && n.path.startsWith(dataPrefix) && n.path.endsWith('.json'));
+        const database = {};
+        const maps = {};
+        let mapInfos = {};
+
+        // 병렬 로드 (최대 10개씩 배치)
+        const batches = [];
+        for (let i = 0; i < dataFiles.length; i += 10) {
+            batches.push(dataFiles.slice(i, i + 10));
+        }
+        for (const batch of batches) {
+            await Promise.all(batch.map(async (f) => {
+                const name = f.path.replace(dataPrefix, '').replace('.json', '');
+                const json = await this.readJSON(f.path);
+                if (!json) return;
+                if (name === 'MapInfos') {
+                    mapInfos = json;
+                } else if (/^Map\d{3}$/.test(name)) {
+                    const id = parseInt(name.replace('Map', ''), 10);
+                    maps[id] = json;
+                } else {
+                    database[name] = json;
+                }
+            }));
+        }
+
+        // plugins.js 로드
+        let plugins = [];
+        const pluginsText = await this.readFile(this._projPath('js/plugins.js'));
+        if (pluginsText) {
+            try {
+                const match = pluginsText.match(/\$plugins\s*=\s*(\[[\s\S]*?\]);/);
+                if (match) plugins = JSON.parse(match[1]);
+            } catch(e) { console.warn('[GitHub] plugins.js parse error:', e); }
+        }
+
+        return { database, maps, mapInfos, plugins };
+    },
+
+    // ── 프로젝트 저장 (Git Trees API로 한 번에 커밋) ──
+    async saveProject(exportData, statusCallback) {
+        const db = exportData.database || {};
+        const maps = exportData.maps || {};
+        const mapInfos = exportData.mapInfos || {};
+        const plugins = exportData.plugins || [];
+
+        const files = [];
+
+        // DB 파일
+        for (const [key, val] of Object.entries(db)) {
+            files.push({ path: this._projPath('data/' + key + '.json'), content: JSON.stringify(val) });
+        }
+
+        // 맵 파일
+        for (const [id, data] of Object.entries(maps)) {
+            const mapName = 'Map' + String(id).padStart(3, '0');
+            files.push({ path: this._projPath('data/' + mapName + '.json'), content: JSON.stringify(data) });
+        }
+
+        // MapInfos
+        files.push({ path: this._projPath('data/MapInfos.json'), content: JSON.stringify(mapInfos) });
+
+        // plugins.js
+        const pluginsContent = '// Generated by RMMZStudio\nvar $plugins =\n' + JSON.stringify(plugins, null, 2) + ';\n';
+        files.push({ path: this._projPath('js/plugins.js'), content: pluginsContent });
+
+        if (statusCallback) statusCallback('blob 생성 중...');
+
+        // Step 1: 모든 파일을 blob으로 생성 (병렬)
+        const blobs = await Promise.all(files.map(async (f) => {
+            const resp = await fetch(this.apiBase + '/git/blobs', {
+                method: 'POST',
+                headers: { ...this._headers(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    content: btoa(unescape(encodeURIComponent(f.content))),
+                    encoding: 'base64'
+                })
+            });
+            if (!resp.ok) throw new Error('Blob create failed: ' + f.path);
+            const data = await resp.json();
+            return { path: f.path, sha: data.sha, mode: '100644', type: 'blob' };
+        }));
+
+        if (statusCallback) statusCallback('트리 생성 중...');
+
+        // Step 2: 현재 커밋의 base tree SHA 가져오기
+        const refResp = await fetch(this.apiBase + '/git/ref/heads/' + this._branch, { headers: this._headers() });
+        if (!refResp.ok) throw new Error('Branch ref not found');
+        const refData = await refResp.json();
+        const baseCommitSha = refData.object.sha;
+
+        const commitResp = await fetch(this.apiBase + '/git/commits/' + baseCommitSha, { headers: this._headers() });
+        const commitData = await commitResp.json();
+        const baseTreeSha = commitData.tree.sha;
+
+        // Step 3: 새 트리 생성
+        const treeResp = await fetch(this.apiBase + '/git/trees', {
+            method: 'POST',
+            headers: { ...this._headers(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base_tree: baseTreeSha, tree: blobs })
+        });
+        if (!treeResp.ok) throw new Error('Tree create failed');
+        const treeData = await treeResp.json();
+
+        if (statusCallback) statusCallback('커밋 중...');
+
+        // Step 4: 커밋 생성
+        const newCommitResp = await fetch(this.apiBase + '/git/commits', {
+            method: 'POST',
+            headers: { ...this._headers(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: '[RMMZStudio] Save ' + files.length + ' files',
+                tree: treeData.sha,
+                parents: [baseCommitSha]
+            })
+        });
+        if (!newCommitResp.ok) throw new Error('Commit create failed');
+        const newCommitData = await newCommitResp.json();
+
+        // Step 5: 브랜치 ref 업데이트
+        const updateResp = await fetch(this.apiBase + '/git/refs/heads/' + this._branch, {
+            method: 'PATCH',
+            headers: { ...this._headers(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sha: newCommitData.sha })
+        });
+        if (!updateResp.ok) throw new Error('Ref update failed');
+
+        // SHA 캐시 갱신
+        for (const b of blobs) {
+            this._shaCache[b.path] = b.sha;
+        }
+
+        return { success: true, saved: files.length };
+    },
+
+    // ── 설정 저장/복원 (IndexedDB) ──
+    async saveConfig() {
+        const cfg = { owner: this._owner, repo: this._repo, branch: this._branch, token: this._token, projectDir: this._projectDir };
+        try {
+            const db = await this._openConfigDB();
+            const tx = db.transaction('config', 'readwrite');
+            tx.objectStore('config').put(cfg, 'github');
+            await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
+        } catch(e) { console.warn('[GitHub] Config save failed:', e); }
+    },
+
+    async loadConfig() {
+        try {
+            const db = await this._openConfigDB();
+            const tx = db.transaction('config', 'readonly');
+            const req = tx.objectStore('config').get('github');
+            const cfg = await new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = reject; });
+            if (cfg) {
+                this._owner = cfg.owner || '';
+                this._repo = cfg.repo || '';
+                this._branch = cfg.branch || 'main';
+                this._token = cfg.token || '';
+                this._projectDir = cfg.projectDir || 'Project1';
+            }
+            return cfg || null;
+        } catch(e) { return null; }
+    },
+
+    clearConfig() {
+        try {
+            this._openConfigDB().then(db => {
+                const tx = db.transaction('config', 'readwrite');
+                tx.objectStore('config').delete('github');
+            });
+        } catch(e) {}
+        this._token = null;
+        this._owner = null;
+        this._repo = null;
+        this._shaCache = {};
+        this._treeCache = null;
+    },
+
+    _openConfigDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('RMMZStudioConfig', 1);
+            req.onupgradeneeded = () => { req.result.createObjectStore('config'); };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+};
+
+
+// ── GitHub 모드: /api/* fetch 인터셉터 ──
+// GitHub 모드에서 /api/list, /api/upload 등을 자동 처리
+(function() {
+    const _origFetch = window.fetch;
+    window.fetch = function(url, opts) {
+        if (!window.__RMMZ_GITHUB || !GitHubAdapter.configured) {
+            return _origFetch.apply(this, arguments);
+        }
+        const urlStr = typeof url === 'string' ? url : url.toString();
+
+        // /api/list?path=XXX → GitHub listDir
+        const listMatch = urlStr.match(/^\/api\/list\?path=(.+)/);
+        if (listMatch) {
+            const dirPath = decodeURIComponent(listMatch[1]);
+            return GitHubAdapter.listDir(GitHubAdapter._projPath(dirPath)).then(items => {
+                const names = items.map(i => i.name);
+                return new Response(JSON.stringify(names), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            });
+        }
+
+        // /api/upload → GitHub writeFileBinary
+        if (urlStr === '/api/upload' && opts && opts.body instanceof FormData) {
+            const formData = opts.body;
+            const file = formData.get('file');
+            const path = formData.get('path');
+            if (file && path) {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        try {
+                            await GitHubAdapter.writeFileBinary(path, base64);
+                            resolve(new Response(JSON.stringify({ success: true }), {
+                                status: 200,
+                                headers: { 'Content-Type': 'application/json' }
+                            }));
+                        } catch(e) {
+                            resolve(new Response(JSON.stringify({ error: e.message }), { status: 500 }));
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                });
+            }
+        }
+
+        // /api/heartbeat → 무시 (GitHub에서 불필요)
+        if (urlStr.startsWith('/api/heartbeat')) {
+            return Promise.resolve(new Response('ok', { status: 200 }));
+        }
+
+        // /api/projects → 빈 배열
+        if (urlStr === '/api/projects') {
+            return Promise.resolve(new Response('[]', {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+            }));
+        }
+
+        // /{projectPath}/XXX → GitHub raw URL로 리다이렉트
+        if (urlStr.startsWith('/') && !urlStr.startsWith('/api/') && !urlStr.startsWith('//')) {
+            // 프로젝트 경로에서 상대 경로 추출
+            const projPath = window.__RMMZ_PROJECT_PATH;
+            if (projPath && urlStr.startsWith('/' + projPath + '/')) {
+                const relPath = urlStr.substring(('/' + projPath + '/').length).split('?')[0];
+                return _origFetch(GitHubAdapter.getImageUrl(relPath), { cache: 'no-store' });
+            }
+            // project-relative 경로 (data/, img/, js/ 등)
+            if (!urlStr.startsWith('/api/') && !urlStr.startsWith('//') && GitHubAdapter._projectDir) {
+                const cleanPath = urlStr.split('?')[0].replace(/^\//, '');
+                if (/^(data|img|js|css|audio|effects|fonts|movies)\//.test(cleanPath)) {
+                    return _origFetch(GitHubAdapter.rawBase + '/' + GitHubAdapter._projPath(cleanPath), { cache: 'no-store' });
+                }
+            }
+        }
+
+        // 기타: 원래 fetch 호출
+        return _origFetch.apply(this, arguments);
+    };
+})();
+
+// ===================== SECTION: Constants & Data =====================
+
+        // RMMZ Constants
+        const RMMZ = {
+            TILE_ID_B: 0,
+            TILE_ID_C: 256,
+            TILE_ID_D: 512,
+            TILE_ID_E: 768,
+            TILE_ID_A5: 1536,
+            TILE_ID_A1: 2048,
+            TILE_ID_A2: 2816,
+            TILE_ID_A3: 4352,
+            TILE_ID_A4: 5888,
+        };
+
+        // RMMZ Event Command Codes - comprehensive mapping
+        const RMMZ_COMMANDS = {
+            0: '(없음)',
+            // Messages & Dialogs (100-110, 400-409)
+            101: '메시지 표시',
+            401: '메시지 텍스트',
+            102: '선택지 표시',
+            402: '선택지 분기',
+            403: '선택 취소',
+            404: '선택지 끝',
+            103: '숫자 입력',
+            104: '아이템 선택',
+            105: '스크롤 텍스트 표시',
+            405: '스크롤 텍스트',
+            // Game Progression (121-140)
+            121: '스위치 제어',
+            122: '변수 제어',
+            123: '셀프스위치 제어',
+            124: '타이머 제어',
+            125: '골드 증감',
+            126: '아이템 증감',
+            127: '무기 증감',
+            128: '방어구 증감',
+            129: '파티 멤버 변경',
+            132: '전투 BGM 변경',
+            133: '승리 ME 변경',
+            134: '세이브 금지',
+            135: '메뉴 금지',
+            136: '만남 금지',
+            137: '대형 변경',
+            138: '윈도우 색 변경',
+            139: '패배 ME 변경',
+            140: '탈것 BGM 변경',
+            // Flow Control (111-119, 411-413)
+            111: '조건 분기',
+            411: '아니면',
+            412: '분기 끝',
+            112: '반복',
+            413: '반복 끝',
+            113: '반복 중단',
+            115: '이벤트 처리 중단',
+            117: '커먼이벤트',
+            118: '라벨',
+            119: '라벨 점프',
+            108: '주석',
+            408: '주석 계속',
+            // Party/Actor (311-322)
+            311: 'HP 변경',
+            312: 'MP 변경',
+            313: 'TP 변경',
+            314: '상태 변경',
+            315: '전체 회복',
+            316: '경험치 증감',
+            317: '레벨 증감',
+            318: '능력치 증감',
+            319: '스킬 증감',
+            320: '장비 변경',
+            321: '이름 변경',
+            322: '직업 변경',
+            // Movement/Map (201-206, 505)
+            201: '장소 이동',
+            202: '탈것 위치 설정',
+            203: '이벤트 위치 설정',
+            204: '맵 스크롤',
+            205: '이동 루트 설정',
+            505: '이동 루트 내용',
+            206: '탈것 탑승/하차',
+            // Character (211-214)
+            211: '투명상태 변경',
+            212: '애니메이션 표시',
+            213: '풍선 아이콘 표시',
+            214: '이벤트 일시삭제',
+            // Screen Effects (221-230)
+            221: '화면 어둡게',
+            222: '화면 밝게',
+            223: '화면 톤 변경',
+            224: '화면 플래시',
+            225: '화면 흔들기',
+            230: '대기',
+            // Pictures (231-235)
+            231: '사진 표시',
+            232: '사진 이동',
+            233: '사진 회전',
+            234: '사진 색조 변경',
+            235: '사진 제거',
+            // Audio (241-251)
+            241: 'BGM 재생',
+            242: 'BGM 페이드아웃',
+            243: 'BGM 저장',
+            244: 'BGM 복원',
+            245: 'BGS 재생',
+            246: 'BGS 페이드아웃',
+            249: 'ME 재생',
+            250: 'SE 재생',
+            251: 'SE 정지',
+            // Scene Control (301-354, 601-605)
+            301: '전투 처리',
+            601: '전투 승리',
+            602: '전투 도주',
+            603: '전투 패배',
+            302: '상점 처리',
+            605: '상점 아이템',
+            303: '이름 입력 처리',
+            351: '메뉴 열기',
+            352: '세이브 열기',
+            353: '게임 오버',
+            354: '타이틀로 돌아가기',
+            // Script (355-356, 655)
+            355: '스크립트',
+            655: '스크립트 계속',
+            356: '플러그인 명령',
+        };
+
+        // Organize commands by category for UI
+        const RMMZ_COMMAND_CATEGORIES = {
+            '메시지': [101, 401, 102, 402, 403, 103, 104, 105, 405],
+            '흐름 제어': [111, 411, 412, 112, 413, 113, 115, 117, 118, 119, 108, 408],
+            '게임 진행': [121, 122, 123, 124, 125, 126, 127, 128, 129, 132, 133, 134, 135, 136, 137, 138, 139, 140],
+            '파티/배우': [311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322],
+            '이동/맵': [201, 202, 203, 204, 205, 505, 206],
+            '캐릭터': [211, 212, 213, 214],
+            '화면': [221, 222, 223, 224, 225, 230],
+            '사진': [231, 232, 233, 234, 235],
+            '음성': [241, 242, 243, 244, 245, 246, 249, 250, 251],
+            '씬': [301, 601, 602, 603, 302, 605, 303, 351, 352, 353, 354],
+            '스크립트': [355, 655, 356],
+        };
+
+        const DB_TYPES = ['actors', 'classes', 'skills', 'items', 'weapons', 'armors', 'enemies', 'troops', 'states', 'animations', 'commonEvents', 'system', 'tilesets'];
+
+        const RESOURCE_FOLDERS = {
+            '캐릭터': ['img/characters', 'img/faces', 'img/sv_actors', 'img/sv_enemies'],
+            '적': ['img/enemies'],
+            '맵': ['img/tilesets', 'img/parallaxes'],
+            '배경': ['img/titles1', 'img/titles2', 'img/battlebacks1', 'img/battlebacks2'],
+            '기타': ['img/pictures', 'img/system'],
+            '음악': ['audio/bgm'],
+            '효과음': ['audio/bgs', 'audio/me', 'audio/se'],
+        };
+
+        // Global State
+        let State = {
+            projectFiles: {},
+            database: {},
+            maps: {},
+            mapInfos: {},
+            currentMode: 'database',
+            currentDBTab: 'actors',
+            currentDBItem: null,
+            currentMap: null,
+            currentEvent: null,
+            currentPlugin: null,
+            tilesetImages: {},
+            currentTileset: null,
+            mapTool: 'pencil',
+            mapBrushSize: 1,
+            mapZoomLevel: 1,
+            mapPanX: 0, // pan offset in CSS pixels
+            mapPanY: 0,
+            mapPanning: false, // spacebar+drag panning active
+            mapPanStart: null, // {x, y, panX, panY} drag start
+            mapSpaceHeld: false,
+            mapShowGrid: false,
+            mapHoverTile: null, // {x, y} for brush preview
+            selectedTile: 0,
+            selectedTileSheet: 'A1',
+            selectedTileRect: null, // {x, y, w, h, tiles: [[tileId,...],...]} for multi-tile palette selection
+            eventCommands: [],
+            eventPreviewIndex: 0,
+            projectName: '',
+            projectPath: '',
+            mapEditLayer: 0, // current editing layer (0-3 tile, 4 shadow, 5 region)
+            mapEditMode: 'tile', // 'tile' | 'event' | 'shadow' | 'passage'
+            undoStack: [],
+            redoStack: [],
+            maxUndoSteps: 50,
+        };
+
+        // ===================== SECTION: Project Loading =====================
+
+        function updateProgress(percent, text) {
+            document.getElementById('progressFill').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+        }
+
+        async function loadProjectFolder() {
+            const input = document.getElementById('projectInput');
+            if (!input.files || input.files.length === 0) return;
+
+            updateProgress(0, '프로젝트 로딩 중...');
+
+            // Build file map
+            State.projectFiles = {};
+            for (let i = 0; i < input.files.length; i++) {
+                const file = input.files[i];
+                const path = file.webkitRelativePath;
+                State.projectFiles[path] = file;
+            }
+
+            try {
+                // Load database files
+                updateProgress(10, '데이터베이스 로딩...');
+                await loadDatabase();
+                updateProgress(30, '맵 정보 로딩...');
+                await loadMapInfos();
+                updateProgress(50, '타일셋 로딩...');
+                await loadTilesets();
+                updateProgress(80, '플러그인 로딩...');
+                // Plugin loading is optional
+                updateProgress(100, '완료!');
+
+                setTimeout(() => {
+                    document.getElementById('loadingScreen').style.display = 'none';
+                    document.getElementById('editor').style.display = 'flex';
+                    State.projectName = State.database?.system?.gameTitle || '로컬 프로젝트';
+                    UI._updateProjectBadge();
+                    UI.refreshDB();
+                }, 300);
+            } catch (e) {
+                console.error('Project load error:', e);
+                updateProgress(0, '오류: ' + e.message);
+            }
+        }
+
+        async function loadDatabase() {
+            const dbFiles = ['Actors', 'Classes', 'Skills', 'Items', 'Weapons', 'Armors', 'Enemies', 'Troops', 'States', 'Animations', 'CommonEvents', 'System', 'Tilesets'];
+            for (const dbFile of dbFiles) {
+                const key = dbFile.toLowerCase();
+                const file = State.projectFiles['data/' + dbFile + '.json'];
+                if (file) {
+                    const text = await file.text();
+                    State.database[key] = JSON.parse(text);
+                }
+            }
+        }
+
+        async function loadMapInfos() {
+            const file = State.projectFiles['data/MapInfos.json'];
+            if (file) {
+                const text = await file.text();
+                State.mapInfos = JSON.parse(text);
+            }
+        }
+
+        async function loadTilesets() {
+            // Load all tileset image files
+            for (const [path, file] of Object.entries(State.projectFiles)) {
+                if (path.startsWith('img/tilesets/') && /\.(png|jpg)$/i.test(path)) {
+                    const dataUrl = await fileToDataUrl(file);
+                    const filename = path.split('/').pop().split('.')[0];
+                    State.tilesetImages[filename] = dataUrl;
+                }
+            }
+        }
+
+        function fileToDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // ===================== SECTION: Navigation =====================
+
+        const UI = {
+            // Switch mode
+            switchMode(mode) {
+                State.currentMode = mode;
+                document.querySelectorAll('#editor .mode').forEach(m => m.classList.add('hidden'));
+                const modeId = 'mode' + mode.charAt(0).toUpperCase() + mode.slice(1);
+                document.getElementById(modeId)?.classList.remove('hidden');
+                // Highlight the correct mode tab
+                const modeNames = { database: '데이터베이스', map: '맵', event: '이벤트', resources: '리소스', plugins: '플러그인', preview: '프리뷰' };
+                document.querySelectorAll('.modeTab').forEach(t => {
+                    t.classList.remove('active');
+                    if (t.textContent.trim() === modeNames[mode]) t.classList.add('active');
+                });
+
+                if (mode === 'map') {
+                    UI.refreshMapList();
+                    UI.drawMap();
+                } else if (mode === 'resources') {
+                    UI.refreshResourcesTree();
+                } else if (mode === 'preview') {
+                    UI.previewInit();
+                }
+            },
+
+            // ===================== DATABASE METHODS =====================
+            switchDBTab(tab) {
+                State.currentDBTab = tab;
+                document.querySelectorAll('#modeDatabase .dbTab').forEach(t => {
+                    t.classList.remove('active');
+                    if (t.textContent && t.getAttribute('onclick')?.includes("'" + tab + "'")) {
+                        t.classList.add('active');
+                    }
+                });
+                State.currentDBItem = null;
+                document.getElementById('dbFormContainer').innerHTML = '';
+                // system tab: no list, render form immediately
+                if (tab === 'system') {
+                    document.getElementById('dbList').innerHTML = '';
+                    document.querySelector('.dbListPanel').style.display = 'none';
+                    document.getElementById('dbResizer').style.display = 'none';
+                    UI.renderDBForm();
+                } else {
+                    document.querySelector('.dbListPanel').style.display = '';
+                    document.getElementById('dbResizer').style.display = '';
+                    UI.refreshDB();
+                }
+            },
+
+            refreshDB() {
+                const data = State.database[State.currentDBTab] || [];
+                const list = document.getElementById('dbList');
+                list.innerHTML = '';
+                if (!Array.isArray(data)) return; // system is object, skip
+                data.forEach((item, id) => {
+                    if (!item) return;
+                    const li = document.createElement('li');
+                    li.textContent = item.name || item.id || '#' + id;
+                    li.dataset.id = id;
+                    li.onclick = () => UI.dbSelectItem(id);
+                    if (State.currentDBItem === id) li.classList.add('selected');
+                    list.appendChild(li);
+                });
+            },
+
+            dbSelectItem(id) {
+                State.currentDBItem = id;
+                UI.refreshDB();
+                UI.renderDBForm();
+            },
+
+            dbSearch() {
+                const query = document.getElementById('dbSearch').value.toLowerCase();
+                const data = State.database[State.currentDBTab] || [];
+                const list = document.getElementById('dbList');
+                const items = list.querySelectorAll('li');
+                items.forEach((li, i) => {
+                    const text = (data[i]?.name || '').toLowerCase();
+                    li.style.display = text.includes(query) ? '' : 'none';
+                });
+            },
+
+            dbAddItem() {
+                const data = State.database[State.currentDBTab] || [];
+                const newItem = { id: data.length, name: '새 항목' };
+                data.push(newItem);
+                State.currentDBItem = data.length - 1;
+                UI.refreshDB();
+                UI.renderDBForm();
+            },
+
+            dbDeleteItem() {
+                if (State.currentDBItem === null) return;
+                const data = State.database[State.currentDBTab];
+                data.splice(State.currentDBItem, 1);
+                State.currentDBItem = null;
+                UI.refreshDB();
+                document.getElementById('dbFormContainer').innerHTML = '';
+            },
+
+            renderDBForm() {
+                const container = document.getElementById('dbFormContainer');
+                const type = State.currentDBTab;
+                const data = State.database[type];
+                // system is a single object, not an array
+                const item = (type === 'system') ? data : data?.[State.currentDBItem];
+                if (!item) {
+                    container.innerHTML = '<div style="color: #aaa; padding: 20px;">항목을 선택해주세요.</div>';
+                    return;
+                }
+
+                let html = '';
+
+                if (type === 'actors') {
+                    html = this.renderActorForm(item);
+                } else if (type === 'classes') {
+                    html = this.renderClassForm(item);
+                } else if (type === 'skills') {
+                    html = this.renderSkillForm(item);
+                } else if (type === 'items') {
+                    html = this.renderItemForm(item);
+                } else if (type === 'weapons') {
+                    html = this.renderWeaponForm(item);
+                } else if (type === 'armors') {
+                    html = this.renderArmorForm(item);
+                } else if (type === 'enemies') {
+                    html = this.renderEnemyForm(item);
+                } else if (type === 'states') {
+                    html = this.renderStateForm(item);
+                } else if (type === 'commonEvents') {
+                    html = this.renderCommonEventForm(item);
+                } else if (type === 'system') {
+                    html = this.renderSystemForm(item);
+                } else if (type === 'tilesets') {
+                    html = this.renderTilesetForm(item);
+                } else {
+                    html = this.renderGenericForm(item);
+                }
+
+                container.innerHTML = html;
+                this.attachFormHandlers(item);
+                // 액터 포트레이트 에디터 초기화
+                if (type === 'actors') {
+                    setTimeout(() => this._initPortraitEditor(), 0);
+                }
+            },
+
+            renderActorForm(item) {
+                const paramNames = ['최대 HP', '최대 MP', '공격력', '방어력', '마법공격', '마법방어', '민첩성', '운'];
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('name', '이름', 'text', item.name || '')}
+                            ${createField('surname', '성씨', 'text', item.surname || '')}
+                        </div>
+                        ${createField('nickname', '별명', 'text', item.nickname || '')}
+                        ${createField('classId', '직업', 'number', item.classId || 1)}
+                        <div class="formInline">
+                            ${createField('initialLevel', '초기 레벨', 'number', item.initialLevel || 1)}
+                            ${createField('maxLevel', '최대 레벨', 'number', item.maxLevel || 99)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Profile
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">프로필</div>
+                    <div class="formSectionContent">
+                        ${createField('profile', '프로필', 'textarea', item.profile || '')}
+                    </div>
+                </div>`;
+
+                // Character Graphics
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">캐릭터 이미지</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('characterName', '캐릭터 이미지명', 'text', item.characterName || '')}
+                            ${createField('characterIndex', '인덱스', 'number', item.characterIndex || 0)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('faceName', '얼굴 이미지명', 'text', item.faceName || '')}
+                            ${createField('faceIndex', '인덱스', 'number', item.faceIndex || 0)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('battlerName', '전투 이미지명', 'text', item.battlerName || '')}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Initial Equipment
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">초기 장비</div>
+                    <div class="formSectionContent">
+                        ${createField('equips_weapon', '무기', 'number', item.equips?.[0] || 0)}
+                        ${createField('equips_shield', '방어구(盾)', 'number', item.equips?.[1] || 0)}
+                        ${createField('equips_head', '투구', 'number', item.equips?.[2] || 0)}
+                        ${createField('equips_body', '갑옷', 'number', item.equips?.[3] || 0)}
+                        ${createField('equips_accessory', '악세서리', 'number', item.equips?.[4] || 0)}
+                    </div>
+                </div>`;
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // SRPG Grid (멀티타일)
+                html += this.renderSrpgGridSection(item);
+
+                // SRPG 전투 설정 (플러그인 파라미터)
+                html += this.renderSrpgUnitConfigSection(item, 'actor');
+
+                // 가호(원국)
+                html += this.renderGahoSection(item);
+
+                // Standing Portrait
+                html += this.renderPortraitSection(item);
+
+                // Relationship Initial Values
+                html += this.renderRelationshipSection(item);
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            // ─── 관계 초기값 섹션 v2 (액터 폼) ───
+            renderRelationshipSection(item) {
+                if (!State.database.actors) return '';
+                const note = item.note || '';
+                const BOND_TAGS = ['stranger','acquaintance','friend','rival','sworn','hostile','mentor','pupil','lover','broken'];
+                const BOND_LABELS = {'stranger':'초면','acquaintance':'지인','friend':'친구','rival':'라이벌','sworn':'맹우','hostile':'적대','mentor':'스승','pupil':'제자','lover':'연인','broken':'결별'};
+                // Parse v2: <srpgRelation:id,impression,bondTag> or legacy: <srpgRelation:id,favor,trust>
+                const rels = [];
+                const relRegex = /<srpgRelation:(\d+),([^,>]+),([^>]+)>/gi;
+                let rm;
+                while ((rm = relRegex.exec(note)) !== null) {
+                    const tid = parseInt(rm[1]);
+                    const second = rm[2].trim();
+                    const third = rm[3].trim();
+                    if (isNaN(Number(third))) {
+                        rels.push({ targetId: tid, impression: parseInt(second)||0, bondTag: third });
+                    } else {
+                        // legacy migration
+                        const trust = parseInt(third)||0;
+                        let tag = 'stranger';
+                        if (trust >= 60) tag = 'friend';
+                        else if (trust >= 30) tag = 'acquaintance';
+                        rels.push({ targetId: tid, impression: parseInt(second)||0, bondTag: tag });
+                    }
+                }
+                const actors = State.database.actors;
+                const currentId = State.currentDBItem;
+                let rows = '';
+                for (let i = 1; i < actors.length; i++) {
+                    if (!actors[i] || i === currentId) continue;
+                    const existing = rels.find(r => r.targetId === i);
+                    const imp = existing ? existing.impression : 0;
+                    const tag = existing ? existing.bondTag : 'stranger';
+                    let opts = '';
+                    for (const t of BOND_TAGS) {
+                        opts += '<option value="'+t+'"'+(t===tag?' selected':'')+'>'+t+' ('+BOND_LABELS[t]+')</option>';
+                    }
+                    rows += '<tr>'
+                        +'<td style="padding:3px 6px;color:#ccc;font-size:12px;">'+(actors[i].name||'Actor '+i)+'</td>'
+                        +'<td style="padding:3px;"><input type="number" data-rel-id="'+i+'" data-rel-type="impression" value="'+imp+'" min="-100" max="100" style="width:60px;" onchange="UI.syncRelationNote()"></td>'
+                        +'<td style="padding:3px;"><select data-rel-id="'+i+'" data-rel-type="bondTag" style="font-size:11px;background:#2a2a2a;color:#ccc;border:1px solid #555;padding:2px;" onchange="UI.syncRelationNote()">'+opts+'</select></td>'
+                        +'</tr>';
+                }
+                if (!rows) return '';
+                return '<div class="formSection">'
+                    +'<div class="formSectionHeader">관계 초기값 v2</div>'
+                    +'<div class="formSectionContent">'
+                    +'<div style="font-size:11px;color:#888;margin-bottom:6px;">인상 점수 (-100~100) + 관계 태그</div>'
+                    +'<table style="border-collapse:collapse;width:100%;">'
+                    +'<thead><tr style="border-bottom:1px solid #444;">'
+                    +'<th style="text-align:left;padding:4px 6px;color:#aaa;font-size:11px;">대상</th>'
+                    +'<th style="text-align:center;padding:4px;color:#ff9966;font-size:11px;">인상</th>'
+                    +'<th style="text-align:center;padding:4px;color:#66bbff;font-size:11px;">관계</th>'
+                    +'</tr></thead>'
+                    +'<tbody>'+rows+'</tbody>'
+                    +'</table>'
+                    +'</div></div>';
+            },
+            syncRelationNote() {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem]; if(!item) return;
+                let note = item.note || '';
+                note = note.replace(/<srpgRelation:[^>]*>\s*/gi, '').trim();
+                const inputs = document.querySelectorAll('[data-rel-id]');
+                const relMap = {};
+                inputs.forEach(el => {
+                    const id = el.dataset.relId;
+                    const type = el.dataset.relType;
+                    if (!relMap[id]) relMap[id] = { impression: 0, bondTag: 'stranger' };
+                    if (type === 'impression') relMap[id].impression = parseInt(el.value) || 0;
+                    else if (type === 'bondTag') relMap[id].bondTag = el.value || 'stranger';
+                });
+                let nt = '';
+                for (const [id, vals] of Object.entries(relMap)) {
+                    if (vals.impression !== 0 || vals.bondTag !== 'stranger') {
+                        nt += '<srpgRelation:' + id + ',' + vals.impression + ',' + vals.bondTag + '>\n';
+                    }
+                }
+                if (nt) note = (note ? note + '\n' : '') + nt.trim();
+                item.note = note;
+                const el = document.querySelector('[data-field="note"]'); if(el) el.value = item.note;
+            },
+
+            // ─── SRPG 그리드 (멀티타일) 섹션 ───
+            renderSrpgGridSection(item) {
+                const note = item.note || '';
+                const _ntv = (tag) => { const m = note.match(new RegExp('<' + tag + ':([^>]+)>', 'i')); return m ? m[1].trim() : null; };
+                const gridW = _ntv('srpgGridW') || '1';
+                const gridH = _ntv('srpgGridH') || '1';
+                const anchor = _ntv('srpgAnchor') || '0,0';
+                const unitType = _ntv('srpgUnitType') || 'actor';
+                const objectFlags = _ntv('srpgObjectFlags') || '';
+                const spriteFile = _ntv('srpgSpriteFile') || '';
+                const spriteFolder = _ntv('srpgSpriteFolder') || '';
+                const utOpts = [['actor','액터'],['enemy','적'],['object','오브젝트']];
+                const fList = [
+                    {id:'blocking',   label:'차단',     tip:'이동 불가 — 유닛이 이 타일을 통과할 수 없습니다'},
+                    {id:'destructible',label:'파괴가능', tip:'공격으로 파괴 가능 — HP가 0이 되면 제거됩니다'},
+                    {id:'cover',      label:'엄폐',     tip:'엄폐물 — 뒤에 있는 유닛이 방어 보너스를 받습니다'},
+                    {id:'transparent',label:'투과',     tip:'투과성 — 투사체와 시야가 이 타일을 통과합니다'}
+                ];
+                const aFlags = objectFlags.split(',').map(s=>s.trim()).filter(Boolean);
+                let fHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;">';
+                for (const f of fList) {
+                    fHtml += `<label style="display:flex;align-items:center;gap:3px;font-size:12px;color:#ccc;cursor:pointer;" title="${f.tip}"><input type="checkbox" data-srpg-flag="${f.id}" ${aFlags.includes(f.id)?'checked':''} onchange="UI.syncSrpgGridNote()"> ${f.label}</label>`;
+                }
+                fHtml += '</div>';
+                return `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 그리드</div>
+                    <div class="formSectionContent">
+                        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                            <div style="flex:1;min-width:200px;">
+                                <div class="formGroup"><label>유닛 타입</label>
+                                    <select id="srpgUnitType" onchange="UI.syncSrpgGridNote()">
+                                        ${utOpts.map(([v,t])=>'<option value="'+v+'" '+(v===unitType?'selected':'')+'>'+t+'</option>').join('')}
+                                    </select></div>
+                                <div class="formInline">
+                                    <div class="formGroup"><label>그리드 W</label><input type="number" id="srpgGridW" value="${gridW}" min="1" max="10" onchange="UI.syncSrpgGridNote();UI.drawSrpgGridPreview()"></div>
+                                    <div class="formGroup"><label>그리드 H</label><input type="number" id="srpgGridH" value="${gridH}" min="1" max="10" onchange="UI.syncSrpgGridNote();UI.drawSrpgGridPreview()"></div>
+                                </div>
+                                <div class="formInline">
+                                    <div class="formGroup"><label>앵커 X</label><input type="number" id="srpgAnchorX" value="${anchor.split(',')[0]||0}" min="0" max="9" onchange="UI.syncSrpgGridNote();UI.drawSrpgGridPreview()"></div>
+                                    <div class="formGroup"><label>앵커 Y</label><input type="number" id="srpgAnchorY" value="${anchor.split(',')[1]||0}" min="0" max="9" onchange="UI.syncSrpgGridNote();UI.drawSrpgGridPreview()"></div>
+                                </div>
+                                <div class="formGroup"><label>오브젝트 플래그</label>${fHtml}</div>
+                                <div class="formGroup"><label>커스텀 스프라이트</label>
+                                    <div style="display:flex;gap:6px;align-items:center;">
+                                        <input type="text" id="srpgSpriteFile" value="${spriteFile}" placeholder="(기본 캐릭터)" style="flex:1;" readonly>
+                                        <button class="iconBtn" onclick="UI.pickSpriteFile()" style="white-space:nowrap;padding:4px 10px;" title="스프라이트 파일 선택">찾기</button>
+                                        <button class="iconBtn" onclick="document.getElementById('srpgSpriteFile').value='';document.getElementById('srpgSpriteFolder').value='';UI.syncSrpgGridNote();" style="padding:4px 8px;" title="초기화">✕</button>
+                                    </div>
+                                </div>
+                                <div class="formGroup"><label>스프라이트 폴더</label><input type="text" id="srpgSpriteFolder" value="${spriteFolder}" placeholder="img/characters" style="color:#88a;" readonly></div>
+                            </div>
+                            <div style="flex:0 0 auto;"><label style="font-size:12px;color:#aaa;display:block;margin-bottom:4px;">프리뷰</label>
+                                <canvas id="srpgGridCanvas" width="160" height="160" style="border:1px solid #555;border-radius:4px;background:#1a1a2e;"></canvas></div>
+                        </div></div></div>`;
+            },
+            drawSrpgGridPreview() {
+                const c = document.getElementById('srpgGridCanvas'); if(!c) return;
+                const ctx=c.getContext('2d');
+                const gw=parseInt(document.getElementById('srpgGridW')?.value)||1;
+                const gh=parseInt(document.getElementById('srpgGridH')?.value)||1;
+                const ax=parseInt(document.getElementById('srpgAnchorX')?.value)||0;
+                const ay=parseInt(document.getElementById('srpgAnchorY')?.value)||0;
+                const md=Math.max(gw,gh,3), cs=Math.floor(150/md);
+                c.width=Math.max(160,md*cs+10); c.height=Math.max(160,md*cs+10);
+                const ox=(c.width-gw*cs)/2, oy=(c.height-gh*cs)/2;
+                ctx.clearRect(0,0,c.width,c.height);
+                for(let i=0;i<gw;i++) for(let j=0;j<gh;j++){
+                    const x=ox+i*cs,y=oy+j*cs,isA=(i===ax&&j===ay);
+                    ctx.fillStyle=isA?'rgba(68,200,255,0.5)':'rgba(100,140,200,0.25)';
+                    ctx.strokeStyle=isA?'#44c8ff':'#556688'; ctx.lineWidth=isA?2:1;
+                    ctx.fillRect(x+1,y+1,cs-2,cs-2); ctx.strokeRect(x+1,y+1,cs-2,cs-2);
+                    if(isA){ctx.fillStyle='#44c8ff';ctx.font=`bold ${Math.floor(cs*0.4)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('A',x+cs/2,y+cs/2);}
+                }
+                ctx.fillStyle='#aaa';ctx.font='11px sans-serif';ctx.textAlign='center';ctx.textBaseline='top';
+                ctx.fillText(`${gw}\u00D7${gh}`,c.width/2,c.height-14);
+            },
+            pickSpriteFile() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/png,image/webp';
+                input.onchange = async () => {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const fname = file.name.replace(/\.[^.]+$/, '');
+                    const isServer = !!window.__RMMZ_SERVER;
+
+                    // 서버 모드: 프로젝트 img/characters 폴더에 업로드
+                    if (isServer) {
+                        const folder = 'img/characters';
+                        try {
+                            const formData = new FormData();
+                            formData.append('file', file);
+                            formData.append('path', folder);
+                            await fetch('/api/upload', { method: 'POST', body: formData });
+                        } catch (e) {
+                            console.warn('스프라이트 업로드 실패:', e);
+                        }
+                        document.getElementById('srpgSpriteFile').value = fname;
+                        document.getElementById('srpgSpriteFolder').value = folder;
+                        this.syncSrpgGridNote();
+                        return;
+                    }
+
+                    // 로컬 모드: file path 에서 프로젝트 내부 여부 판별
+                    document.getElementById('srpgSpriteFile').value = fname;
+                    document.getElementById('srpgSpriteFolder').value = 'img/characters';
+                    this.syncSrpgGridNote();
+                };
+                input.click();
+            },
+            // ─── 인벤토리 그리드 크기 섹션 (아이템/무기/방어구) ───
+            renderGridSizeSection(item) {
+                const note = item.note || '';
+                const m = note.match(/<gridSize:([^>]+)>/i);
+                let gw = 1, gh = 1;
+                if (m) { const parts = m[1].split(','); gw = parseInt(parts[0]) || 1; gh = parseInt(parts[1]) || 1; }
+                const tabKey = State.currentDBTab;
+                let defW = 1, defH = 1, defLabel = '1×1';
+                if (tabKey === 'weapons') { defW = 1; defH = 3; defLabel = '1×3'; }
+                else if (tabKey === 'armors') { defW = 2; defH = 2; defLabel = '2×2'; }
+                const isDefault = (!m);
+                const dw = isDefault ? defW : gw, dh = isDefault ? defH : gh;
+                const mkOpts = (sel) => [1,2,3,4].map(v => '<option value="'+v+'" '+(v===sel?'selected':'')+'>'+v+'</option>').join('');
+                return `<div class="formSection">
+                    <div class="formSectionHeader">인벤토리 그리드 크기</div>
+                    <div class="formSectionContent">
+                        <div style="display:flex;gap:16px;align-items:flex-start;">
+                            <div style="flex:1;">
+                                <div style="font-size:11px;color:#888;margin-bottom:6px;">미설정 시 기본값: ${defLabel}</div>
+                                <div class="formInline">
+                                    <div class="formGroup"><label>가로 (W)</label>
+                                        <select id="invGridW" onchange="UI.syncGridSizeNote();UI.drawInvGridPreview()">${mkOpts(dw)}</select></div>
+                                    <div class="formGroup"><label>세로 (H)</label>
+                                        <select id="invGridH" onchange="UI.syncGridSizeNote();UI.drawInvGridPreview()">${mkOpts(dh)}</select></div>
+                                </div>
+                                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#aaa;cursor:pointer;margin-top:6px;">
+                                    <input type="checkbox" id="invGridDefault" ${isDefault?'checked':''} onchange="UI.syncGridSizeNote();UI.drawInvGridPreview()"> 기본값 사용
+                                </label>
+                            </div>
+                            <div><label style="font-size:11px;color:#aaa;display:block;margin-bottom:4px;">프리뷰</label>
+                                <canvas id="invGridCanvas" width="80" height="80" style="border:1px solid #555;border-radius:4px;background:#1a1a2e;"></canvas></div>
+                        </div>
+                    </div>
+                </div>`;
+            },
+            drawInvGridPreview() {
+                const c = document.getElementById('invGridCanvas'); if(!c) return;
+                const ctx = c.getContext('2d');
+                const useDefault = document.getElementById('invGridDefault')?.checked;
+                let gw, gh;
+                if (useDefault) {
+                    const t = State.currentDBTab;
+                    if (t === 'weapons') { gw=1; gh=3; } else if (t === 'armors') { gw=2; gh=2; } else { gw=1; gh=1; }
+                } else {
+                    gw = parseInt(document.getElementById('invGridW')?.value) || 1;
+                    gh = parseInt(document.getElementById('invGridH')?.value) || 1;
+                }
+                const md = Math.max(gw, gh, 2), cs = Math.floor(70/md);
+                c.width = Math.max(80, md*cs+10); c.height = Math.max(80, md*cs+10);
+                const ox = (c.width-gw*cs)/2, oy = (c.height-gh*cs)/2;
+                ctx.clearRect(0,0,c.width,c.height);
+                for (let i=0; i<gw; i++) for (let j=0; j<gh; j++) {
+                    ctx.fillStyle = 'rgba(68,160,255,0.35)'; ctx.strokeStyle = '#4488cc'; ctx.lineWidth = 1;
+                    ctx.fillRect(ox+i*cs+1, oy+j*cs+1, cs-2, cs-2);
+                    ctx.strokeRect(ox+i*cs+1, oy+j*cs+1, cs-2, cs-2);
+                }
+                ctx.fillStyle='#aaa'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+                ctx.fillText(gw+'×'+gh, c.width/2, c.height-14);
+            },
+            syncGridSizeNote() {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem]; if(!item) return;
+                let note = item.note || '';
+                note = note.replace(/<gridSize:[^>]*>\s*/gi, '').trim();
+                const useDefault = document.getElementById('invGridDefault')?.checked;
+                if (!useDefault) {
+                    const gw = parseInt(document.getElementById('invGridW')?.value) || 1;
+                    const gh = parseInt(document.getElementById('invGridH')?.value) || 1;
+                    note = (note ? note + '\n' : '') + '<gridSize:' + gw + ',' + gh + '>';
+                }
+                item.note = note;
+                const el = document.querySelector('[data-field="note"]'); if(el) el.value = item.note;
+            },
+
+            syncSrpgGridNote() {
+                const item=State.database[State.currentDBTab]?.[State.currentDBItem]; if(!item)return;
+                let note=item.note||'';
+                for(const t of['srpgGridW','srpgGridH','srpgAnchor','srpgUnitType','srpgObjectFlags','srpgSpriteFile','srpgSpriteFolder'])
+                    note=note.replace(new RegExp(`<${t}:[^>]*>\\s*`,'gi'),'');
+                note=note.trim();
+                const gw=parseInt(document.getElementById('srpgGridW')?.value)||1;
+                const gh=parseInt(document.getElementById('srpgGridH')?.value)||1;
+                const ax=parseInt(document.getElementById('srpgAnchorX')?.value)||0;
+                const ay=parseInt(document.getElementById('srpgAnchorY')?.value)||0;
+                const ut=document.getElementById('srpgUnitType')?.value||'actor';
+                const sf=document.getElementById('srpgSpriteFile')?.value||'';
+                const sd=document.getElementById('srpgSpriteFolder')?.value||'';
+                const flags=[];document.querySelectorAll('[data-srpg-flag]').forEach(el=>{if(el.checked)flags.push(el.dataset.srpgFlag);});
+                let nt='';
+                if(gw!==1)nt+=`<srpgGridW:${gw}>\n`;
+                if(gh!==1)nt+=`<srpgGridH:${gh}>\n`;
+                if(ax!==0||ay!==0)nt+=`<srpgAnchor:${ax},${ay}>\n`;
+                if(ut!=='actor')nt+=`<srpgUnitType:${ut}>\n`;
+                if(flags.length)nt+=`<srpgObjectFlags:${flags.join(',')}>\n`;
+                if(sf)nt+=`<srpgSpriteFile:${sf}>\n`;
+                if(sd)nt+=`<srpgSpriteFolder:${sd}>\n`;
+                if(nt)note=(note?note+'\n':'')+nt.trim();
+                item.note=note;
+                const el=document.querySelector('[data-field="note"]');if(el)el.value=item.note;
+            },
+
+
+            // ─── SRPG 전투 설정 (플러그인 파라미터 기반) ───
+            _getPluginCfg(pluginName, configKey, id) {
+                const plugin = (State.plugins || []).find(p => p.name === pluginName);
+                if (!plugin || !plugin.parameters || !plugin.parameters[configKey]) return {};
+                try {
+                    const cfg = JSON.parse(plugin.parameters[configKey]);
+                    return cfg[String(id)] || {};
+                } catch(e) { return {}; }
+            },
+            _setPluginCfg(pluginName, configKey, id, data) {
+                const plugin = (State.plugins || []).find(p => p.name === pluginName);
+                if (!plugin) return;
+                plugin.parameters = plugin.parameters || {};
+                let cfg = {};
+                try { cfg = JSON.parse(plugin.parameters[configKey] || '{}'); } catch(e) {}
+                if (Object.keys(data).length === 0) {
+                    delete cfg[String(id)];
+                } else {
+                    cfg[String(id)] = data;
+                }
+                plugin.parameters[configKey] = JSON.stringify(cfg);
+            },
+            renderSrpgUnitConfigSection(item, team) {
+                const id = item.id || 0;
+                if (!id) return '';
+                const cfgKey = team === 'actor' ? 'ActorConfig' : 'EnemyConfig';
+                const aiCfgKey = team === 'actor' ? 'ActorAIConfig' : 'EnemyAIConfig';
+                const srpgCfg = this._getPluginCfg('SRPG_Core', cfgKey, id);
+                const aiCfg = this._getPluginCfg('SRPG_CombatAI', aiCfgKey, id);
+                const gahoCfg = team === 'actor' ? this._getPluginCfg('GahoSystem', 'ActorConfig', id) : {};
+
+                const fireModes = [['melee','근접'],['direct','직사'],['arc','곡사']];
+                const priorities = [['weakest','체력 낮은'],['nearest','가까운'],['strongest','강한'],['farthest','먼']];
+
+                let h = '<div class="formSection">';
+                h += '<div class="formSectionHeader">SRPG 전투 설정</div>';
+                h += '<div class="formSectionContent">';
+                h += '<div style="font-size:11px;color:#888;margin-bottom:8px;">플러그인 파라미터로 관리됩니다 (노트태그 불필요)</div>';
+                h += '<div style="display:flex;gap:16px;flex-wrap:wrap;">';
+
+                // Left column: basic stats
+                h += '<div style="flex:1;min-width:200px;">';
+                h += '<div style="font-size:12px;color:#68a;margin-bottom:4px;font-weight:bold;">기본 스탯</div>';
+                h += '<div class="formInline">';
+                h += '<div class="formGroup"><label>이동력</label><input type="number" id="pcfgMov" value="' + (srpgCfg.mov!=null?srpgCfg.mov:'') + '" min="0" max="20" placeholder="기본값" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')"></div>';
+                h += '<div class="formGroup"><label>사거리</label><input type="number" id="pcfgAtkRange" value="' + (srpgCfg.atkRange!=null?srpgCfg.atkRange:'') + '" min="0" max="20" placeholder="기본값" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')"></div>';
+                h += '</div>';
+                h += '<div class="formGroup"><label>사격 모드</label><select id="pcfgFireMode" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')">';
+                h += '<option value=""' + (!srpgCfg.fireMode?' selected':'') + '>자동 (사거리 기반)</option>';
+                for (const [v,t] of fireModes) {
+                    h += '<option value="' + v + '"' + (srpgCfg.fireMode===v?' selected':'') + '>' + t + '</option>';
+                }
+                h += '</select></div>';
+                h += '</div>';
+
+                // Right column: AI
+                h += '<div style="flex:1;min-width:200px;">';
+                h += '<div style="font-size:12px;color:#68a;margin-bottom:4px;font-weight:bold;">AI 설정</div>';
+                h += '<div class="formInline">';
+                h += '<div class="formGroup"><label>공격성 (0~100)</label><input type="number" id="pcfgAggro" value="' + (aiCfg.aggro!=null?aiCfg.aggro:'') + '" min="0" max="100" placeholder="자동" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')"></div>';
+                h += '<div class="formGroup"><label>후퇴 HP%</label><input type="number" id="pcfgRetreatHp" value="' + (aiCfg.retreatHp||'') + '" min="0" max="100" placeholder="0" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')"></div>';
+                h += '</div>';
+                h += '<div class="formGroup"><label>타겟 우선순위</label><select id="pcfgPriority" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')">';
+                h += '<option value=""' + (!aiCfg.priority?' selected':'') + '>자동</option>';
+                for (const [v,t] of priorities) {
+                    h += '<option value="' + v + '"' + (aiCfg.priority===v?' selected':'') + '>' + t + '</option>';
+                }
+                h += '</select></div>';
+                h += '<div class="formGroup"><label>일간 (天干)</label><input type="text" id="pcfgIlgan" value="' + (aiCfg.ilgan||'') + '" placeholder="자동 (가호)" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')" style="font-size:12px;"></div>';
+                h += '<div class="formGroup"><label>일지 (地支)</label><input type="text" id="pcfgIlji" value="' + (aiCfg.ilji||'') + '" placeholder="자동 (가호)" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')" style="font-size:12px;"></div>';
+                h += '</div>';
+                h += '</div>';
+
+                // Gaho section (actors only)
+                if (team === 'actor') {
+                    h += '<div style="margin-top:8px;border-top:1px solid #1a2a3a;padding-top:8px;">';
+                    h += '<div style="font-size:12px;color:#68a;margin-bottom:4px;font-weight:bold;">가호 원국 (플러그인)</div>';
+                    h += '<div class="formGroup"><label>4주 (시|일|월|년)</label><input type="text" id="pcfgPillars" value="' + (gahoCfg.pillars||'') + '" placeholder="노트태그 또는 설계 모달 사용" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')" style="font-size:12px;font-family:monospace;"></div>';
+                    h += '<div class="formInline">';
+                    h += '<div class="formGroup"><label>종족</label><input type="text" id="pcfgRace" value="' + (gahoCfg.race||'') + '" placeholder="human" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')" style="font-size:12px;"></div>';
+                    h += '<div class="formGroup"><label>성별</label><select id="pcfgGender" onchange="UI.syncSrpgUnitCfg(\'' + team + '\')">';
+                    h += '<option value=""' + (!gahoCfg.gender?' selected':'') + '>기본 (m)</option>';
+                    h += '<option value="m"' + (gahoCfg.gender==='m'?' selected':'') + '>남 (m)</option>';
+                    h += '<option value="f"' + (gahoCfg.gender==='f'?' selected':'') + '>여 (f)</option>';
+                    h += '</select></div>';
+                    h += '</div></div>';
+                }
+
+                h += '</div></div>';
+                return h;
+            },
+            syncSrpgUnitCfg(team) {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item || !item.id) return;
+                const id = item.id;
+                const cfgKey = team === 'actor' ? 'ActorConfig' : 'EnemyConfig';
+                const aiCfgKey = team === 'actor' ? 'ActorAIConfig' : 'EnemyAIConfig';
+
+                // SRPG_Core config
+                const srpgData = {};
+                const mov = document.getElementById('pcfgMov')?.value;
+                const atkRange = document.getElementById('pcfgAtkRange')?.value;
+                const fireMode = document.getElementById('pcfgFireMode')?.value;
+                if (mov) srpgData.mov = parseInt(mov);
+                if (atkRange) srpgData.atkRange = parseInt(atkRange);
+                if (fireMode) srpgData.fireMode = fireMode;
+                this._setPluginCfg('SRPG_Core', cfgKey, id, srpgData);
+
+                // CombatAI config
+                const aiData = {};
+                const aggro = document.getElementById('pcfgAggro')?.value;
+                const retreatHp = document.getElementById('pcfgRetreatHp')?.value;
+                const priority = document.getElementById('pcfgPriority')?.value;
+                const ilgan = document.getElementById('pcfgIlgan')?.value;
+                const ilji = document.getElementById('pcfgIlji')?.value;
+                if (aggro) aiData.aggro = parseInt(aggro);
+                if (retreatHp) aiData.retreatHp = parseInt(retreatHp);
+                if (priority) aiData.priority = priority;
+                if (ilgan) aiData.ilgan = ilgan;
+                if (ilji) aiData.ilji = ilji;
+                this._setPluginCfg('SRPG_CombatAI', aiCfgKey, id, aiData);
+
+                // GahoSystem config (actors only)
+                if (team === 'actor') {
+                    const gahoData = {};
+                    const pillars = document.getElementById('pcfgPillars')?.value;
+                    const race = document.getElementById('pcfgRace')?.value;
+                    const gender = document.getElementById('pcfgGender')?.value;
+                    if (pillars) gahoData.pillars = pillars;
+                    if (race) gahoData.race = race;
+                    if (gender) gahoData.gender = gender;
+                    this._setPluginCfg('GahoSystem', 'ActorConfig', id, gahoData);
+                }
+            },
+
+            // ─── 가호(원국) 섹션 ───
+            renderGahoSection(item) {
+                const note = item.note || '';
+                const _ntv = (tag) => { const m = note.match(new RegExp('<' + tag + ':([^>]+)>', 'i')); return m ? m[1].trim() : null; };
+                const pillarStr = _ntv('gahoPillars') || '';
+                const race = _ntv('gahoRace') || 'human';
+                const gender = _ntv('gahoGender') || 'm';
+
+                const G = window.GahoSystem;
+                if (!G) return `<div class="formSection"><div class="formSectionHeader">가호(원국)</div><div class="formSectionContent"><span style="color:#888">GahoSystem.js 플러그인이 로드되지 않았습니다.</span></div></div>`;
+
+                const raceOpts = Object.entries(G.RACES).map(([id,r]) =>
+                    `<option value="${id}" ${id===race?'selected':''}>${r.name}</option>`).join('');
+                let html = `<div class="formSection">
+                    <div class="formSectionHeader">가호(원국)</div>
+                    <div class="formSectionContent" id="gahoSectionContent">
+                    <div class="gaho-controls">
+                        <select id="gahoRace" onchange="UI.syncGahoNote()">${raceOpts}</select>
+                        <span id="gahoGenderBtns">
+                            <button class="gaho-gender-btn ${gender==='m'?'active':''}" data-gdr="m" onclick="UI._setGahoGender('m')">♂</button>
+                            <button class="gaho-gender-btn ${gender==='f'?'active':''}" data-gdr="f" onclick="UI._setGahoGender('f')">♀</button>
+                        </span>
+                        <button onclick="UI._gahoRandom()" title="랜덤 생성">🎲 랜덤</button>
+                        <button onclick="UI._showGahoDesignModal()" title="설계 생성">🔧 설계</button>
+                    </div>`;
+
+                if (!pillarStr) {
+                    html += `<div style="color:#666;font-size:11px;padding:12px;text-align:center;">원국 데이터 없음 — 🎲 랜덤 또는 🔧 설계로 생성하세요.</div>`;
+                } else {
+                    const pillars = G.parsePillars(pillarStr);
+                    if (!pillars) {
+                        html += `<div style="color:#c44536;font-size:11px;">원국 파싱 오류: ${pillarStr}</div>`;
+                    } else {
+                        const elements = G.calcElements(pillars);
+                        const sipResult = G.calcSipsung(pillars);
+                        const elemAxes = G.calcElemAxes(elements);
+                        const hParams = sipResult ? G.calcHParams(sipResult.counts, sipResult.total, elements) : null;
+                        const sinsal = G.calcSinsal(pillars, gender);
+                        const archetypes = sipResult ? G.matchArchetypes(sipResult.counts) : [];
+
+                        const pillarLabels = ['시주','일주','월주','년주'];
+                        html += `<div class="gaho-pillars">`;
+                        pillars.forEach((p, i) => {
+                            const gElem = p.g.elem || 'earth';
+                            html += `<div class="gaho-pillar-card" data-elem="${gElem}">
+                                <div class="gaho-pillar-label">${pillarLabels[i]}</div>
+                                <div class="gaho-pillar-emoji">${p.g.emoji||'⭐'}</div>
+                                <div class="gaho-pillar-name">${p.g.name}자리</div>
+                                <div class="gaho-pillar-sub">${p.g.virtue||''}</div>
+                                <div style="margin:4px 0 2px;border-top:1px solid #2e3448;"></div>
+                                <div class="gaho-pillar-emoji">${p.j.emoji||'🌐'}</div>
+                                <div class="gaho-pillar-name">${p.j.name}</div>
+                                <div class="gaho-pillar-sub">${p.j.domain||''}</div>
+                                <div class="gaho-pillar-tid">${p.g.tid}${p.j.tid}</div>
+                            </div>`;
+                        });
+                        html += `</div>`;
+
+                        const elOrder = ['wood','fire','earth','metal','water'];
+                        html += `<div class="gaho-elem-bar">`;
+                        elOrder.forEach(e => {
+                            const pct = elements[e] || 0;
+                            if (pct > 0) html += `<div class="gaho-elem-seg" data-el="${e}" style="width:${pct}%">${G.EN[e]}${pct}%</div>`;
+                        });
+                        html += `</div>`;
+
+                        if (sipResult && sipResult.total > 0) {
+                            const balanced = sipResult.total / 5;
+                            html += `<div class="gaho-axis-group"><div class="gaho-collapsible open" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">십성기질</div><div class="gaho-collapse-body open">`;
+                            G.PARAM_AXES.forEach(ax => {
+                                const v = sipResult.counts[ax.id];
+                                const dev = (v - balanced) / Math.max(balanced, 0.001);
+                                const pct = Math.max(5, Math.min(95, 50 - dev * 35));
+                                const titleIdx = Math.max(0, Math.min(6, Math.round(3 + dev * 3)));
+                                const isOver = dev > 0;
+                                const dotColor = isOver ? '#c44536' : (Math.abs(dev) > 0.1 ? '#3a7bd5' : '#d4a843');
+                                let fillHtml = '';
+                                if (pct < 48) fillHtml = `<div class="gaho-axis-fill" style="right:50%;width:${50-pct}%;background:linear-gradient(90deg,transparent,#c44536)"></div>`;
+                                else if (pct > 52) fillHtml = `<div class="gaho-axis-fill" style="left:50%;width:${pct-50}%;background:linear-gradient(90deg,#3a7bd5,transparent)"></div>`;
+                                html += `<div class="gaho-axis-row">
+                                    <div class="gaho-axis-lbl over">${ax.over}</div>
+                                    <div class="gaho-axis-track"><div class="gaho-axis-mid"></div>${fillHtml}<div class="gaho-axis-dot" style="left:${pct}%;background:${dotColor}"></div></div>
+                                    <div class="gaho-axis-lbl under">${ax.under}</div>
+                                </div>
+                                <div class="gaho-axis-info"><span class="title-text" style="color:${dotColor}">"${ax.titles[titleIdx]}"</span> · ${ax.name} · ${ax.sipsung}</div>`;
+                            });
+                            html += `</div></div>`;
+
+                            html += `<div class="gaho-axis-group"><div class="gaho-collapsible" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">오행기질</div><div class="gaho-collapse-body">`;
+                            G.ELEM_AXES.forEach(ax => {
+                                const pctVal = elements[ax.id] || 0;
+                                const dev = (pctVal - 20) / 20;
+                                const pos = Math.max(5, Math.min(95, 50 - dev * 35));
+                                const titleIdx = Math.max(0, Math.min(6, (() => { if(pctVal<=2)return 0;if(pctVal<=8)return 1;if(pctVal<=16)return 2;if(pctVal<=24)return 3;if(pctVal<=34)return 4;if(pctVal<=44)return 5;return 6; })()));
+                                const ec = G.EC[ax.id] || '#888';
+                                let fillHtml = '';
+                                if (pos < 48) fillHtml = `<div class="gaho-axis-fill" style="right:50%;width:${50-pos}%;background:linear-gradient(90deg,transparent,${ec})"></div>`;
+                                else if (pos > 52) fillHtml = `<div class="gaho-axis-fill" style="left:50%;width:${pos-50}%;background:linear-gradient(90deg,#3a7bd5,transparent)"></div>`;
+                                html += `<div class="gaho-axis-row">
+                                    <div class="gaho-axis-lbl over" style="color:${ec}">${ax.over}</div>
+                                    <div class="gaho-axis-track"><div class="gaho-axis-mid"></div>${fillHtml}<div class="gaho-axis-dot" style="left:${pos}%;background:${ec}"></div></div>
+                                    <div class="gaho-axis-lbl under">${ax.under}</div>
+                                </div>
+                                <div class="gaho-axis-info"><span class="title-text" style="color:${dev>0?ec:'#3a7bd5'}">"${ax.titles[titleIdx]}"</span> · ${ax.name} · ${ax.element} · ${pctVal}%</div>`;
+                            });
+                            html += `</div></div>`;
+
+                            if (hParams) {
+                                html += `<div class="gaho-axis-group"><div class="gaho-collapsible" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">H기질</div><div class="gaho-collapse-body">`;
+                                G.H_AXES.forEach(ax => {
+                                    const lv = hParams[ax.id];
+                                    const dev = (lv - 3) / 3;
+                                    const pos = Math.max(5, Math.min(95, 50 - dev * 35));
+                                    const titles = gender === 'f' ? ax.titlesF : ax.titlesM;
+                                    const titleIdx = Math.max(0, Math.min(6, lv));
+                                    const hCol = '#c47a9e';
+                                    let fillHtml = '';
+                                    if (pos < 48) fillHtml = `<div class="gaho-axis-fill" style="right:50%;width:${50-pos}%;background:linear-gradient(90deg,transparent,${hCol})"></div>`;
+                                    else if (pos > 52) fillHtml = `<div class="gaho-axis-fill" style="left:50%;width:${pos-50}%;background:linear-gradient(90deg,#3a7bd5,transparent)"></div>`;
+                                    html += `<div class="gaho-axis-row">
+                                        <div class="gaho-axis-lbl over" style="color:${hCol}">${ax.over}</div>
+                                        <div class="gaho-axis-track"><div class="gaho-axis-mid"></div>${fillHtml}<div class="gaho-axis-dot" style="left:${pos}%;background:${dev>0?hCol:(Math.abs(dev)>0.1?'#3a7bd5':'#d4a843')}"></div></div>
+                                        <div class="gaho-axis-lbl under">${ax.under}</div>
+                                    </div>
+                                    <div class="gaho-axis-info"><span class="title-text" style="color:${dev>0?hCol:'#3a7bd5'}">"${titles[titleIdx]}"</span> · ${ax.name}</div>`;
+                                });
+                                html += `</div></div>`;
+                            }
+                        }
+
+                        if (sinsal && Object.keys(sinsal).length > 0) {
+                            const sorted = Object.entries(sinsal).sort((a,b) => b[1]-a[1]);
+                            html += `<div style="margin-top:8px;font-size:10px;color:#888;">신살</div><div class="gaho-sinsal-wrap">`;
+                            sorted.forEach(([name, lv]) => {
+                                const cls = lv >= 3 ? 'lv3' : lv >= 2 ? 'lv2' : '';
+                                html += `<span class="gaho-sinsal-tag ${cls}">${name} ${'★'.repeat(Math.min(lv,3))}</span>`;
+                            });
+                            html += `</div>`;
+                        }
+
+                        if (archetypes.length > 0) {
+                            html += `<div style="margin-top:6px;font-size:10px;color:#888;">아키타입</div><div class="gaho-arche-wrap">`;
+                            archetypes.forEach(a => { html += `<span class="gaho-arche">${a.icon} ${a.name}</span>`; });
+                            html += `</div>`;
+                        }
+                    }
+                }
+                html += `</div></div>`;
+                return html;
+            },
+
+            syncGahoNote(pillarStr, race, gender, birthStr) {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) return;
+                let note = item.note || '';
+                for (const t of ['gahoPillars','gahoRace','gahoGender','gahoBirth'])
+                    note = note.replace(new RegExp(`<${t}:[^>]*>\\s*`, 'gi'), '');
+                note = note.trim();
+                const p = pillarStr !== undefined ? pillarStr : (note.match(/<gahoPillars:([^>]+)>/i)?.[1] || '');
+                const r = race !== undefined ? race : (document.getElementById('gahoRace')?.value || 'human');
+                const g = gender !== undefined ? gender : (document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm');
+                const b = birthStr !== undefined ? birthStr : '';
+                if (p) note += `\n<gahoPillars:${p}>`;
+                note += `\n<gahoRace:${r}>`;
+                note += `\n<gahoGender:${g}>`;
+                if (b) note += `\n<gahoBirth:${b}>`;
+                item.note = note.trim();
+                if (window.GahoSystem) window.GahoSystem.invalidateCache(item.id);
+                const noteEl = document.querySelector('[data-field="note"]');
+                if (noteEl) noteEl.value = item.note;
+                this.renderDBForm();
+            },
+
+            _setGahoGender(g) {
+                document.querySelectorAll('.gaho-gender-btn').forEach(b => b.classList.toggle('active', b.dataset.gdr === g));
+                this.syncGahoNote(undefined, undefined, g);
+            },
+
+            _gahoRandom() {
+                const G = window.GahoSystem; if (!G) return;
+                const race = document.getElementById('gahoRace')?.value || 'human';
+                const gender = document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm';
+                const result = G.randomGenerate(race, gender);
+                const birthStr = result.birth ? `${result.birth.year},${result.birth.month},${result.birth.day},${result.birth.hour}` : '';
+                this.syncGahoNote(result.pillarStr, race, gender, birthStr);
+            },
+
+            _showGahoDesignModal() {
+                const G = window.GahoSystem; if (!G) return;
+                const currentRace = document.getElementById('gahoRace')?.value || 'human';
+                const currentGender = document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm';
+                const dm = { el:'fire', gender:currentGender, race:currentRace, mode:'sipsung', vals:[0,0,0,0,0] };
+
+                function getAxes() {
+                    if (dm.mode === 'sipsung') return G.PARAM_AXES.map(a => ({name:a.name, sub:a.sipsung, over:a.over, under:a.under, titles:a.titles}));
+                    if (dm.mode === 'elem') return G.ELEM_AXES.map(a => ({name:a.name, sub:a.element, over:a.over, under:a.under, titles:a.titles}));
+                    if (dm.mode === 'h') return G.H_AXES.map(a => ({name:a.name, sub:'', over:a.over, under:a.under, titles:dm.gender==='f'?a.titlesF:a.titlesM}));
+                    return [];
+                }
+
+                function buildModal() {
+                    const axes = getAxes();
+                    const elEmoji = {wood:'🌿',fire:'🔥',earth:'🪨',metal:'⚔️',water:'💧'};
+                    const elName = {wood:'목',fire:'화',earth:'토',metal:'금',water:'수'};
+                    let h = `<div class="gaho-modal-overlay" onclick="if(event.target===this)document.getElementById('gahoDesignModal').remove()">
+                    <div class="gaho-modal-box">
+                        <button class="gaho-modal-close" onclick="document.getElementById('gahoDesignModal').remove()">✕</button>
+                        <div class="gaho-modal-title">캐 릭 터 설 계</div>
+                        <div class="gaho-modal-sub">원하는 성격 → 원국 역산 생성</div>
+                        <div class="gaho-dm-section"><div class="gaho-dm-label">일간 오행</div><div class="gaho-dm-el-row">`;
+                    ['wood','fire','earth','metal','water'].forEach(e => {
+                        h += `<div class="gaho-dm-el-btn ${dm.el===e?'on':''}" data-el="${e}" onclick="window._gahoDM.setEl('${e}')">${elEmoji[e]}<span>${elName[e]}</span></div>`;
+                    });
+                    h += `</div></div>`;
+                    h += `<div class="gaho-dm-section"><div class="gaho-dm-label">성별</div><div style="display:flex;gap:4px;">
+                        <button class="gaho-gender-btn ${dm.gender==='m'?'active':''}" data-gdr="m" onclick="window._gahoDM.setGdr('m')">♂ 남</button>
+                        <button class="gaho-gender-btn ${dm.gender==='f'?'active':''}" data-gdr="f" onclick="window._gahoDM.setGdr('f')">♀ 여</button>
+                    </div></div>`;
+                    h += `<div class="gaho-dm-section"><div class="gaho-dm-label">종족</div><select id="gahoDMRace" onchange="window._gahoDM.race=this.value" style="font-size:11px;padding:3px 8px;background:#0f3460;border:1px solid #16213e;color:#e0e0e0;border-radius:3px;">`;
+                    Object.entries(G.RACES).forEach(([id,r]) => { h += `<option value="${id}" ${id===dm.race?'selected':''}>${r.name}</option>`; });
+                    h += `</select></div>`;
+                    h += `<div class="gaho-dm-section"><div class="gaho-dm-label">설계 기준</div><div class="gaho-dm-tab-row">
+                        <div class="gaho-dm-tab ${dm.mode==='sipsung'?'on':''}" onclick="window._gahoDM.setMode('sipsung')">십성기질</div>
+                        <div class="gaho-dm-tab ${dm.mode==='elem'?'on':''}" onclick="window._gahoDM.setMode('elem')">오행기질</div>
+                        <div class="gaho-dm-tab ${dm.mode==='h'?'on':''}" onclick="window._gahoDM.setMode('h')">H기질</div>
+                    </div></div>`;
+                    h += `<div class="gaho-dm-section">`;
+                    for (let i = 0; i < axes.length; i++) {
+                        const ax = axes[i];
+                        const v = dm.vals[i];
+                        const overW = v > 0 ? Math.abs(v)/3*45 : 0;
+                        const underW = v < 0 ? Math.abs(v)/3*45 : 0;
+                        const titleIdx = Math.max(0, Math.min(6, v + 3));
+                        h += `<div class="gaho-dm-slider-row">
+                            <div class="gaho-dm-slider-hdr"><span>${ax.name} ${ax.sub?'<small style="color:#666">'+ax.sub+'</small>':''}</span></div>
+                            <div class="gaho-dm-bar-wrap">
+                                <div class="gaho-dm-bar-btn" onclick="window._gahoDM.slide(${i},1)">+</div>
+                                <div class="gaho-dm-bar-track" id="gahoDmTrack${i}"><div class="gaho-dm-bar-mid"></div>
+                                    <div class="gaho-dm-bar-fill-over" id="gahoDmOver${i}" style="width:${overW}%"></div>
+                                    <div class="gaho-dm-bar-fill-under" id="gahoDmUnder${i}" style="width:${underW}%"></div>
+                                </div>
+                                <div class="gaho-dm-bar-btn" onclick="window._gahoDM.slide(${i},-1)">−</div>
+                            </div>
+                            <div class="gaho-dm-bar-labels"><span class="dm-over">${ax.over}</span><span class="dm-title" id="gahoDmTitle${i}" style="color:${v>0?'#c44536':v<0?'#3a7bd5':'#888'}">"${ax.titles[titleIdx]}"</span><span class="dm-under">${ax.under}</span></div>
+                        </div>`;
+                    }
+                    h += `</div>`;
+                    const presets = G.DM_PRESETS[dm.mode] || [];
+                    h += `<div class="gaho-dm-section"><div class="gaho-dm-label">프리셋</div><div class="gaho-dm-preset-row">`;
+                    presets.forEach((p, i) => { h += `<div class="gaho-dm-preset" onclick="window._gahoDM.preset(${i})">${p.icon} ${p.name}</div>`; });
+                    h += `</div></div>`;
+                    h += `<button class="gaho-dm-gen-btn" onclick="window._gahoDM.generate()">생 성</button>`;
+                    h += `</div></div>`;
+                    return h;
+                }
+
+                function render() {
+                    let el = document.getElementById('gahoDesignModal');
+                    if (!el) { el = document.createElement('div'); el.id = 'gahoDesignModal'; document.body.appendChild(el); }
+                    el.innerHTML = buildModal();
+                }
+
+                window._gahoDM = {
+                    get state() { return dm; },
+                    setEl(e) { dm.el = e; render(); },
+                    setGdr(g) { dm.gender = g; if(dm.mode==='h') render(); else { document.querySelectorAll('#gahoDesignModal .gaho-gender-btn').forEach(b=>b.classList.toggle('active',b.dataset.gdr===g)); } },
+                    setMode(m) { dm.mode = m; dm.vals = [0,0,0,0,0]; render(); },
+                    set race(v) { dm.race = v; },
+                    slide(idx, dir) {
+                        dm.vals[idx] = Math.max(-3, Math.min(3, dm.vals[idx] + dir));
+                        const axes = getAxes();
+                        for (let i = 0; i < axes.length; i++) {
+                            const v = dm.vals[i];
+                            const ov = document.getElementById('gahoDmOver'+i);
+                            const un = document.getElementById('gahoDmUnder'+i);
+                            const ti = document.getElementById('gahoDmTitle'+i);
+                            if (ov) ov.style.width = (v>0?Math.abs(v)/3*45:0)+'%';
+                            if (un) un.style.width = (v<0?Math.abs(v)/3*45:0)+'%';
+                            if (ti && axes[i]) {
+                                const tIdx = Math.max(0, Math.min(6, v+3));
+                                ti.textContent = '"' + axes[i].titles[tIdx] + '"';
+                                ti.style.color = v>0?'#c44536':v<0?'#3a7bd5':'#888';
+                            }
+                        }
+                    },
+                    preset(idx) {
+                        const presets = G.DM_PRESETS[dm.mode] || [];
+                        if (presets[idx]) dm.vals = [...presets[idx].vals];
+                        this.slide(0, 0);
+                    },
+                    generate() {
+                        const result = G.designGenerate(dm.el, dm.gender, dm.race, dm.mode, dm.vals);
+                        document.getElementById('gahoDesignModal')?.remove();
+                        UI.syncGahoNote(result.pillarStr, dm.race, dm.gender, '');
+                    }
+                };
+                render();
+            },
+
+            renderClassForm(item) {
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                    </div>
+                </div>`;
+
+                // Experience Parameters
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">경험치 곡선</div>
+                    <div class="formSectionContent">
+                        <p style="color: #aaa; font-size: 0.85em; margin-bottom: 10px;">경험치 곡선 파라미터 (a, b, c, d)</p>
+                        ${createField('expParams', '경험치 파라미터', 'textarea', JSON.stringify(item.expParams || [30, 20, 30, 20]))}
+                    </div>
+                </div>`;
+
+                // Parameters Growth
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">능력치 성장</div>
+                    <div class="formSectionContent">
+                        <p style="color: #aaa; font-size: 0.85em; margin-bottom: 10px;">레벨별 능력치 (JSON 형식)</p>
+                        ${createField('params', '능력치 데이터', 'textarea', JSON.stringify(item.params || []))}
+                    </div>
+                </div>`;
+
+                // Learnings
+                html += this.renderArraySection('learnings', '습득 스킬', item.learnings || [],
+                    (item) => `레벨 ${item.level}: 스킬 #${item.skillId}`);
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderSkillForm(item) {
+                const scopeOptions = [
+                    [0, '없음'],
+                    [1, '적단체'],
+                    [2, '적전체'],
+                    [4, '아군단체'],
+                    [6, '아군전체'],
+                    [7, '아군단체(회복)'],
+                    [8, '아군전체(회복)'],
+                    [11, '사용자']
+                ];
+                const occasionOptions = [
+                    [0, '항상'],
+                    [1, '전투만'],
+                    [2, '메뉴만'],
+                    [3, '사용불가']
+                ];
+                const hitTypeOptions = [
+                    [0, '확정'],
+                    [1, '물리'],
+                    [2, '마법']
+                ];
+                const damageTypeOptions = [
+                    [0, '없음'],
+                    [1, 'HP 데미지'],
+                    [2, 'MP 데미지'],
+                    [3, 'HP 회복'],
+                    [4, 'MP 회복'],
+                    [5, 'HP 흡수'],
+                    [6, 'MP 흡수']
+                ];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('description', '설명', 'textarea', item.description || '')}
+                        ${createField('iconIndex', '아이콘 인덱스', 'number', item.iconIndex || 0)}
+                        ${createField('stypeId', '스킬 타입', 'number', item.stypeId || 0)}
+                    </div>
+                </div>`;
+
+                // Cost & Gain
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">소비/획득</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('mpCost', 'MP 소비', 'number', item.mpCost || 0)}
+                            ${createField('tpCost', 'TP 소비', 'number', item.tpCost || 0)}
+                        </div>
+                        ${createField('tpGain', 'TP 획득', 'number', item.tpGain || 0)}
+                    </div>
+                </div>`;
+
+                // Range & Usage
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">범위 및 사용</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('scope', '범위', 'select', item.scope || 0, scopeOptions)}
+                            ${createField('occasion', '사용 가능', 'select', item.occasion || 0, occasionOptions)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Hit & Speed
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">명중 및 속도</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('hitType', '명중 타입', 'select', item.hitType || 0, hitTypeOptions)}
+                            ${createField('successRate', '성공률 (%)', 'number', item.successRate || 100)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('speed', '속도', 'number', item.speed || 0)}
+                            ${createField('repeats', '반복 횟수', 'number', item.repeats || 1)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Damage
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">데미지</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('damage_type', '데미지 타입', 'select', item.damage?.type || 0, damageTypeOptions)}
+                            ${createField('damage_elementId', '속성 ID', 'number', item.damage?.elementId || 0)}
+                        </div>
+                        ${createField('damage_formula', '데미지 공식', 'textarea', item.damage?.formula || 'a.atk * 4 - b.def * 2')}
+                        <div class="formInline">
+                            ${createField('damage_variance', '분산', 'number', item.damage?.variance || 20)}
+                            ${createField('damage_critical', '치명타', 'checkbox', item.damage?.critical || false)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Animation & Requirements
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">애니메이션 및 요구</div>
+                    <div class="formSectionContent">
+                        ${createAnimField('animationId', '애니메이션', item.animationId || 0)}
+                        <div class="formInline">
+                            ${createField('requiredWtypeId1', '필요 무기 타입 1', 'number', item.requiredWtypeId1 || 0)}
+                            ${createField('requiredWtypeId2', '필요 무기 타입 2', 'number', item.requiredWtypeId2 || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Messages
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메시지</div>
+                    <div class="formSectionContent">
+                        ${createField('message1', '메시지 1', 'text', item.message1 || '')}
+                        ${createField('message2', '메시지 2', 'text', item.message2 || '')}
+                    </div>
+                </div>`;
+
+                // Effects (드롭다운 에디터)
+                html += this.renderEffectsSection(item.effects || []);
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // SRPG 거리/범위 보정 설정
+                {
+                    const note = item.note || '';
+                    // 거리 보정 파싱
+                    const distMatch = note.match(/<srpgDistMod:([^>]+)>/i);
+                    let distFactor = '', distBase = '';
+                    if (distMatch) {
+                        const dp = distMatch[1].split(',');
+                        distFactor = dp[0] || '';
+                        distBase = dp[1] || '';
+                    }
+                    // 범위 감쇠 파싱
+                    const falloffMatch = note.match(/<srpgAreaFalloff:([\d.]+)>/i);
+                    const falloffVal = falloffMatch ? falloffMatch[1] : '';
+
+                    html += `<div class="formSection">
+                        <div class="formSectionHeader">SRPG 거리/범위 보정</div>
+                        <div class="formSectionContent">
+                            <p style="color:#aaa;font-size:0.82em;margin-bottom:8px;">
+                                거리에 따른 데미지 보정과 범위 공격의 외곽 감쇠를 설정합니다.<br>
+                                비워두면 보정 없음 (100% 균일).
+                            </p>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+                                <label style="color:#e94560;font-size:0.85em;font-weight:bold;">거리 보정</label>
+                                <label style="color:#aaa;font-size:0.78em;">계수</label>
+                                <input type="number" id="srpgDistFactor" value="${distFactor}" step="0.05" style="width:60px;" placeholder="0.9"
+                                    title="기준거리에서 1칸 멀어질 때마다 곱해지는 계수 (0.9=10% 감쇠)">
+                                <label style="color:#aaa;font-size:0.78em;">기준거리</label>
+                                <input type="number" id="srpgDistBase" value="${distBase}" step="1" style="width:50px;" placeholder="1"
+                                    title="100% 데미지가 적용되는 기준 거리 (칸)">
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <label style="color:#e94560;font-size:0.85em;font-weight:bold;">범위 감쇠</label>
+                                <label style="color:#aaa;font-size:0.78em;">계수</label>
+                                <input type="number" id="srpgAreaFalloff" value="${falloffVal}" step="0.05" style="width:60px;" placeholder="0.8"
+                                    title="범위 중심에서 1칸 떨어질 때마다 곱해지는 계수 (0.8=20% 감쇠)">
+                            </div>
+                            <button type="button" onclick="UI.applySrpgDistMod()" style="margin-top:8px;padding:4px 12px;background:#2d6a4f;color:#fff;border:none;border-radius:4px;cursor:pointer;">노트에 반영</button>
+                        </div>
+                    </div>`;
+                }
+
+                // SRPG Range Editor
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 범위</div>
+                    <div class="formSectionContent">
+                        <div id="sre-skill-editor"></div>
+                    </div>
+                </div>`;
+
+                // SRPG Phase Panel
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG Phase 파이프라인</div>
+                    <div class="formSectionContent">
+                        <div id="srpg-phase-skill"></div>
+                    </div>
+                </div>`;
+
+                // SRPG 소환 파라미터
+                html += this.renderSummonSection(item);
+
+                // SRPG 투사체/멀티샷 섹션
+                html += this.renderProjectileSection(item);
+
+                // SRPG AI 지지(일지) 배정
+                html += this.renderJiBranchSection(item);
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            // ─── SRPG 소환 파라미터 섹션 ───
+            renderSummonSection(item) {
+                const note = item.note || '';
+                const _ntv = (tag) => { const m = note.match(new RegExp('<' + tag + ':([^>]+)>', 'i')); return m ? m[1].trim() : ''; };
+                const summonTarget = _ntv('srpgSummon');
+                const summonRange = _ntv('srpgSummonRange') || '1-3';
+                const summonDuration = _ntv('srpgSummonDuration') || '0';
+                const summonLimit = _ntv('srpgSummonLimit') || '99';
+                const hasSummon = summonTarget !== '';
+
+                // 액터 목록 (드롭다운용)
+                let actorOptions = '<option value="">-- 없음 (소환 안함) --</option>';
+                if (typeof State !== 'undefined' && State.database && State.database.actors) {
+                    for (let i = 1; i < State.database.actors.length; i++) {
+                        const a = State.database.actors[i];
+                        if (!a) continue;
+                        const sel = (String(i) === summonTarget) ? 'selected' : '';
+                        const unitInfo = (a.note || '').includes('srpgUnitType:object') ? ' [오브젝트]' : '';
+                        actorOptions += `<option value="${i}" ${sel}>#${i} ${a.name || ''}${unitInfo}</option>`;
+                    }
+                }
+                // 레거시 타입 옵션
+                const legacyTypes = ['barricade', 'wall', 'totem'];
+                for (const lt of legacyTypes) {
+                    const sel = (summonTarget === lt) ? 'selected' : '';
+                    actorOptions += `<option value="${lt}" ${sel}>${lt} (레거시)</option>`;
+                }
+
+                return `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 소환</div>
+                    <div class="formSectionContent">
+                        <p style="color:#aaa;font-size:0.82em;margin-bottom:8px;">
+                            이 스킬이 오브젝트를 소환하는 경우 대상 액터와 파라미터를 설정합니다.
+                        </p>
+                        <div class="formGroup">
+                            <label>소환 대상</label>
+                            <select id="srpgSummonTarget" onchange="UI.syncSummonNote()">
+                                ${actorOptions}
+                            </select>
+                        </div>
+                        <div id="srpgSummonParams" style="display:${hasSummon ? 'block' : 'none'};">
+                            <div class="formInline">
+                                <div class="formGroup">
+                                    <label>소환 거리</label>
+                                    <input type="text" id="srpgSummonRange" value="${summonRange}" placeholder="1-3"
+                                        title="소환 가능 거리 (예: 1-3)" onchange="UI.syncSummonNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>지속 턴</label>
+                                    <input type="number" id="srpgSummonDuration" value="${summonDuration}" min="0" max="99"
+                                        title="0 = 영구" onchange="UI.syncSummonNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>동시 제한</label>
+                                    <input type="number" id="srpgSummonLimit" value="${summonLimit}" min="1" max="99"
+                                        title="동시에 소환 가능한 최대 수" onchange="UI.syncSummonNote()">
+                                </div>
+                            </div>
+                            <div id="srpgSummonInfo" style="margin-top:6px;padding:6px 10px;background:#1a1a2e;border-radius:4px;font-size:0.82em;color:#8899aa;"></div>
+                        </div>
+                    </div>
+                </div>`;
+            },
+
+            // 소환 노트태그 동기화
+            syncSummonNote() {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) return;
+                let note = item.note || '';
+
+                // 기존 소환 태그 제거
+                const summonTags = ['srpgSummon', 'srpgSummonRange', 'srpgSummonDuration', 'srpgSummonLimit'];
+                for (const tag of summonTags) {
+                    note = note.replace(new RegExp(`<${tag}:[^>]*>\\s*`, 'gi'), '');
+                }
+                note = note.trim();
+
+                const target = document.getElementById('srpgSummonTarget')?.value || '';
+                const paramsDiv = document.getElementById('srpgSummonParams');
+                const infoDiv = document.getElementById('srpgSummonInfo');
+
+                if (target) {
+                    if (paramsDiv) paramsDiv.style.display = 'block';
+
+                    const range = document.getElementById('srpgSummonRange')?.value || '1-3';
+                    const duration = document.getElementById('srpgSummonDuration')?.value || '0';
+                    const limit = document.getElementById('srpgSummonLimit')?.value || '99';
+
+                    let tags = `<srpgSummon:${target}>`;
+                    tags += `\n<srpgSummonRange:${range}>`;
+                    if (duration !== '0') tags += `\n<srpgSummonDuration:${duration}>`;
+                    if (limit !== '99') tags += `\n<srpgSummonLimit:${limit}>`;
+
+                    note = (note ? note + '\n' : '') + tags;
+
+                    // 대상 정보 표시
+                    if (infoDiv) {
+                        const actorId = parseInt(target);
+                        if (!isNaN(actorId) && State.database?.actors?.[actorId]) {
+                            const a = State.database.actors[actorId];
+                            const aN = a.note || '';
+                            const gw = (aN.match(/<srpgGridW:(\d+)>/i) || [,'1'])[1];
+                            const gh = (aN.match(/<srpgGridH:(\d+)>/i) || [,'1'])[1];
+                            const flags = (aN.match(/<srpgObjectFlags:([^>]+)>/i) || [,''])[1];
+                            infoDiv.innerHTML = `<b style="color:#44c8ff;">${a.name}</b> | 그리드: ${gw}×${gh}` +
+                                (flags ? ` | 플래그: ${flags}` : '') +
+                                ` | 지속: ${duration === '0' ? '영구' : duration + '턴'} | 최대: ${limit}개`;
+                        } else {
+                            infoDiv.innerHTML = `레거시 타입: <b style="color:#e94560;">${target}</b>`;
+                        }
+                    }
+                } else {
+                    if (paramsDiv) paramsDiv.style.display = 'none';
+                    if (infoDiv) infoDiv.innerHTML = '';
+                }
+
+                item.note = note;
+                const noteEl = document.querySelector('[data-field="note"]');
+                if (noteEl) noteEl.value = item.note;
+            },
+
+
+            // ─── SRPG AI 지지(일지) 배정 섹션 ───
+            renderJiBranchSection(item) {
+                const note = item.note || '';
+                // 현재 배정된 지지 파싱
+                const jiMatch = note.match(/<srpgJi:(.+?)>/i);
+                const assignedJi = jiMatch ? jiMatch[1].split(',').map(s => s.trim()) : [];
+
+                // 가호 시스템 지지 목록 (변환 이름)
+                const JI_BRANCHES = [
+                    { name: '노크탄', tid: '子', elem: 'water', domain: '교활한 비밀의 신', color: '#4A90D9' },
+                    { name: '그란디르', tid: '丑', elem: 'earth', domain: '느긋한 대지의 신', color: '#8B7355' },
+                    { name: '프레간', tid: '寅', elem: 'wood', domain: '용맹한 전쟁의 신', color: '#4CAF50' },
+                    { name: '플로렌', tid: '卯', elem: 'wood', domain: '다정한 사랑의 신', color: '#81C784' },
+                    { name: '레그나스', tid: '辰', elem: 'earth', domain: '오만한 권력의 신', color: '#A1887F' },
+                    { name: '벨리스', tid: '巳', elem: 'fire', domain: '총명한 지식의 신', color: '#FF7043' },
+                    { name: '솔란', tid: '午', elem: 'fire', domain: '성급한 계몽의 신', color: '#EF5350' },
+                    { name: '큐라', tid: '未', elem: 'earth', domain: '과묵한 등불의 신', color: '#BCAAA4' },
+                    { name: '크리시스', tid: '申', elem: 'metal', domain: '엄격한 심판의 신', color: '#78909C' },
+                    { name: '스펠라', tid: '酉', elem: 'metal', domain: '깐깐한 장인의 신', color: '#90A4AE' },
+                    { name: '에르미탄', tid: '戌', elem: 'earth', domain: '완고한 믿음의 신', color: '#8D6E63' },
+                    { name: '레바', tid: '亥', elem: 'water', domain: '게으른 축제의 신', color: '#5C6BC0' }
+                ];
+
+                const elemColors = { water: '#4A90D9', wood: '#4CAF50', fire: '#EF5350', earth: '#8B7355', metal: '#78909C' };
+                const elemNames = { water: '수', wood: '목', fire: '화', earth: '토', metal: '금' };
+
+                let chips = '';
+                for (const ji of JI_BRANCHES) {
+                    const isActive = assignedJi.includes(ji.name);
+                    const activeStyle = isActive
+                        ? `background:${ji.color}; color:#fff; border-color:${ji.color};`
+                        : `background:transparent; color:#ccc; border:1px solid #555;`;
+                    chips += `<span class="ji-chip" data-ji="${ji.name}" data-tid="${ji.tid}"
+                        style="display:inline-block; padding:4px 10px; margin:3px; border-radius:14px;
+                        cursor:pointer; font-size:12px; transition:all 0.2s; user-select:none; ${activeStyle}"
+                        title="${ji.tid} ${ji.domain} (${elemNames[ji.elem]})"
+                        onclick="window._toggleJiBranch(this, '${ji.name}', '${ji.color}')">
+                        <span style="font-size:10px; opacity:0.7">${elemNames[ji.elem]}</span> ${ji.name}
+                    </span>`;
+                }
+
+                return `<div class="formSection">
+                    <div class="formSectionHeader">AI 지지 배정</div>
+                    <div class="formSectionContent" style="padding:8px;">
+                        <p style="color:#999; font-size:11px; margin:0 0 8px 0;">
+                            이 스킬을 선호하는 지지(일지)를 선택합니다. 복수 선택 가능.
+                            해당 지지를 가진 유닛이 이 스킬을 더 적극적으로 사용합니다.
+                        </p>
+                        <div id="ji-branch-chips" style="display:flex; flex-wrap:wrap; gap:2px;">
+                            ${chips}
+                        </div>
+                        <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                            <span style="color:#888; font-size:11px;">노트태그:</span>
+                            <code id="ji-notetag-preview" style="color:#aaa; font-size:11px; background:#1a1a2e; padding:2px 6px; border-radius:3px;">
+                                ${assignedJi.length > 0 ? '&lt;srpgJi:' + assignedJi.join(',') + '&gt;' : '(없음)'}
+                            </code>
+                            <button onclick="window._applyJiBranch()" style="padding:2px 10px; font-size:11px;
+                                background:#2a3a5a; color:#adf; border:1px solid #3a5a8a; border-radius:3px; cursor:pointer;">
+                                노트에 반영
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+            },
+
+            // ─── SRPG 투사체 / 멀티샷 / 바라지 섹션 ───
+            renderProjectileSection(item) {
+                const note = item.note || '';
+                const _ntv = (tag) => { const m = note.match(new RegExp('<' + tag + ':([^>]+)>', 'i')); return m ? m[1].trim() : ''; };
+                const _ntb = (tag) => { const v = _ntv(tag); return v ? v.toLowerCase() === 'true' : null; };
+
+                // ── 기존 노트태그 파싱 ──
+                const projType    = _ntv('srpgProjectile') || '';   // projectile|hitray|artillery|''
+                const projImage   = _ntv('srpgProjImage');
+                const projSpeed   = _ntv('srpgProjSpeed') || '6';
+                const projScale   = _ntv('srpgProjScale') || '1.0';
+                const projRotate  = _ntb('srpgProjRotate');
+                const projTrail   = _ntb('srpgProjTrail');
+                const projFrameW  = _ntv('srpgProjFrameW') || '32';
+                const projFrameH  = _ntv('srpgProjFrameH') || '32';
+                const projFrames  = _ntv('srpgProjFrames') || '1';
+                const projFrameSpd= _ntv('srpgProjFrameSpeed') || '6';
+                const projTrailA  = _ntv('srpgProjTrailAlpha') || '0.4';
+                const impactAnim  = _ntv('srpgProjImpactAnim') || '0';
+                const impactSe    = _ntv('srpgProjImpactSe');
+
+                // hitray 전용
+                const beamStart   = _ntv('srpgBeamStart');
+                const beamMid     = _ntv('srpgBeamMid');
+                const beamEnd     = _ntv('srpgBeamEnd');
+                const beamDur     = _ntv('srpgBeamDuration') || '30';
+                const beamWidth   = _ntv('srpgBeamWidth') || '1.0';
+
+                // artillery 전용
+                const arcHeight   = _ntv('srpgArcHeight') || '200';
+
+                // 멀티샷
+                const multiShot   = _ntv('srpgMultiShot') || '';
+                const shotDelay   = _ntv('srpgShotDelay') || '12';
+                const shotDmgMod  = _ntv('srpgShotDamageMod') || '1.0';
+
+                // 바라지
+                const barPattern  = _ntv('srpgBarrage') || '';      // fan|line|cross|scatter|''
+                const barCount    = _ntv('srpgBarrageCount') || '';
+                const barDelay    = _ntv('srpgBarrageDelay') || '8';
+                const barDmgMod   = _ntv('srpgBarrageDamageMod') || '0.6';
+                const barSpread   = _ntv('srpgBarrageSpread') || '1';
+
+                const hasProj     = projType !== '';
+                const isHitray    = projType === 'hitray';
+                const isArtillery = projType === 'artillery';
+                const hasMulti    = multiShot !== '' && Number(multiShot) >= 2;
+                const hasBarrage  = barPattern !== '';
+
+                // 멀티샷 모드 결정: 'none' | 'stockshot' | 'barrage'
+                let multiMode = 'none';
+                if (hasBarrage) multiMode = 'barrage';
+                else if (hasMulti) multiMode = 'stockshot';
+
+                // srpg 이미지 목록 (동적 로드 불가 시 수동 입력)
+                const srpgImages = ['arrow','fireball','lightning','meteor','beam_start','beam_mid','beam_end'];
+                const imgOpts = (sel) => {
+                    let o = '<option value="">-- 선택 --</option>';
+                    for (const img of srpgImages) {
+                        o += '<option value="' + img + '"' + (img === sel ? ' selected' : '') + '>' + img + '</option>';
+                    }
+                    return o;
+                };
+
+                return `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 투사체</div>
+                    <div class="formSectionContent">
+                        <p style="color:#aaa;font-size:0.82em;margin-bottom:8px;">
+                            투사체 타입과 멀티샷/바라지 파라미터를 설정합니다.
+                        </p>
+
+                        <!-- 투사체 타입 -->
+                        <div class="formGroup">
+                            <label>투사체 타입</label>
+                            <select id="srpgProjType" onchange="UI.syncProjectileNote()">
+                                <option value=""${projType===''?' selected':''}>-- 없음 --</option>
+                                <option value="projectile"${projType==='projectile'?' selected':''}>projectile (스프라이트 비행)</option>
+                                <option value="hitray"${projType==='hitray'?' selected':''}>hitray (즉시 빔)</option>
+                                <option value="artillery"${projType==='artillery'?' selected':''}>artillery (포물선)</option>
+                            </select>
+                        </div>
+
+                        <!-- 공통 파라미터 (투사체 선택 시만) -->
+                        <div id="srpgProjParams" style="display:${hasProj?'block':'none'};">
+
+                            <!-- 공통: 이미지, 속도, 스케일 -->
+                            <div class="formInline">
+                                <div class="formGroup">
+                                    <label>이미지 (img/srpg/)</label>
+                                    <select id="srpgProjImage" onchange="UI.syncProjectileNote()">
+                                        ${imgOpts(projImage)}
+                                    </select>
+                                </div>
+                                <div class="formGroup">
+                                    <label>속도 (px/f)</label>
+                                    <input type="number" id="srpgProjSpeed" value="${projSpeed}" min="1" max="60"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>스케일</label>
+                                    <input type="number" id="srpgProjScale" value="${projScale}" min="0.1" max="5" step="0.1"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                            </div>
+
+                            <!-- 스프라이트 시트 -->
+                            <div class="formInline">
+                                <div class="formGroup">
+                                    <label>프레임 폭</label>
+                                    <input type="number" id="srpgProjFrameW" value="${projFrameW}" min="1"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>프레임 높이</label>
+                                    <input type="number" id="srpgProjFrameH" value="${projFrameH}" min="1"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>프레임 수</label>
+                                    <input type="number" id="srpgProjFrames" value="${projFrames}" min="1"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>프레임 속도</label>
+                                    <input type="number" id="srpgProjFrameSpd" value="${projFrameSpd}" min="1"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                            </div>
+
+                            <!-- 회전, 잔상 -->
+                            <div class="formInline">
+                                <div class="formGroup">
+                                    <label>방향 회전</label>
+                                    <select id="srpgProjRotate" onchange="UI.syncProjectileNote()">
+                                        <option value="true"${projRotate !== false?' selected':''}>true</option>
+                                        <option value="false"${projRotate === false?' selected':''}>false</option>
+                                    </select>
+                                </div>
+                                <div class="formGroup">
+                                    <label>잔상 효과</label>
+                                    <select id="srpgProjTrail" onchange="UI.syncProjectileNote()">
+                                        <option value="false"${projTrail !== true?' selected':''}>false</option>
+                                        <option value="true"${projTrail === true?' selected':''}>true</option>
+                                    </select>
+                                </div>
+                                <div class="formGroup">
+                                    <label>잔상 알파</label>
+                                    <input type="number" id="srpgProjTrailAlpha" value="${projTrailA}" min="0" max="1" step="0.05"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                            </div>
+
+                            <!-- 착탄 -->
+                            <div class="formInline">
+                                <div class="formGroup">
+                                    <label>착탄 애니메이션 ID</label>
+                                    <input type="number" id="srpgProjImpactAnim" value="${impactAnim}" min="0"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                                <div class="formGroup">
+                                    <label>착탄 SE</label>
+                                    <input type="text" id="srpgProjImpactSe" value="${impactSe}" placeholder="파일명"
+                                        onchange="UI.syncProjectileNote()">
+                                </div>
+                            </div>
+
+                            <!-- ── hitray 전용 ── -->
+                            <div id="srpgHitrayParams" style="display:${isHitray?'block':'none'};margin-top:8px;padding:8px 10px;background:#1a1a2e;border-radius:4px;">
+                                <div style="color:#44c8ff;font-weight:bold;font-size:0.85em;margin-bottom:6px;">▸ 빔 (Hitray) 설정</div>
+                                <div class="formInline">
+                                    <div class="formGroup">
+                                        <label>시작부 이미지</label>
+                                        <select id="srpgBeamStart" onchange="UI.syncProjectileNote()">${imgOpts(beamStart)}</select>
+                                    </div>
+                                    <div class="formGroup">
+                                        <label>중간부 이미지</label>
+                                        <select id="srpgBeamMid" onchange="UI.syncProjectileNote()">${imgOpts(beamMid)}</select>
+                                    </div>
+                                    <div class="formGroup">
+                                        <label>끝부분 이미지</label>
+                                        <select id="srpgBeamEnd" onchange="UI.syncProjectileNote()">${imgOpts(beamEnd)}</select>
+                                    </div>
+                                </div>
+                                <div class="formInline">
+                                    <div class="formGroup">
+                                        <label>빔 지속시간 (f)</label>
+                                        <input type="number" id="srpgBeamDuration" value="${beamDur}" min="1"
+                                            onchange="UI.syncProjectileNote()">
+                                    </div>
+                                    <div class="formGroup">
+                                        <label>빔 스케일</label>
+                                        <input type="number" id="srpgBeamWidth" value="${beamWidth}" min="0.1" max="5" step="0.1"
+                                            onchange="UI.syncProjectileNote()">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ── artillery 전용 ── -->
+                            <div id="srpgArtilleryParams" style="display:${isArtillery?'block':'none'};margin-top:8px;padding:8px 10px;background:#1a1a2e;border-radius:4px;">
+                                <div style="color:#e94560;font-weight:bold;font-size:0.85em;margin-bottom:6px;">▸ 포물선 (Artillery) 설정</div>
+                                <div class="formInline">
+                                    <div class="formGroup">
+                                        <label>포물선 높이 (px)</label>
+                                        <input type="number" id="srpgArcHeight" value="${arcHeight}" min="50" max="600"
+                                            onchange="UI.syncProjectileNote()">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ── 멀티샷 모드 선택 ── -->
+                            <div style="margin-top:12px;border-top:1px solid #333;padding-top:10px;">
+                                <div class="formGroup">
+                                    <label>멀티샷 모드</label>
+                                    <select id="srpgMultiMode" onchange="UI.syncProjectileNote()">
+                                        <option value="none"${multiMode==='none'?' selected':''}>없음 (단발)</option>
+                                        <option value="stockshot"${multiMode==='stockshot'?' selected':''}>스톡샷 (타겟 지정 N발)</option>
+                                        <option value="barrage"${multiMode==='barrage'?' selected':''}>바라지 (패턴 자동 산개)</option>
+                                    </select>
+                                </div>
+
+                                <!-- 스톡샷 파라미터 -->
+                                <div id="srpgStockshotParams" style="display:${multiMode==='stockshot'?'block':'none'};margin-top:6px;padding:8px 10px;background:#1a1a2e;border-radius:4px;">
+                                    <div style="color:#88ccff;font-weight:bold;font-size:0.85em;margin-bottom:6px;">▸ 스톡샷 파라미터</div>
+                                    <div class="formInline">
+                                        <div class="formGroup">
+                                            <label>발수 (N)</label>
+                                            <input type="number" id="srpgMultiShot" value="${multiShot || '3'}" min="2" max="20"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                        <div class="formGroup">
+                                            <label>발사 간격 (f)</label>
+                                            <input type="number" id="srpgShotDelay" value="${shotDelay}" min="1" max="120"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                        <div class="formGroup">
+                                            <label>발당 데미지 배율</label>
+                                            <input type="number" id="srpgShotDamageMod" value="${shotDmgMod}" min="0.1" max="3" step="0.1"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                    </div>
+                                    <p style="color:#8899aa;font-size:0.78em;margin-top:4px;">
+                                        플레이어가 N개 타겟을 순서대로 클릭하여 개별 투사체 발사. 같은 타겟 중복 가능.
+                                    </p>
+                                </div>
+
+                                <!-- 바라지 파라미터 -->
+                                <div id="srpgBarrageParams" style="display:${multiMode==='barrage'?'block':'none'};margin-top:6px;padding:8px 10px;background:#1a1a2e;border-radius:4px;">
+                                    <div style="color:#ffaa44;font-weight:bold;font-size:0.85em;margin-bottom:6px;">▸ 바라지 파라미터</div>
+                                    <div class="formInline">
+                                        <div class="formGroup">
+                                            <label>패턴</label>
+                                            <select id="srpgBarragePattern" onchange="UI.syncProjectileNote()">
+                                                <option value="fan"${barPattern==='fan'?' selected':''}>fan (부채꼴)</option>
+                                                <option value="line"${barPattern==='line'?' selected':''}>line (관통)</option>
+                                                <option value="cross"${barPattern==='cross'?' selected':''}>cross (십자)</option>
+                                                <option value="scatter"${barPattern==='scatter'?' selected':''}>scatter (산탄)</option>
+                                            </select>
+                                        </div>
+                                        <div class="formGroup">
+                                            <label>투사체 수</label>
+                                            <input type="number" id="srpgBarrageCount" value="${barCount || '3'}" min="1" max="20"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                        <div class="formGroup">
+                                            <label>산개 폭 (타일)</label>
+                                            <input type="number" id="srpgBarrageSpread" value="${barSpread}" min="1" max="10"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                    </div>
+                                    <div class="formInline">
+                                        <div class="formGroup">
+                                            <label>발사 간격 (f)</label>
+                                            <input type="number" id="srpgBarrageDelay" value="${barDelay}" min="1" max="120"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                        <div class="formGroup">
+                                            <label>발당 데미지 배율</label>
+                                            <input type="number" id="srpgBarrageDamageMod" value="${barDmgMod}" min="0.1" max="3" step="0.1"
+                                                onchange="UI.syncProjectileNote()">
+                                        </div>
+                                    </div>
+                                    <p style="color:#8899aa;font-size:0.78em;margin-top:4px;">
+                                        기준점 1곳 지정 → 패턴에 따라 자동 산개. fan=부채꼴, line=관통, cross=십자, scatter=랜덤 산탄.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 투사체 미선택 시 안내 -->
+                        <div id="srpgProjNone" style="display:${hasProj?'none':'block'};color:#666;font-size:0.82em;padding:6px 0;">
+                            투사체 타입을 선택하면 파라미터가 표시됩니다.
+                        </div>
+                    </div>
+                </div>`;
+            },
+
+            // 투사체/멀티샷/바라지 노트태그 동기화
+            syncProjectileNote() {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) return;
+                let note = item.note || '';
+
+                // 기존 투사체/멀티샷/바라지 태그 전부 제거
+                const projTags = [
+                    'srpgProjectile', 'srpgProjImage', 'srpgProjSpeed', 'srpgProjScale',
+                    'srpgProjRotate', 'srpgProjTrail', 'srpgProjTrailAlpha',
+                    'srpgProjFrameW', 'srpgProjFrameH', 'srpgProjFrames', 'srpgProjFrameSpeed',
+                    'srpgProjImpactAnim', 'srpgProjImpactSe',
+                    'srpgBeamStart', 'srpgBeamMid', 'srpgBeamEnd', 'srpgBeamDuration', 'srpgBeamWidth',
+                    'srpgArcHeight',
+                    'srpgMultiShot', 'srpgShotDelay', 'srpgShotDamageMod',
+                    'srpgBarrage', 'srpgBarrageCount', 'srpgBarrageDelay', 'srpgBarrageDamageMod', 'srpgBarrageSpread'
+                ];
+                for (const tag of projTags) {
+                    note = note.replace(new RegExp(`<${tag}:[^>]*>\\s*`, 'gi'), '');
+                }
+                note = note.trim();
+
+                const projType = document.getElementById('srpgProjType')?.value || '';
+                const paramsDiv = document.getElementById('srpgProjParams');
+                const noneDiv = document.getElementById('srpgProjNone');
+                const hitrayDiv = document.getElementById('srpgHitrayParams');
+                const artDiv = document.getElementById('srpgArtilleryParams');
+                const multiMode = document.getElementById('srpgMultiMode')?.value || 'none';
+                const stockDiv = document.getElementById('srpgStockshotParams');
+                const barDiv = document.getElementById('srpgBarrageParams');
+
+                // visibility 토글
+                if (paramsDiv) paramsDiv.style.display = projType ? 'block' : 'none';
+                if (noneDiv)   noneDiv.style.display   = projType ? 'none' : 'block';
+                if (hitrayDiv) hitrayDiv.style.display  = projType === 'hitray' ? 'block' : 'none';
+                if (artDiv)    artDiv.style.display     = projType === 'artillery' ? 'block' : 'none';
+                if (stockDiv)  stockDiv.style.display   = multiMode === 'stockshot' ? 'block' : 'none';
+                if (barDiv)    barDiv.style.display     = multiMode === 'barrage' ? 'block' : 'none';
+
+                if (projType) {
+                    let tags = `<srpgProjectile:${projType}>`;
+
+                    // 공통
+                    const img = document.getElementById('srpgProjImage')?.value;
+                    if (img) tags += `\n<srpgProjImage:${img}>`;
+
+                    const spd = document.getElementById('srpgProjSpeed')?.value || '6';
+                    if (spd !== '6') tags += `\n<srpgProjSpeed:${spd}>`;
+
+                    const scl = document.getElementById('srpgProjScale')?.value || '1.0';
+                    if (scl !== '1.0' && scl !== '1') tags += `\n<srpgProjScale:${scl}>`;
+
+                    const rot = document.getElementById('srpgProjRotate')?.value;
+                    if (rot === 'false') tags += `\n<srpgProjRotate:false>`;
+
+                    const trail = document.getElementById('srpgProjTrail')?.value;
+                    if (trail === 'true') tags += `\n<srpgProjTrail:true>`;
+
+                    const trailA = document.getElementById('srpgProjTrailAlpha')?.value || '0.4';
+                    if (trail === 'true' && trailA !== '0.4') tags += `\n<srpgProjTrailAlpha:${trailA}>`;
+
+                    const fw = document.getElementById('srpgProjFrameW')?.value || '32';
+                    if (fw !== '32') tags += `\n<srpgProjFrameW:${fw}>`;
+                    const fh = document.getElementById('srpgProjFrameH')?.value || '32';
+                    if (fh !== '32') tags += `\n<srpgProjFrameH:${fh}>`;
+                    const fc = document.getElementById('srpgProjFrames')?.value || '1';
+                    if (fc !== '1') tags += `\n<srpgProjFrames:${fc}>`;
+                    const fs = document.getElementById('srpgProjFrameSpd')?.value || '6';
+                    if (fs !== '6') tags += `\n<srpgProjFrameSpeed:${fs}>`;
+
+                    const ia = document.getElementById('srpgProjImpactAnim')?.value || '0';
+                    if (ia !== '0') tags += `\n<srpgProjImpactAnim:${ia}>`;
+
+                    const ise = document.getElementById('srpgProjImpactSe')?.value || '';
+                    if (ise) tags += `\n<srpgProjImpactSe:${ise}>`;
+
+                    // hitray 전용
+                    if (projType === 'hitray') {
+                        const bs = document.getElementById('srpgBeamStart')?.value;
+                        if (bs) tags += `\n<srpgBeamStart:${bs}>`;
+                        const bm = document.getElementById('srpgBeamMid')?.value;
+                        if (bm) tags += `\n<srpgBeamMid:${bm}>`;
+                        const be = document.getElementById('srpgBeamEnd')?.value;
+                        if (be) tags += `\n<srpgBeamEnd:${be}>`;
+                        const bd = document.getElementById('srpgBeamDuration')?.value || '30';
+                        if (bd !== '30') tags += `\n<srpgBeamDuration:${bd}>`;
+                        const bw = document.getElementById('srpgBeamWidth')?.value || '1.0';
+                        if (bw !== '1.0' && bw !== '1') tags += `\n<srpgBeamWidth:${bw}>`;
+                    }
+
+                    // artillery 전용
+                    if (projType === 'artillery') {
+                        const ah = document.getElementById('srpgArcHeight')?.value || '200';
+                        if (ah !== '200') tags += `\n<srpgArcHeight:${ah}>`;
+                    }
+
+                    // 멀티샷 모드
+                    if (multiMode === 'stockshot') {
+                        const ms = document.getElementById('srpgMultiShot')?.value || '3';
+                        tags += `\n<srpgMultiShot:${ms}>`;
+                        const sd = document.getElementById('srpgShotDelay')?.value || '12';
+                        if (sd !== '12') tags += `\n<srpgShotDelay:${sd}>`;
+                        const sdm = document.getElementById('srpgShotDamageMod')?.value || '1.0';
+                        if (sdm !== '1.0' && sdm !== '1') tags += `\n<srpgShotDamageMod:${sdm}>`;
+                    } else if (multiMode === 'barrage') {
+                        const bp = document.getElementById('srpgBarragePattern')?.value || 'fan';
+                        tags += `\n<srpgBarrage:${bp}>`;
+                        const bc = document.getElementById('srpgBarrageCount')?.value || '3';
+                        tags += `\n<srpgBarrageCount:${bc}>`;
+                        const bd2 = document.getElementById('srpgBarrageDelay')?.value || '8';
+                        if (bd2 !== '8') tags += `\n<srpgBarrageDelay:${bd2}>`;
+                        const bdm = document.getElementById('srpgBarrageDamageMod')?.value || '0.6';
+                        if (bdm !== '0.6') tags += `\n<srpgBarrageDamageMod:${bdm}>`;
+                        const bsp = document.getElementById('srpgBarrageSpread')?.value || '1';
+                        if (bsp !== '1') tags += `\n<srpgBarrageSpread:${bsp}>`;
+                    }
+
+                    note = (note ? note + '\n' : '') + tags;
+                }
+
+                item.note = note;
+                const noteEl = document.querySelector('[data-field="note"]');
+                if (noteEl) noteEl.value = item.note;
+            },
+
+            renderItemForm(item) {
+                const scopeOptions = [[0, '없음'], [1, '적단체'], [2, '적전체'], [4, '아군단체'], [6, '아군전체'], [7, '아군단체(회복)'], [8, '아군전체(회복)'], [11, '사용자']];
+                const occasionOptions = [[0, '항상'], [1, '전투만'], [2, '메뉴만'], [3, '사용불가']];
+                const hitTypeOptions = [[0, '확정'], [1, '물리'], [2, '마법']];
+                const damageTypeOptions = [[0, '없음'], [1, 'HP 데미지'], [2, 'MP 데미지'], [3, 'HP 회복'], [4, 'MP 회복'], [5, 'HP 흡수'], [6, 'MP 흡수']];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('description', '설명', 'textarea', item.description || '')}
+                        <div class="formInline">
+                            ${createField('iconIndex', '아이콘 인덱스', 'number', item.iconIndex || 0)}
+                            ${createField('itypeId', '아이템 타입', 'number', item.itypeId || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('price', '가격', 'number', item.price || 0)}
+                            ${createField('consumable', '소비 여부', 'checkbox', item.consumable || false)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Effects & Usage
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">효과 및 사용</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('scope', '범위', 'select', item.scope || 0, scopeOptions)}
+                            ${createField('occasion', '사용 가능', 'select', item.occasion || 0, occasionOptions)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Damage & Speed
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">데미지 및 속도</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('hitType', '명중 타입', 'select', item.hitType || 0, hitTypeOptions)}
+                            ${createField('successRate', '성공률 (%)', 'number', item.successRate || 100)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('speed', '속도', 'number', item.speed || 0)}
+                            ${createField('repeats', '반복 횟수', 'number', item.repeats || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('damage_type', '데미지 타입', 'select', item.damage?.type || 0, damageTypeOptions)}
+                            ${createField('damage_elementId', '속성 ID', 'number', item.damage?.elementId || 0)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('damage_variance', '분산', 'number', item.damage?.variance || 20)}
+                            ${createField('tpGain', 'TP 획득', 'number', item.tpGain || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Animation
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">애니메이션</div>
+                    <div class="formSectionContent">
+                        ${createAnimField('animationId', '애니메이션', item.animationId || 0)}
+                    </div>
+                </div>`;
+
+                // Effects (드롭다운 에디터)
+                html += this.renderEffectsSection(item.effects || []);
+
+                // Inventory Grid Size
+                html += this.renderGridSizeSection(item);
+
+                // SRPG Range Editor
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 범위</div>
+                    <div class="formSectionContent">
+                        <div id="sre-item-editor"></div>
+                    </div>
+                </div>`;
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderWeaponForm(item) {
+                const paramNames = ['최대 HP', '최대 MP', '공격력', '방어력', '마법공격', '마법방어', '민첩성', '운'];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('description', '설명', 'textarea', item.description || '')}
+                        <div class="formInline">
+                            ${createField('iconIndex', '아이콘 인덱스', 'number', item.iconIndex || 0)}
+                            ${createField('wtypeId', '무기 타입', 'number', item.wtypeId || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('price', '가격', 'number', item.price || 0)}
+                            ${createField('etypeId', '장비 타입', 'number', item.etypeId || 1)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Parameters
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">능력치 변화</div>
+                    <div class="formSectionContent">`;
+                if (item.params && item.params.length >= 8) {
+                    html += `<div class="formInline">
+                        ${createField('params_0', paramNames[0], 'number', item.params[0] || 0)}
+                        ${createField('params_1', paramNames[1], 'number', item.params[1] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_2', paramNames[2], 'number', item.params[2] || 0)}
+                        ${createField('params_3', paramNames[3], 'number', item.params[3] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_4', paramNames[4], 'number', item.params[4] || 0)}
+                        ${createField('params_5', paramNames[5], 'number', item.params[5] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_6', paramNames[6], 'number', item.params[6] || 0)}
+                        ${createField('params_7', paramNames[7], 'number', item.params[7] || 0)}
+                    </div>`;
+                }
+                html += `</div></div>`;
+
+                // Animation
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">애니메이션</div>
+                    <div class="formSectionContent">
+                        ${createAnimField('animationId', '애니메이션', item.animationId || 0)}
+                    </div>
+                </div>`;
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // Inventory Grid Size
+                html += this.renderGridSizeSection(item);
+
+                // SRPG Range Editor
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG 범위</div>
+                    <div class="formSectionContent">
+                        <div id="sre-weapon-editor"></div>
+                    </div>
+                </div>`;
+
+                // SRPG Phase Panel
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG Phase 파이프라인</div>
+                    <div class="formSectionContent">
+                        <div id="srpg-phase-weapon"></div>
+                    </div>
+                </div>`;
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderArmorForm(item) {
+                const paramNames = ['최대 HP', '최대 MP', '공격력', '방어력', '마법공격', '마법방어', '민첩성', '운'];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('description', '설명', 'textarea', item.description || '')}
+                        <div class="formInline">
+                            ${createField('iconIndex', '아이콘 인덱스', 'number', item.iconIndex || 0)}
+                            ${createField('atypeId', '방어구 타입', 'number', item.atypeId || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('price', '가격', 'number', item.price || 0)}
+                            ${createField('etypeId', '장비 타입', 'number', item.etypeId || 1)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Parameters
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">능력치 변화</div>
+                    <div class="formSectionContent">`;
+                if (item.params && item.params.length >= 8) {
+                    html += `<div class="formInline">
+                        ${createField('params_0', paramNames[0], 'number', item.params[0] || 0)}
+                        ${createField('params_1', paramNames[1], 'number', item.params[1] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_2', paramNames[2], 'number', item.params[2] || 0)}
+                        ${createField('params_3', paramNames[3], 'number', item.params[3] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_4', paramNames[4], 'number', item.params[4] || 0)}
+                        ${createField('params_5', paramNames[5], 'number', item.params[5] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_6', paramNames[6], 'number', item.params[6] || 0)}
+                        ${createField('params_7', paramNames[7], 'number', item.params[7] || 0)}
+                    </div>`;
+                }
+                html += `</div></div>`;
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // Inventory Grid Size
+                html += this.renderGridSizeSection(item);
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderEnemyForm(item) {
+                const paramNames = ['최대 HP', '최대 MP', '공격력', '방어력', '마법공격', '마법방어', '민첩성', '운'];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('battlerName', '전투 이미지명', 'text', item.battlerName || '')}
+                        ${createField('battlerHue', '색조', 'number', item.battlerHue || 0)}
+                    </div>
+                </div>`;
+
+                // Parameters
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">능력치</div>
+                    <div class="formSectionContent">`;
+                if (item.params && item.params.length >= 8) {
+                    html += `<div class="formInline">
+                        ${createField('params_0', paramNames[0], 'number', item.params[0] || 0)}
+                        ${createField('params_1', paramNames[1], 'number', item.params[1] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_2', paramNames[2], 'number', item.params[2] || 0)}
+                        ${createField('params_3', paramNames[3], 'number', item.params[3] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_4', paramNames[4], 'number', item.params[4] || 0)}
+                        ${createField('params_5', paramNames[5], 'number', item.params[5] || 0)}
+                    </div>
+                    <div class="formInline">
+                        ${createField('params_6', paramNames[6], 'number', item.params[6] || 0)}
+                        ${createField('params_7', paramNames[7], 'number', item.params[7] || 0)}
+                    </div>`;
+                }
+                html += `</div></div>`;
+
+                // Rewards
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">보상</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('exp', '경험치', 'number', item.exp || 0)}
+                            ${createField('gold', '골드', 'number', item.gold || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Actions (SRPG 행동 패턴 에디터)
+                html += this.renderActionsSection(item.actions || []);
+
+                // Drop Items
+                html += this.renderArraySection('dropItems', '드롭 아이템', item.dropItems || [],
+                    (drop) => `아이템 #${drop.dataId}`);
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // SRPG Unit Config (plugin parameters)
+                html += this.renderSrpgUnitConfigSection(item, 'enemy');
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderStateForm(item) {
+                const restrictionOptions = [
+                    [0, '없음'],
+                    [1, '적 공격만'],
+                    [2, '아무나 공격'],
+                    [3, '아군 공격'],
+                    [4, '행동 불능']
+                ];
+                const autoRemovalOptions = [
+                    [0, '없음'],
+                    [1, '행동 종료'],
+                    [2, '턴 종료']
+                ];
+
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        <div class="formInline">
+                            ${createField('iconIndex', '아이콘 인덱스', 'number', item.iconIndex || 0)}
+                            ${createField('priority', '우선순위', 'number', item.priority || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Restrictions
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">행동 제한</div>
+                    <div class="formSectionContent">
+                        ${createField('restriction', '행동 제한 타입', 'select', item.restriction || 0, restrictionOptions)}
+                        <div class="formInline">
+                            ${createField('motion', 'SV 모션', 'number', item.motion || 0)}
+                            ${createField('overlay', '오버레이', 'number', item.overlay || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Duration & Removal
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">지속 시간 및 해제</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('removeAtBattleEnd', '전투 종료시 해제', 'checkbox', item.removeAtBattleEnd || false)}
+                            ${createField('removeByRestriction', '행동 제한으로 해제', 'checkbox', item.removeByRestriction || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('removeByDamage', '데미지로 해제', 'checkbox', item.removeByDamage || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('autoRemovalTiming', '자동 해제 타입', 'select', item.autoRemovalTiming || 0, autoRemovalOptions)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('minTurns', '최소 턴 수', 'number', item.minTurns || 1)}
+                            ${createField('maxTurns', '최대 턴 수', 'number', item.maxTurns || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('chanceByDamage', '데미지 해제 확률', 'number', item.chanceByDamage || 0)}
+                            ${createField('stepsToRemove', '이동으로 해제', 'number', item.stepsToRemove || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // Messages
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메시지</div>
+                    <div class="formSectionContent">
+                        ${createField('message1', '메시지 1', 'text', item.message1 || '')}
+                        ${createField('message2', '메시지 2', 'text', item.message2 || '')}
+                        ${createField('message3', '메시지 3', 'text', item.message3 || '')}
+                        ${createField('message4', '메시지 4', 'text', item.message4 || '')}
+                    </div>
+                </div>`;
+
+                // Traits
+                html += this.renderTraitsSection(item.traits || []);
+
+                // Notes
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메모</div>
+                    <div class="formSectionContent">
+                        ${createField('note', '메모', 'textarea', item.note || '')}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderCommonEventForm(item) {
+                let html = '';
+
+                // Basic Info
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">기본 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('name', '이름', 'text', item.name || '')}
+                        ${createField('trigger', '실행 조건', 'select', item.trigger || 0, [
+                            [0, '없음'],
+                            [1, '자동 실행'],
+                            [2, '병렬 처리']
+                        ])}
+                        ${createField('switchId', '조건 스위치 ID', 'number', item.switchId || 0)}
+                    </div>
+                </div>`;
+
+                // Event List
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">이벤트 명령</div>
+                    <div class="formSectionContent">
+                        <p style="color: #aaa; font-size: 0.85em;">명령 수: ${(item.list || []).length}</p>
+                        ${createField('list', '이벤트 명령 (JSON)', 'textarea', JSON.stringify(item.list || []))}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderSystemForm(item) {
+                let html = '';
+                const SOUND_LABELS = [
+                    '커서', '결정', '취소', '버저', '장비 장착', '저장', '불러오기', '전투 시작',
+                    '도주', '적 공격', '적 데미지', '적 소멸 1', '적 소멸 2', '적 소멸 3',
+                    '보스 데미지', '보스 소멸', '회복', '빗나감', '회피 1', '회피 2',
+                    '마법 반사', '상점', '아이템 사용', '스킬 사용'
+                ];
+
+                // ── 게임 정보 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">게임 정보</div>
+                    <div class="formSectionContent">
+                        ${createField('gameTitle', '게임 제목', 'text', item.gameTitle || '')}
+                        <div class="formInline">
+                            ${createField('currencyUnit', '화폐 단위', 'text', item.currencyUnit || '')}
+                            ${createField('locale', '로케일', 'text', item.locale || 'ja_JP')}
+                        </div>
+                        ${createField('versionId', '버전 ID', 'number', item.versionId || 0)}
+                    </div>
+                </div>`;
+
+                // ── 시작 위치 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">시작 위치</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('startMapId', '시작 맵 ID', 'number', item.startMapId || 0)}
+                            ${createField('startX', '시작 X', 'number', item.startX || 0)}
+                            ${createField('startY', '시작 Y', 'number', item.startY || 0)}
+                        </div>
+                        ${createField('editMapId', '에디터 맵 ID', 'number', item.editMapId || 0)}
+                    </div>
+                </div>`;
+
+                // ── 초기 파티 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">초기 파티</div>
+                    <div class="formSectionContent">
+                        ${createField('partyMembers', '파티원 (배우 ID 배열)', 'textarea', JSON.stringify(item.partyMembers || []))}
+                    </div>
+                </div>`;
+
+                // ── 옵션 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">옵션</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('optDrawTitle', '타이틀 화면 표시', 'checkbox', item.optDrawTitle !== undefined ? item.optDrawTitle : true)}
+                            ${createField('optTransparent', '투명 상태로 시작', 'checkbox', item.optTransparent || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('optFollowers', '파티원 동행 표시', 'checkbox', item.optFollowers || false)}
+                            ${createField('optDisplayTp', 'TP 표시', 'checkbox', item.optDisplayTp || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('optSlipDeath', '슬립 데미지로 전투불능', 'checkbox', item.optSlipDeath || false)}
+                            ${createField('optFloorDeath', '바닥 데미지로 전투불능', 'checkbox', item.optFloorDeath || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('optExtraExp', '레벨업 시 남은 경험치 유지', 'checkbox', item.optExtraExp || false)}
+                            ${createField('optAutosave', '자동 저장', 'checkbox', item.optAutosave !== undefined ? item.optAutosave : true)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('optSideView', '사이드 뷰 전투', 'checkbox', item.optSideView || false)}
+                            ${createField('optKeyItemsNumber', '중요 아이템 개수 표시', 'checkbox', item.optKeyItemsNumber || false)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('optSplashScreen', '스플래시 화면', 'checkbox', item.optSplashScreen || false)}
+                            ${createField('optMessageSkip', '메시지 스킵 허용', 'checkbox', item.optMessageSkip !== undefined ? item.optMessageSkip : true)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // ── 전투 시스템 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">전투 시스템</div>
+                    <div class="formSectionContent">
+                        ${createField('battleSystem', '전투 시스템', 'select', item.battleSystem || 0, [
+                            [0, '프론트 뷰 (턴제)'],
+                            [1, '사이드 뷰 (턴제)'],
+                            [2, '타임 프로그레스 (액티브)'],
+                            [3, '타임 프로그레스 (웨이트)']
+                        ])}
+                        <div class="formInline">
+                            ${createField('battlerName', '적 배틀러 이미지명', 'text', item.battlerName || '')}
+                            ${createField('battlerHue', '적 배틀러 색조', 'number', item.battlerHue || 0)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('battleback1Name', '전투 배경 1', 'text', item.battleback1Name || '')}
+                            ${createField('battleback2Name', '전투 배경 2', 'text', item.battleback2Name || '')}
+                        </div>
+                        ${createField('magicSkills', '마법 스킬 타입 ID', 'textarea', JSON.stringify(item.magicSkills || []))}
+                        ${createField('testTroopId', '테스트 전투 군단 ID', 'number', item.testTroopId || 0)}
+                        ${createField('testBattlers', '테스트 전투 배우 (JSON)', 'textarea', JSON.stringify(item.testBattlers || [], null, 2))}
+                        ${createField('attackMotions', '공격 모션 (JSON)', 'textarea', JSON.stringify(item.attackMotions || [], null, 2))}
+                    </div>
+                </div>`;
+
+                // ── 탈것 ──
+                const vehicles = [
+                    ['boat', '소형 선박'],
+                    ['ship', '대형 선박'],
+                    ['airship', '비행선']
+                ];
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">탈것</div>
+                    <div class="formSectionContent">`;
+                for (const [key, label] of vehicles) {
+                    const v = item[key] || {};
+                    html += `<p style="color:#e94560; font-size:0.85em; margin:10px 0 5px; font-weight:bold;">${label}</p>
+                        <div class="formInline">
+                            ${createField(key + '_characterName', '캐릭터 이미지', 'text', v.characterName || '')}
+                            ${createField(key + '_characterIndex', '인덱스', 'number', v.characterIndex || 0)}
+                        </div>
+                        <div class="formInline">
+                            ${createField(key + '_startMapId', '시작 맵 ID', 'number', v.startMapId || 0)}
+                            ${createField(key + '_startX', '시작 X', 'number', v.startX || 0)}
+                            ${createField(key + '_startY', '시작 Y', 'number', v.startY || 0)}
+                        </div>
+                        ${createAudioJsonField(key + '_bgm', 'BGM', v.bgm, 'bgm')}`;
+                }
+                html += `</div></div>`;
+
+                // ── 음향 (BGM/ME) ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">음악</div>
+                    <div class="formSectionContent">
+                        ${createAudioJsonField('battleBgm', '전투 BGM', item.battleBgm, 'bgm')}
+                        ${createAudioJsonField('titleBgm', '타이틀 BGM', item.titleBgm, 'bgm')}
+                        ${createAudioJsonField('victoryMe', '승리 ME', item.victoryMe, 'me')}
+                        ${createAudioJsonField('defeatMe', '패배 ME', item.defeatMe, 'me')}
+                        ${createAudioJsonField('gameoverMe', '게임오버 ME', item.gameoverMe, 'me')}
+                    </div>
+                </div>`;
+
+                // ── 효과음 (SE) ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">효과음 (SE)</div>
+                    <div class="formSectionContent">`;
+                const sounds = item.sounds || [];
+                for (let i = 0; i < sounds.length; i++) {
+                    const s = sounds[i] || { name: '', pan: 0, pitch: 100, volume: 90 };
+                    const lbl = SOUND_LABELS[i] || ('SE ' + i);
+                    html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                        <span style="color:#aaa; font-size:0.8em; width:100px; flex-shrink:0;">${i}: ${lbl}</span>
+                        <input type="text" data-field="sounds_${i}_name" value="${s.name || ''}" style="flex:1;" placeholder="파일명">
+                        <button type="button" class="pickBtn" data-pick-audio="sounds_${i}_name" data-audio-type="se">SE</button>
+                        <span style="color:#666; font-size:0.75em;">Vol</span>
+                        <input type="number" data-field="sounds_${i}_volume" value="${s.volume ?? 90}" style="width:50px;" title="볼륨">
+                        <span style="color:#666; font-size:0.75em;">Pit</span>
+                        <input type="number" data-field="sounds_${i}_pitch" value="${s.pitch ?? 100}" style="width:50px;" title="피치">
+                        <span style="color:#666; font-size:0.75em;">Pan</span>
+                        <input type="number" data-field="sounds_${i}_pan" value="${s.pan ?? 0}" style="width:45px;" title="팬">
+                    </div>`;
+                }
+                html += `</div></div>`;
+
+                // ── 그래픽 / 화면 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">그래픽</div>
+                    <div class="formSectionContent">
+                        <div class="formInline">
+                            ${createField('title1Name', '타이틀 1 이미지', 'text', item.title1Name || '')}
+                            ${createField('title2Name', '타이틀 2 이미지', 'text', item.title2Name || '')}
+                        </div>
+                        ${createField('windowTone', '윈도우 톤 [R,G,B,Gray]', 'textarea', JSON.stringify(item.windowTone || [0,0,0,0]))}
+                    </div>
+                </div>`;
+
+                // ── 고급 설정 (advanced) ──
+                const adv = item.advanced || {};
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">고급 설정</div>
+                    <div class="formSectionContent">
+                        ${createField('advanced_gameId', '게임 ID', 'number', adv.gameId || 0)}
+                        <div class="formInline">
+                            ${createField('advanced_screenWidth', '화면 너비', 'number', adv.screenWidth || 816)}
+                            ${createField('advanced_screenHeight', '화면 높이', 'number', adv.screenHeight || 624)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('advanced_uiAreaWidth', 'UI 영역 너비', 'number', adv.uiAreaWidth || 816)}
+                            ${createField('advanced_uiAreaHeight', 'UI 영역 높이', 'number', adv.uiAreaHeight || 624)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('advanced_fontSize', '폰트 크기', 'number', adv.fontSize || 26)}
+                            ${createField('advanced_screenScale', '화면 비율', 'number', adv.screenScale || 1)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('advanced_mainFontFilename', '메인 폰트', 'text', adv.mainFontFilename || '')}
+                            ${createField('advanced_numberFontFilename', '숫자 폰트', 'text', adv.numberFontFilename || '')}
+                        </div>
+                        ${createField('advanced_fallbackFonts', '폴백 폰트', 'text', adv.fallbackFonts || '')}
+                        <div class="formInline">
+                            ${createField('advanced_windowOpacity', '윈도우 불투명도', 'number', adv.windowOpacity || 192)}
+                            ${createField('advanced_picturesUpperLimit', '픽처 상한', 'number', adv.picturesUpperLimit || 100)}
+                        </div>
+                        <div class="formInline">
+                            ${createField('faceSize', '얼굴 이미지 크기', 'number', item.faceSize || 144)}
+                            ${createField('iconSize', '아이콘 크기', 'number', item.iconSize || 32)}
+                            ${createField('tileSize', '타일 크기', 'number', item.tileSize || 48)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // ── 메뉴 / UI 설정 ──
+                const menuLabels = ['아이템', '스킬', '장비', '상태', '대열', '저장'];
+                const itemCatLabels = ['일반 아이템', '무기', '방어구', '중요 아이템'];
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">메뉴 / UI 설정</div>
+                    <div class="formSectionContent">
+                        <p style="color:#aaa; font-size:0.85em; margin-bottom:8px;">메뉴 커맨드 표시</p>
+                        <div class="formInline">`;
+                (item.menuCommands || []).forEach((v, i) => {
+                    html += createField('menuCommands_' + i, menuLabels[i] || ('메뉴 ' + i), 'checkbox', v);
+                });
+                html += `</div>
+                        <p style="color:#aaa; font-size:0.85em; margin:12px 0 8px;">아이템 카테고리 표시</p>
+                        <div class="formInline">`;
+                (item.itemCategories || []).forEach((v, i) => {
+                    html += createField('itemCategories_' + i, itemCatLabels[i] || ('카테고리 ' + i), 'checkbox', v);
+                });
+                html += `</div>`;
+                const tcw = item.titleCommandWindow || {};
+                html += `<p style="color:#aaa; font-size:0.85em; margin:12px 0 8px;">타이틀 커맨드 윈도우</p>
+                        <div class="formInline">
+                            ${createField('titleCommandWindow_background', '배경 타입', 'number', tcw.background || 0)}
+                            ${createField('titleCommandWindow_offsetX', '오프셋 X', 'number', tcw.offsetX || 0)}
+                            ${createField('titleCommandWindow_offsetY', '오프셋 Y', 'number', tcw.offsetY || 0)}
+                        </div>
+                    </div>
+                </div>`;
+
+                // ── 타입 목록 (편집 테이블) ──
+                const typeArrays = [
+                    {key: 'elements', label: '속성'},
+                    {key: 'skillTypes', label: '스킬 타입'},
+                    {key: 'weaponTypes', label: '무기 타입'},
+                    {key: 'armorTypes', label: '방어구 타입'},
+                    {key: 'equipTypes', label: '장비 타입'},
+                ];
+                for (const ta of typeArrays) {
+                    const arr = item[ta.key] || [];
+                    html += `<div class="formSection">
+                        <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">${ta.label}</div>
+                        <div class="formSectionContent">
+                        <button class="addArrayItemBtn" onclick="UI.addTypeEntry('${ta.key}')">추가</button>
+                        <div style="display:grid;grid-template-columns:40px 1fr 30px;gap:2px;align-items:center;">`;
+                    for (let i = 0; i < arr.length; i++) {
+                        html += `<span style="color:#888;font-size:0.8em;text-align:right;">${i}</span>
+                            <input type="text" data-field="typeEntry_${ta.key}_${i}" value="${arr[i] || ''}" style="padding:3px 6px;">
+                            <button onclick="UI.removeTypeEntry('${ta.key}', ${i})" style="background:#c0392b;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.75em;padding:2px;">✕</button>`;
+                    }
+                    html += `</div></div></div>`;
+                }
+
+                // ── 용어 (Terms) — 편집 테이블 ──
+                const terms = item.terms || {};
+                const termBasicLabels = ['레벨','레벨(약어)','HP','HP(약어)','MP','MP(약어)','TP','TP(약어)','경험치','경험치(약어)'];
+                const termParamLabels = ['최대 HP','최대 MP','공격력','방어력','마법공격','마법방어','민첩성','운'];
+                const termCmdLabels = ['전투','도주','공격','방어','아이템','스킬','장비','상태','대열','세이브','게임 종료','옵션','무기','방어구','중요 아이템','장비 장착','최강 장비','전부 해제','뉴 게임','이어하기','타이틀로','구입','판매','개수'];
+
+                // Basic terms
+                html += `<div class="formSection">
+                    <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">기본 용어</div>
+                    <div class="formSectionContent">
+                    <div style="display:grid;grid-template-columns:120px 1fr;gap:2px;align-items:center;">`;
+                (terms.basic || []).forEach((val, i) => {
+                    html += `<span style="color:#aaa;font-size:0.8em;">${termBasicLabels[i] || i}</span>
+                        <input type="text" data-field="terms_basic_${i}" value="${val || ''}" style="padding:3px 6px;">`;
+                });
+                html += `</div></div></div>`;
+
+                // Params terms
+                html += `<div class="formSection">
+                    <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">능력치 용어</div>
+                    <div class="formSectionContent">
+                    <div style="display:grid;grid-template-columns:80px 1fr;gap:2px;align-items:center;">`;
+                (terms.params || []).forEach((val, i) => {
+                    html += `<span style="color:#aaa;font-size:0.8em;">${termParamLabels[i] || i}</span>
+                        <input type="text" data-field="terms_params_${i}" value="${val || ''}" style="padding:3px 6px;">`;
+                });
+                html += `</div></div></div>`;
+
+                // Commands terms
+                html += `<div class="formSection">
+                    <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">커맨드 용어</div>
+                    <div class="formSectionContent">
+                    <div style="display:grid;grid-template-columns:100px 1fr;gap:2px;align-items:center;">`;
+                (terms.commands || []).forEach((val, i) => {
+                    html += `<span style="color:#aaa;font-size:0.8em;">${termCmdLabels[i] || i}</span>
+                        <input type="text" data-field="terms_commands_${i}" value="${val || ''}" style="padding:3px 6px;">`;
+                });
+                html += `</div></div></div>`;
+
+                // Messages (keep as JSON for now — too many fields)
+                html += `<div class="formSection">
+                    <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">메시지 용어</div>
+                    <div class="formSectionContent">
+                        ${createField('terms_messages', '메시지 (JSON)', 'textarea', JSON.stringify(terms.messages || {}, null, 2))}
+                    </div>
+                </div>`;
+
+                // ── 스위치 / 변수 ──
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">스위치 및 변수</div>
+                    <div class="formSectionContent">
+                        ${createField('switches', '스위치 이름 목록', 'textarea', JSON.stringify(item.switches || []))}
+                        ${createField('variables', '변수 이름 목록', 'textarea', JSON.stringify(item.variables || []))}
+                    </div>
+                </div>`;
+
+                return html;
+            },
+
+            renderTilesetForm(item) {
+                // ═══════════════════════════════════════════════════════
+                //  RMMZ 오리지널 레이아웃 재현
+                //  좌: 일반설정 + 이미지 / 중: 타일그리드 / 우: 모드버튼 + 메모
+                // ═══════════════════════════════════════════════════════
+                const imgFiles = [];
+                // 1) projectFiles (파일 모드)
+                if (State.projectFiles) {
+                    for (const p of Object.keys(State.projectFiles)) {
+                        if (p.startsWith('img/tilesets/') && p.endsWith('.png'))
+                            imgFiles.push(p.split('/').pop().replace('.png',''));
+                    }
+                }
+                // 2) 이미 로드된 이미지 캐시
+                if (imgFiles.length === 0 && State.tilesetImages) {
+                    for (const k of Object.keys(State.tilesetImages)) {
+                        if (!k.startsWith('$')) imgFiles.push(k);
+                    }
+                }
+                // 3) 현재 타일셋에 할당된 이름도 반드시 포함 (서버모드 초기 대응)
+                if (item.tilesetNames) {
+                    for (const n of item.tilesetNames) {
+                        if (n && !imgFiles.includes(n)) imgFiles.push(n);
+                    }
+                }
+                // 4) 캐시된 타일셋 파일 목록 (서버모드에서 비동기 로드 후 저장)
+                if (State._tilesetFileList) {
+                    for (const n of State._tilesetFileList) {
+                        if (!imgFiles.includes(n)) imgFiles.push(n);
+                    }
+                }
+                imgFiles.sort();
+                const imgOpts = [['','(없음)']].concat(imgFiles.map(n=>[n,n]));
+                const selHtml = (idx, val) => `<select data-field="tilesetNames_${idx}"
+                    style="flex:1;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.8em;"
+                    onchange="UI._tsOnImageChange()">${imgOpts.map(o=>`<option value="${o[0]}" ${val===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
+
+                const slotLabels = [
+                    'A1 (애니메이션):', 'A2 (지면):', 'A3 (건물):', 'A4 (벽):',
+                    'A5 (보통):', 'B:', 'C:', 'D:', 'E:'
+                ];
+                let imgHtml = '';
+                for (let i = 0; i < 9; i++) {
+                    const v = (item.tilesetNames && item.tilesetNames[i]) || '';
+                    imgHtml += `<div style="margin-bottom:4px;">
+                        <div style="color:#aaa;font-size:0.75em;margin-bottom:1px;">${slotLabels[i]}</div>
+                        <div style="display:flex;gap:4px;">${selHtml(i, v)}</div>
+                    </div>`;
+                }
+
+                // ── 3열 레이아웃 ──
+                let html = `<div style="display:grid;grid-template-columns:220px 1fr 150px;gap:12px;height:calc(100vh - 200px);min-height:500px;">`;
+
+                // ─── 좌측: 일반 설정 + 이미지 ───
+                html += `<div style="overflow-y:auto;padding-right:4px;">
+                    <div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.9em;">일반 설정</div>
+                    <div style="margin-bottom:8px;">
+                        <div style="color:#aaa;font-size:0.75em;margin-bottom:2px;">이름:</div>
+                        ${createField('name', '', 'text', item.name || '')}
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <div style="color:#aaa;font-size:0.75em;margin-bottom:2px;">모드:</div>
+                        ${createField('mode', '', 'select', item.mode || 0, [
+                            [0, '필드 유형'], [1, '지역 유형'], [2, 'VX 호환']
+                        ])}
+                    </div>
+                    <div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.9em;">이미지</div>
+                    ${imgHtml}
+                </div>`;
+
+                // ─── 중앙: 타일 그리드 ───
+                html += `<div style="display:flex;flex-direction:column;overflow:hidden;">
+                    <div id="tsFlagGrid" style="flex:1;overflow:auto;border:1px solid #444;background:#222;position:relative;"></div>
+                    <div style="display:flex;gap:2px;margin-top:4px;justify-content:center;">
+                        <button class="tsFlagSheetBtn active" onclick="UI._tsFlagSheet('A1',this)" style="padding:3px 8px;font-size:0.78em;background:#2563a0;color:#fff;border:none;border-radius:3px;cursor:pointer;">A1</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('A2',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">A2</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('A3',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">A3</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('A4',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">A4</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('A5',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">A5</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('B',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">B</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('C',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">C</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('D',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">D</button>
+                        <button class="tsFlagSheetBtn" onclick="UI._tsFlagSheet('E',this)" style="padding:3px 8px;font-size:0.78em;background:#333;color:#ccc;border:none;border-radius:3px;cursor:pointer;">E</button>
+                    </div>
+                    <div id="tsFlagInfo" style="margin-top:4px;color:#aaa;font-size:0.75em;height:16px;text-align:center;"></div>
+                </div>`;
+
+                // ─── 우측: 편집 모드 버튼 + 메모 ───
+                html += `<div style="display:flex;flex-direction:column;gap:6px;">
+                    <button class="tsFlagModeBtn active" onclick="UI._tsFlagMode('passage',this)" style="padding:8px 4px;font-size:0.82em;background:#2563a0;color:#fff;border:none;border-radius:4px;cursor:pointer;">통행</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('dir4',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">통행 (4방향)</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('ladder',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">사다리</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('bush',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">수풀</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('counter',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">카운터</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('damage',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">피해입는 바닥</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('boat',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">보트 통행</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('ship',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">대형선 통행</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('airship',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">비행선 착륙</button>
+                    <button class="tsFlagModeBtn" onclick="UI._tsFlagMode('terrain',this)" style="padding:8px 4px;font-size:0.82em;background:#444;color:#ccc;border:none;border-radius:4px;cursor:pointer;">지형 태그</button>
+                    <div style="border-top:1px solid #333;margin:4px 0;"></div>
+                    <button onclick="UI._tsCopyFlags()" style="padding:6px 4px;font-size:0.78em;background:#555;color:#eee;border:none;border-radius:4px;cursor:pointer;">페이지 복사</button>
+                    <button onclick="UI._tsPasteFlags()" style="padding:6px 4px;font-size:0.78em;background:#555;color:#eee;border:none;border-radius:4px;cursor:pointer;">페이지 붙여넣기</button>
+                    <div style="flex:1;"></div>
+                    <div style="color:#e94560;font-weight:bold;font-size:0.82em;margin-bottom:2px;">메모</div>
+                    <textarea data-field="note" rows="4" style="width:100%;padding:4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.78em;resize:vertical;">${item.note||''}</textarea>
+                </div>`;
+
+                html += `</div>`; // 3열 레이아웃 닫기
+
+                // flags hidden 필드 (동기화용)
+                html += `<input type="hidden" data-field="flags" value='${JSON.stringify(item.flags||[])}'>`;
+
+                setTimeout(async () => {
+                    State._tsFlagMode = 'passage';
+                    State._tsSelectedTerrain = 0;
+                    State._tsFlagSheet = 'A1';
+                    // 서버 모드: 타일셋 이미지 파일 목록을 비동기 로드하여 드롭다운 갱신
+                    if (!State._tilesetFileList && (window.__RMMZ_SERVER || window.__RMMZ_GITHUB)) {
+                        try {
+                            const files = await UI._listFiles('img/tilesets');
+                            if (files && files.length) {
+                                State._tilesetFileList = files
+                                    .filter(f => typeof f === 'string' ? f.endsWith('.png') : (f.name||f).endsWith?.('.png'))
+                                    .map(f => (typeof f === 'string' ? f : f.name || f).replace('.png',''));
+                                UI._tsRefreshImageDropdowns(item);
+                            }
+                        } catch(e) { console.warn('[TS] file list error:', e); }
+                    } else if (false) {
+                        // legacy fallback (disabled)
+                        try {
+                            const resp = await fetch('/api/list?path=img/tilesets');
+                            if (resp.ok) {
+                                const files = await resp.json();
+                                State._tilesetFileList = files
+                                    .filter(f => f.endsWith('.png'))
+                                    .map(f => f.replace('.png',''));
+                                // 드롭다운 옵션 갱신
+                                UI._tsRefreshImageDropdowns(item);
+                            }
+                        } catch(e) {
+                            // fallback: 정적 서버 디렉토리 리스팅
+                            try {
+                                const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                                const resp2 = await fetch('/' + projPath + '/img/tilesets/');
+                                if (resp2.ok) {
+                                    const html = await resp2.text();
+                                    const matches = [...html.matchAll(/href="([^"]+\.png)"/gi)].map(m => decodeURIComponent(m[1]).replace('.png',''));
+                                    State._tilesetFileList = matches;
+                                    UI._tsRefreshImageDropdowns(item);
+                                }
+                            } catch(e2) {}
+                        }
+                    }
+                    UI._tsRenderFlagGrid();
+                }, 80);
+
+                return html;
+            },
+
+            // ─── 타일셋 편집기 헬퍼 ───
+
+            _tsFlagMode(mode, btn) {
+                State._tsFlagMode = mode;
+                if (!State._tsSelectedTerrain) State._tsSelectedTerrain = 0;
+                document.querySelectorAll('.tsFlagModeBtn').forEach(b => {
+                    b.style.background = (b === btn) ? '#2563a0' : '#444';
+                    b.style.color = (b === btn) ? '#fff' : '#ccc';
+                });
+                // terrain 모드이면 팔레트 표시, 아니면 숨기기
+                UI._tsUpdateTerrainPalette(mode === 'terrain');
+                UI._tsRenderFlagGrid();
+            },
+
+            _tsFlagSheet(sheet, btn) {
+                State._tsFlagSheet = sheet;
+                document.querySelectorAll('.tsFlagSheetBtn').forEach(b => {
+                    const isActive = b.textContent.trim() === sheet;
+                    b.style.background = isActive ? '#2563a0' : '#333';
+                    b.style.color = isActive ? '#fff' : '#ccc';
+                });
+                UI._tsRenderFlagGrid();
+            },
+
+            // ─── 지형 태그 팔레트 ───
+            _tsUpdateTerrainPalette(show) {
+                let pal = document.getElementById('tsTerrainPalette');
+                if (!show) {
+                    if (pal) pal.style.display = 'none';
+                    return;
+                }
+                if (!pal) {
+                    // 팔레트 컨테이너 생성 — 우측 버튼 영역 아래에 삽입
+                    pal = document.createElement('div');
+                    pal.id = 'tsTerrainPalette';
+                    pal.style.cssText = 'margin-top:6px;padding:6px;background:#1a1a2e;border:1px solid #555;border-radius:4px;max-height:260px;overflow-y:auto;';
+                    const memoLabel = document.querySelector('[data-field="note"]');
+                    if (memoLabel && memoLabel.parentNode) {
+                        memoLabel.parentNode.insertBefore(pal, memoLabel.previousElementSibling || memoLabel);
+                    }
+                }
+                pal.style.display = 'block';
+                // 플러그인 설정에서 이름 읽기 + 기본 이름 매핑
+                const names = UI._tsGetTerrainNames();
+                const defaultNames = { 0:'중간지대', 1:'낭떠러지', 2:'저지대', 3:'저-중 계단', 4:'고지대', 5:'고-중 계단' };
+                let html = '<div style="color:#e94560;font-weight:bold;font-size:0.78em;margin-bottom:4px;">지형 태그 팔레트</div>';
+                for (let i = 0; i <= 15; i++) {
+                    const name = names[i] || defaultNames[i] || '';
+                    const sel = (State._tsSelectedTerrain === i);
+                    const numStr = String(i).padStart(2, ' ');
+                    const label = name ? `<span style="display:inline-block;min-width:18px;text-align:right;font-family:monospace;margin-right:4px;">${i}</span><span style="opacity:0.85;">${name}</span>` : `<span style="display:inline-block;min-width:18px;text-align:right;font-family:monospace;">${i}</span>`;
+                    const bg = sel ? '#e94560' : '#333';
+                    const clr = sel ? '#fff' : (name ? '#ddd' : '#555');
+                    html += `<div onclick="UI._tsSelectTerrain(${i})" style="padding:3px 6px;margin:2px 0;cursor:pointer;border-radius:3px;background:${bg};color:${clr};font-size:0.76em;transition:background 0.15s;display:flex;align-items:center;">${label}</div>`;
+                }
+                pal.innerHTML = html;
+            },
+
+            _tsSelectTerrain(tag) {
+                State._tsSelectedTerrain = tag;
+                UI._tsUpdateTerrainPalette(true);
+                // 그리드 다시 그리기 (선택된 태그 하이라이트 가능)
+                UI._tsRenderFlagGrid();
+            },
+
+            _tsGetTerrainNames() {
+                // SRPG_TerrainConfig 플러그인 파라미터에서 이름 가져오기
+                const names = {};
+                try {
+                    const plugins = State.plugins;
+                    if (!plugins) return names;
+                    const tc = plugins.find(p => p.name === 'SRPG_TerrainConfig' && p.status);
+                    if (!tc || !tc.parameters || !tc.parameters.TerrainTags) return names;
+                    const rawArr = JSON.parse(tc.parameters.TerrainTags);
+                    for (const raw of rawArr) {
+                        const def = JSON.parse(raw);
+                        names[Number(def.tag)] = def.name || '';
+                    }
+                } catch (e) { /* ignore parse errors */ }
+                return names;
+            },
+
+
+            // ─── Region ID 이름 조회 (SRPG_TerrainConfig 연동 — 고저차/낭떠러지) ───
+            _getRegionNames() {
+                const names = {};
+                try {
+                    const plugins = State.plugins;
+                    if (!plugins) return names;
+                    const tc = plugins.find(p => p.name === 'SRPG_TerrainConfig' && p.status);
+                    if (!tc || !tc.parameters || !tc.parameters.RegionElevations) return names;
+                    const rawArr = JSON.parse(tc.parameters.RegionElevations);
+                    for (const raw of rawArr) {
+                        const def = JSON.parse(raw);
+                        names[Number(def.regionId)] = {
+                            name: def.name || '',
+                            elevType: def.elevType || 'elevation',
+                            elevationLevel: Number(def.elevationLevel || 0),
+                            isStair: def.isStair === 'true'
+                        };
+                    }
+                } catch (e) { /* ignore parse errors */ }
+                return names;
+            },
+
+            _setRegionElev(regionId, name, elevType, elevationLevel, isStair) {
+                // SRPG_TerrainConfig 플러그인 파라미터에 region 고저차 정의 저장
+                try {
+                    const plugins = State.plugins;
+                    if (!plugins) return;
+                    let tc = plugins.find(p => p.name === 'SRPG_TerrainConfig');
+                    if (!tc) return;
+                    if (!tc.parameters) tc.parameters = {};
+                    let elevs = [];
+                    try { elevs = JSON.parse(tc.parameters.RegionElevations || '[]').map(r => JSON.parse(r)); } catch(e) {}
+                    const idx = elevs.findIndex(s => Number(s.regionId) === regionId);
+                    if (name === '') {
+                        // Remove entry
+                        if (idx >= 0) elevs.splice(idx, 1);
+                    } else {
+                        const entry = { regionId: String(regionId), name: name, elevType: elevType || 'elevation', elevationLevel: String(elevationLevel || 0), isStair: String(!!isStair) };
+                        if (idx >= 0) elevs[idx] = entry;
+                        else elevs.push(entry);
+                    }
+                    tc.parameters.RegionElevations = JSON.stringify(elevs.map(s => JSON.stringify(s)));
+                    State._dirty = true;
+                } catch (e) { console.error('_setRegionElev error:', e); }
+            },
+
+            _tsOnImageChange() {
+                // 이미지 드롭다운 변경 시 그리드 재렌더
+                setTimeout(() => UI._tsRenderFlagGrid(), 100);
+            },
+
+            _tsRefreshImageDropdowns(item) {
+                // 서버에서 로드한 파일 목록으로 타일셋 이미지 드롭다운을 재구성
+                const allNames = [...(State._tilesetFileList || [])];
+                // 현재 타일셋의 할당값도 포함
+                if (item && item.tilesetNames) {
+                    for (const n of item.tilesetNames) {
+                        if (n && !allNames.includes(n)) allNames.push(n);
+                    }
+                }
+                allNames.sort();
+                for (let i = 0; i < 9; i++) {
+                    const sel = document.querySelector(`[data-field="tilesetNames_${i}"]`);
+                    if (!sel) continue;
+                    const curVal = sel.value || ((item && item.tilesetNames) ? item.tilesetNames[i] : '') || '';
+                    sel.innerHTML = '<option value="">(없음)</option>' +
+                        allNames.map(n => `<option value="${n}" ${n===curVal?'selected':''}>${n}</option>`).join('');
+                }
+            },
+
+            _tsCopyFlags() {
+                const item = State.database?.[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) return;
+                State._tsCopiedFlags = JSON.parse(JSON.stringify(item.flags || []));
+                UI._showNotice('플래그 복사 완료');
+            },
+
+            _tsPasteFlags() {
+                if (!State._tsCopiedFlags) { UI._showNotice('복사된 플래그 없음'); return; }
+                const item = State.database?.[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) return;
+                item.flags = JSON.parse(JSON.stringify(State._tsCopiedFlags));
+                const f = document.querySelector('[data-field="flags"]');
+                if (f) f.value = JSON.stringify(item.flags);
+                UI._tsRenderFlagGrid();
+                UI._showNotice('플래그 붙여넣기 완료');
+            },
+
+            _tsGetTileRange(sheet) {
+                switch(sheet) {
+                    case 'A1': return { start: RMMZ.TILE_ID_A1, count: 16, cols: 8, isAutotile: true, imgIdx: 0 };
+                    case 'A2': return { start: RMMZ.TILE_ID_A2, count: 32, cols: 8, isAutotile: true, imgIdx: 1 };
+                    case 'A3': return { start: RMMZ.TILE_ID_A3, count: 16, cols: 8, isAutotile: true, imgIdx: 2 };
+                    case 'A4': return { start: RMMZ.TILE_ID_A4, count: 48, cols: 8, isAutotile: true, imgIdx: 3 };
+                    case 'A5': return { start: RMMZ.TILE_ID_A5, count: 128, cols: 8, isAutotile: false, imgIdx: 4 };
+                    case 'B':  return { start: RMMZ.TILE_ID_B,  count: 256, cols: 16, isAutotile: false, imgIdx: 5 };
+                    case 'C':  return { start: RMMZ.TILE_ID_C,  count: 256, cols: 16, isAutotile: false, imgIdx: 6 };
+                    case 'D':  return { start: RMMZ.TILE_ID_D,  count: 256, cols: 16, isAutotile: false, imgIdx: 7 };
+                    case 'E':  return { start: RMMZ.TILE_ID_E,  count: 256, cols: 16, isAutotile: false, imgIdx: 8 };
+                    default:   return null;
+                }
+            },
+
+            _tsGetFlag(item, tileId) {
+                return (item && item.flags && item.flags[tileId]) || 0;
+            },
+
+            _tsSetFlag(item, tileId, flag) {
+                if (!item) return;
+                if (!item.flags) item.flags = new Array(8192).fill(0);
+                // 오토타일(A1~A4)인 경우 48개 shape 엔트리 전체에 동일 플래그 기록
+                // RMMZ 엔진은 flags[actualTileId]를 직접 읽으므로 모든 shape에 써야 함
+                const isAuto = tileId >= 2048 && tileId < 8192;  // TILE_ID_A1 ~ A4 끝
+                const count = isAuto ? 48 : 1;
+                const endIdx = tileId + count;
+                while (item.flags.length < endIdx) item.flags.push(0);
+                for (let t = tileId; t < endIdx; t++) {
+                    item.flags[t] = flag;
+                }
+            },
+
+            _tsDrawSymbol(ctx, flag, mode, dx, dy, cellSize) {
+                // ── 네이티브 RMMZ 에디터 스타일 심볼 렌더링 ──
+                // - 배경 오버레이 없음 (타일 이미지가 그대로 보임)
+                // - 작은 심볼 + 그림자로 어떤 배경에서도 가독성 확보
+                const cx = dx + cellSize / 2, cy = dy + cellSize / 2;
+                const r = Math.floor(cellSize * 0.22); // 네이티브 크기: 작은 원
+                const lw = Math.max(1.5, cellSize * 0.05);
+
+                // 공통: 심볼에 그림자 적용하여 밝은/어두운 타일 모두에서 가독성 확보
+                const withShadow = (fn) => {
+                    ctx.save();
+                    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                    ctx.shadowBlur = 3;
+                    ctx.shadowOffsetX = 1;
+                    ctx.shadowOffsetY = 1;
+                    fn();
+                    ctx.restore();
+                };
+
+                switch (mode) {
+                    case 'passage': {
+                        if (flag & 0x0010) {
+                            // ☆ (star) — 위에 표시
+                            withShadow(() => {
+                                ctx.fillStyle = '#ffdd57';
+                                ctx.font = `bold ${Math.floor(cellSize*0.4)}px sans-serif`;
+                                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                                ctx.fillText('☆', cx, cy);
+                            });
+                        } else if ((flag & 0x000F) === 0x000F) {
+                            // × (blocked) — 4방향 전부 차단일 때만 X 표시 (네이티브 동일)
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.lineCap = 'round';
+                                const s = cellSize * 0.18;
+                                ctx.beginPath();
+                                ctx.moveTo(cx - s, cy - s);
+                                ctx.lineTo(cx + s, cy + s);
+                                ctx.moveTo(cx + s, cy - s);
+                                ctx.lineTo(cx - s, cy + s);
+                                ctx.stroke();
+                            });
+                        } else {
+                            // ○ (passable) — 작은 원 그리기
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                            });
+                        }
+                        break;
+                    }
+                    case 'dir4': {
+                        // 4방향 — 타일 사분면에 작은 화살표 심볼
+                        const aSize = Math.floor(cellSize * 0.15);
+                        const dirs = [
+                            { bit: 0x0008, x: cx, y: dy + cellSize*0.18 },  // 상(up)
+                            { bit: 0x0001, x: cx, y: dy + cellSize*0.82 },  // 하(down)
+                            { bit: 0x0002, x: dx + cellSize*0.18, y: cy },  // 좌(left)
+                            { bit: 0x0004, x: dx + cellSize*0.82, y: cy },  // 우(right)
+                        ];
+                        withShadow(() => {
+                            for (const d of dirs) {
+                                const blocked = !!(flag & d.bit);
+                                if (blocked) {
+                                    // × 작게
+                                    ctx.strokeStyle = '#fff';
+                                    ctx.lineWidth = Math.max(1, lw * 0.8);
+                                    ctx.lineCap = 'round';
+                                    ctx.beginPath();
+                                    ctx.moveTo(d.x - aSize, d.y - aSize);
+                                    ctx.lineTo(d.x + aSize, d.y + aSize);
+                                    ctx.moveTo(d.x + aSize, d.y - aSize);
+                                    ctx.lineTo(d.x - aSize, d.y + aSize);
+                                    ctx.stroke();
+                                } else {
+                                    // ○ 작게
+                                    ctx.strokeStyle = '#fff';
+                                    ctx.lineWidth = Math.max(1, lw * 0.8);
+                                    ctx.beginPath();
+                                    ctx.arc(d.x, d.y, aSize, 0, Math.PI * 2);
+                                    ctx.stroke();
+                                }
+                            }
+                        });
+                        break;
+                    }
+                    case 'ladder':
+                    case 'bush':
+                    case 'counter':
+                    case 'damage': {
+                        const bitMap = { ladder: 0x0020, bush: 0x0040, counter: 0x0080, damage: 0x0100 };
+                        const bit = bitMap[mode];
+                        const on = !!(flag & bit);
+                        if (on) {
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                            });
+                        }
+                        // off일 때는 아무것도 표시하지 않음 (네이티브 동일)
+                        break;
+                    }
+                    case 'boat': {
+                        const bOn = !!(flag & 0x0200);
+                        if (bOn) {
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                            });
+                        }
+                        break;
+                    }
+                    case 'ship': {
+                        const sOn = !!(flag & 0x0400);
+                        if (sOn) {
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                            });
+                        }
+                        break;
+                    }
+                    case 'airship': {
+                        const aOn = !!(flag & 0x0800);
+                        if (aOn) {
+                            withShadow(() => {
+                                ctx.strokeStyle = '#fff';
+                                ctx.lineWidth = lw;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                                ctx.stroke();
+                            });
+                        }
+                        break;
+                    }
+                    case 'terrain': {
+                        const t = (flag >> 12) & 0x0F;
+                        if (t > 0) {
+                            // 태그별 색상 분류
+                            let tagColor = '#fff';
+                            if (t <= 3) tagColor = '#ff6666';       // 차단 계열
+                            else if (t <= 8) tagColor = '#66bbff';  // 고저차 계열
+                            else tagColor = '#ffdd57';               // 확장
+                            withShadow(() => {
+                                ctx.fillStyle = tagColor;
+                                ctx.font = `bold ${Math.floor(cellSize*0.38)}px sans-serif`;
+                                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                                ctx.fillText(String(t), cx, cy);
+                            });
+                        }
+                        // t === 0 이면 아무것도 표시하지 않음
+                        break;
+                    }
+                }
+            },
+
+            _tsFlagCycleClick(item, tileId, mode) {
+                let flag = UI._tsGetFlag(item, tileId);
+                switch(mode) {
+                    case 'passage': {
+                        // Native RMMZ cycle: ○(open) → ×(blocked) → ☆(star/above) → ○
+                        const blocked = (flag & 0x000F) === 0x000F;
+                        const star = !!(flag & 0x0010);
+                        if (!blocked && !star) flag = (flag | 0x000F) & ~0x0010;       // ○→×
+                        else if (blocked && !star) flag = (flag & ~0x000F) | 0x0010;    // ×→☆
+                        else flag = flag & ~0x000F & ~0x0010;                           // ☆→○
+                        break;
+                    }
+                    case 'ladder':  flag ^= 0x0020; break;
+                    case 'bush':    flag ^= 0x0040; break;
+                    case 'counter': flag ^= 0x0080; break;
+                    case 'damage':  flag ^= 0x0100; break;
+                    case 'boat':    flag ^= 0x0200; break;
+                    case 'ship':    flag ^= 0x0400; break;
+                    case 'airship': flag ^= 0x0800; break;
+                    case 'terrain': {
+                        // 팔레트에서 선택한 태그값을 적용
+                        const selTag = State._tsSelectedTerrain || 0;
+                        flag = (flag & ~0xF000) | (selTag << 12);
+                        break;
+                    }
+                }
+                UI._tsSetFlag(item, tileId, flag);
+                return flag;
+            },
+
+            _tsRenderFlagGrid() {
+              try {
+                const container = document.getElementById('tsFlagGrid');
+                if (!container) { console.warn('[TS] tsFlagGrid not found'); return; }
+                const savedScrollTop = container.scrollTop;
+                const savedScrollLeft = container.scrollLeft;
+                container.innerHTML = '';
+
+                const item = State.database?.[State.currentDBTab]?.[State.currentDBItem];
+                if (!item) {
+                    container.innerHTML = '<div style="color:#e94560;padding:20px;">타일셋 데이터 없음 (type=' + State.currentDBTab + ', idx=' + State.currentDBItem + ')</div>';
+                    return;
+                }
+
+                const sheet = State._tsFlagSheet || 'A1';
+                const mode = State._tsFlagMode || 'passage';
+                const range = UI._tsGetTileRange(sheet);
+                if (!range || range.count === 0) {
+                    container.innerHTML = '<div style="color:#e94560;padding:20px;">시트 범위 없음: ' + sheet + '</div>';
+                    return;
+                }
+
+                // 현재 폼에서 tilesetNames 읽기 (드롭다운 변경 반영)
+                let imgName = (item.tilesetNames && item.tilesetNames[range.imgIdx]) || '';
+                const field = document.querySelector(`[data-field="tilesetNames_${range.imgIdx}"]`);
+                if (field) imgName = field.value;
+                console.log('[TS] render', sheet, 'img:', imgName, 'range:', range.count, 'cols:', range.cols, 'containerW:', container.clientWidth);
+
+                const cols = range.cols;
+                const rows = Math.ceil(range.count / cols);
+                // 셀 크기: 컨테이너 너비에 맞춰 자동 조절, 최소 32 최대 48
+                const containerW = container.clientWidth || 600;
+                const cellSize = Math.max(32, Math.min(48, Math.floor((containerW - 4) / cols)));
+
+                const canvas = document.createElement('canvas');
+                canvas.width = cols * cellSize;
+                canvas.height = rows * cellSize;
+                canvas.style.cssText = 'cursor:pointer;image-rendering:pixelated;display:block;width:100%;';
+                container.appendChild(canvas);
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+
+                const drawGrid = (img) => {
+                    console.log('[TS] drawGrid called, img:', !!img, 'canvas:', canvas.width, 'x', canvas.height);
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    for (let i = 0; i < range.count; i++) {
+                        const col = i % cols;
+                        const row = Math.floor(i / cols);
+                        const dx = col * cellSize;
+                        const dy = row * cellSize;
+
+                        // ── 타일 이미지 그리기 ──
+                        if (img && img.complete && img.naturalWidth > 0) {
+                            let sx = 0, sy = 0, sw = 48, sh = 48;
+                            if (range.isAutotile) {
+                                const gc = i % 8, gr = Math.floor(i / 8);
+                                if (sheet === 'A1') {
+                                    sx = (i % 8) * 2 * 48; sy = Math.floor(i / 8) * 3 * 48; sw = 96; sh = 96;
+                                } else if (sheet === 'A2') {
+                                    sx = gc * 2 * 48; sy = gr * 3 * 48; sw = 96; sh = 96;
+                                } else if (sheet === 'A3') {
+                                    sx = gc * 2 * 48; sy = gr * 2 * 48; sw = 96; sh = 96;
+                                } else if (sheet === 'A4') {
+                                    const isWall = (gr % 2 === 1);
+                                    const baseRow = Math.floor(gr / 2);
+                                    sx = gc * 2 * 48;
+                                    sy = isWall ? (baseRow * 5 + 3) * 48 : (baseRow * 5) * 48;
+                                    sw = 96; sh = isWall ? 2 * 48 : 3 * 48;
+                                }
+                            } else if (sheet === 'A5') {
+                                sx = (i % 8) * 48; sy = Math.floor(i / 8) * 48;
+                            } else {
+                                const tileId = range.start + i;
+                                sx = ((Math.floor(tileId / 128) % 2) * 8 + (tileId % 8)) * 48;
+                                sy = (Math.floor((tileId % 256) / 8) % 16) * 48;
+                            }
+                            try { ctx.drawImage(img, sx, sy, sw, sh, dx, dy, cellSize, cellSize); } catch(e) {}
+                        } else {
+                            ctx.fillStyle = '#2a2a3e';
+                            ctx.fillRect(dx + 1, dy + 1, cellSize - 2, cellSize - 2);
+                        }
+
+                        // ── 플래그 심볼 오버레이 ──
+                        const flagIdx = range.isAutotile ? range.start + i * 48 : range.start + i;
+                        const flag = UI._tsGetFlag(item, flagIdx);
+                        UI._tsDrawSymbol(ctx, flag, mode, dx, dy, cellSize);
+
+                        // 격자선 — 네이티브 스타일 (밝은 선 + 어두운 선 이중)
+                        ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(dx + 0.5, dy + 0.5, cellSize - 1, cellSize - 1);
+                        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                        ctx.lineWidth = 0.5;
+                        ctx.strokeRect(dx, dy, cellSize, cellSize);
+                    }
+                    // 스크롤 위치 복원
+                    container.scrollTop = savedScrollTop;
+                    container.scrollLeft = savedScrollLeft;
+                };
+
+                // 이미지 로드
+                const imgs = State.tilesetImages || {};
+                const existingImg = imgs[imgName];
+                if (existingImg && existingImg.complete) {
+                    drawGrid(existingImg);
+                } else if (imgName) {
+                    const newImg = new Image();
+                    newImg.onload = () => { State.tilesetImages[imgName] = newImg; drawGrid(newImg); };
+                    newImg.onerror = (e) => { console.warn('[TS] img load error:', imgName, newImg.src); drawGrid(null); };
+                    if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                        newImg.src = GitHubAdapter.getImageUrl(GitHubAdapter._projPath('img/tilesets/' + imgName + '.png'));
+                    } else if (window.__RMMZ_SERVER) {
+                        newImg.src = '/project/img/tilesets/' + imgName + '.png';
+                    } else {
+                        const blob = State.projectFiles?.['img/tilesets/' + imgName + '.png'];
+                        if (blob) newImg.src = URL.createObjectURL(blob);
+                        else newImg.src = (window.__RMMZ_PROJECT_PATH || 'Project1') + '/img/tilesets/' + imgName + '.png';
+                    }
+                } else {
+                    drawGrid(null);
+                }
+
+                // ── 드래그 페인팅: mousedown → mousemove → mouseup ──
+                let _tsDragging = false;
+                let _tsDragAction = null;  // 첫 클릭에서 결정된 동작을 기록 (passage 등 cycle용)
+                let _tsDragVisited = new Set();  // 이미 칠한 타일 추적
+
+                const _tsGetTileAt = (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const mx = Math.floor((e.clientX - rect.left) * scaleX / cellSize);
+                    const my = Math.floor((e.clientY - rect.top) * scaleY / cellSize);
+                    const idx = my * cols + mx;
+                    if (idx < 0 || idx >= range.count) return null;
+                    const flagIdx = range.isAutotile ? range.start + idx * 48 : range.start + idx;
+                    const lx = (e.clientX - rect.left) * scaleX - mx * cellSize;
+                    const ly = (e.clientY - rect.top) * scaleY - my * cellSize;
+                    return { idx, flagIdx, lx, ly };
+                };
+
+                // 첫 클릭: passage cycle 결과를 기록해서 드래그 시 같은 동작 반복
+                const _tsApplyFlag = (flagIdx, e, isFirst) => {
+                    if (mode === 'dir4') {
+                        // dir4는 사분면이라 드래그 시 같은 방향을 반복 적용
+                        const tile = _tsGetTileAt(e);
+                        if (!tile) return;
+                        let flag = UI._tsGetFlag(item, flagIdx);
+                        const { lx, ly } = tile;
+                        const fromTop = ly, fromBot = cellSize - ly;
+                        const fromLeft = lx, fromRight = cellSize - lx;
+                        if (isFirst) {
+                            // 첫 클릭의 방향을 기억
+                            if (fromTop <= fromBot && fromTop <= fromLeft && fromTop <= fromRight) _tsDragAction = 0x0008;
+                            else if (fromBot <= fromTop && fromBot <= fromLeft && fromBot <= fromRight) _tsDragAction = 0x0001;
+                            else if (fromLeft <= fromRight) _tsDragAction = 0x0002;
+                            else _tsDragAction = 0x0004;
+                        }
+                        flag ^= _tsDragAction;
+                        UI._tsSetFlag(item, flagIdx, flag);
+                    } else if (mode === 'passage') {
+                        if (isFirst) {
+                            // 첫 클릭: cycle 후 결과 상태를 기록
+                            const before = UI._tsGetFlag(item, flagIdx);
+                            UI._tsFlagCycleClick(item, flagIdx, mode);
+                            const after = UI._tsGetFlag(item, flagIdx);
+                            // 결과 상태의 passage+star 비트를 기록
+                            _tsDragAction = after & 0x001F;
+                        } else {
+                            // 드래그: 첫 클릭과 같은 상태로 강제 설정
+                            let flag = UI._tsGetFlag(item, flagIdx);
+                            flag = (flag & ~0x001F) | _tsDragAction;
+                            UI._tsSetFlag(item, flagIdx, flag);
+                        }
+                    } else if (mode === 'terrain') {
+                        UI._tsFlagCycleClick(item, flagIdx, mode);
+                    } else {
+                        // ladder, bush, counter, damage, boat, ship, airship — 토글류
+                        if (isFirst) {
+                            // 첫 클릭: 토글 후 결과를 기록 (ON이 됐는지 OFF가 됐는지)
+                            const before = UI._tsGetFlag(item, flagIdx);
+                            UI._tsFlagCycleClick(item, flagIdx, mode);
+                            const after = UI._tsGetFlag(item, flagIdx);
+                            _tsDragAction = after;  // 결과 상태 전체를 기록하진 않고...
+                            // 해당 비트가 켜졌는지 꺼졌는지만 확인
+                            const bitMap = {ladder:0x0020, bush:0x0040, counter:0x0080, damage:0x0100, boat:0x0200, ship:0x0400, airship:0x0800};
+                            const bit = bitMap[mode] || 0;
+                            _tsDragAction = !!(after & bit);  // true=켬, false=끔
+                        } else {
+                            // 드래그: 첫 클릭과 같은 방향으로 통일
+                            const bitMap = {ladder:0x0020, bush:0x0040, counter:0x0080, damage:0x0100, boat:0x0200, ship:0x0400, airship:0x0800};
+                            const bit = bitMap[mode] || 0;
+                            let flag = UI._tsGetFlag(item, flagIdx);
+                            if (_tsDragAction) flag |= bit; else flag &= ~bit;
+                            UI._tsSetFlag(item, flagIdx, flag);
+                        }
+                    }
+                };
+
+                canvas.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    const tile = _tsGetTileAt(e);
+                    if (!tile) return;
+                    _tsDragging = true;
+                    _tsDragAction = null;
+                    _tsDragVisited = new Set();
+                    _tsDragVisited.add(tile.flagIdx);
+                    _tsApplyFlag(tile.flagIdx, e, true);
+                    UI._tsRenderFlagGrid();
+                    UI._tsShowInfo(tile.flagIdx, UI._tsGetFlag(item, tile.flagIdx));
+                });
+
+                canvas.addEventListener('mousemove', (e) => {
+                    const tile = _tsGetTileAt(e);
+                    if (!tile) return;
+                    // 호버 정보 항상 표시
+                    UI._tsShowInfo(tile.flagIdx, UI._tsGetFlag(item, tile.flagIdx));
+                    // 드래그 중이면 페인팅
+                    if (_tsDragging && !_tsDragVisited.has(tile.flagIdx)) {
+                        _tsDragVisited.add(tile.flagIdx);
+                        _tsApplyFlag(tile.flagIdx, e, false);
+                        UI._tsRenderFlagGrid();
+                    }
+                });
+
+                canvas.addEventListener('mouseup', (e) => {
+                    if (_tsDragging) {
+                        _tsDragging = false;
+                        // flags 동기화
+                        const ff = document.querySelector('[data-field="flags"]');
+                        if (ff) ff.value = JSON.stringify(item.flags);
+                    }
+                });
+
+                canvas.addEventListener('mouseleave', () => {
+                    if (_tsDragging) {
+                        _tsDragging = false;
+                        const ff = document.querySelector('[data-field="flags"]');
+                        if (ff) ff.value = JSON.stringify(item.flags);
+                    }
+                });
+              } catch(err) {
+                console.error('[TS] _tsRenderFlagGrid error:', err);
+                const c = document.getElementById('tsFlagGrid');
+                if (c) c.innerHTML = '<div style="color:#e94560;padding:20px;word-break:break-all;">오류: ' + err.message + '<br>' + err.stack + '</div>';
+              }
+            },
+
+            _tsShowInfo(tileId, flag) {
+                const info = document.getElementById('tsFlagInfo');
+                if (!info) return;
+                const p = (flag & 0x000F) ? '×' : ((flag & 0x10) ? '☆' : '○');
+                info.textContent = `#${tileId} | 0x${flag.toString(16).toUpperCase().padStart(4,'0')} | `
+                    + `통행:${p}  사다리:${(flag&0x20)?'Y':'N'}  수풀:${(flag&0x40)?'Y':'N'}  `
+                    + `카운터:${(flag&0x80)?'Y':'N'}  데미지:${(flag&0x100)?'Y':'N'}  지형:${(flag>>12)&0xF}`;
+            },
+
+            // ─── RMMZ 특성 데이터 정의 (모달에서도 재사용) ───
+            _TRAIT_CATS: [
+                { label: '속성 유효도',   code: 11, tab: '내성', dataLabel: '속성',     dataSource: 'elements',   valLabel: '배율', valDefault: 1.0, valPercent: true },
+                { label: '디버프 유효도', code: 12, tab: '내성', dataLabel: '능력치',   dataList: ['최대HP','최대MP','공격력','방어력','마법공격','마법방어','민첩성','운'], valLabel: '배율', valDefault: 1.0, valPercent: true },
+                { label: '상태 유효도',   code: 13, tab: '내성', dataLabel: '상태',     dataSource: 'states',     valLabel: '배율', valDefault: 1.0, valPercent: true },
+                { label: '상태 면역',     code: 14, tab: '내성', dataLabel: '상태',     dataSource: 'states',     valLabel: null,   valDefault: 0 },
+                { label: '능력치 보정',   code: 21, tab: '능력치', dataLabel: '능력치', dataList: ['최대HP','최대MP','공격력','방어력','마법공격','마법방어','민첩성','운'], valLabel: '배율', valDefault: 1.0, valPercent: true },
+                { label: '추가 능력치',   code: 22, tab: '능력치', dataLabel: '종류',   dataList: ['명중률','회피율','치명타율','치명타 회피','마법 회피','마법 반사','반격','HP재생','MP재생','TP재생'], valLabel: '가산', valDefault: 0, valPercent: true },
+                { label: '특수 능력치',   code: 23, tab: '능력치', dataLabel: '종류',   dataList: ['타겟율','방어 효과','회복 효과','약학 지식','MP 소비율','TP 충전율','물리 데미지율','마법 데미지율','바닥 데미지율','경험치 획득율'], valLabel: '배율', valDefault: 1.0, valPercent: true },
+                { label: '공격 시 속성',  code: 31, tab: '공격', dataLabel: '속성',     dataSource: 'elements',   valLabel: null,   valDefault: 0 },
+                { label: '공격 시 상태',  code: 32, tab: '공격', dataLabel: '상태',     dataSource: 'states',     valLabel: '확률', valDefault: 1.0, valPercent: true },
+                { label: '공격 속도 보정',code: 33, tab: '공격', dataLabel: null,       valLabel: '보정값',        valDefault: 0 },
+                { label: '공격 추가 횟수',code: 34, tab: '공격', dataLabel: null,       valLabel: '횟수',          valDefault: 0 },
+                { label: '공격 스킬',     code: 35, tab: '공격', dataLabel: '스킬',     valLabel: null,            valDefault: 0, dataIsSkill: true },
+                { label: '스킬 타입 추가',code: 41, tab: '스킬', dataLabel: '스킬 타입',dataSource: 'skillTypes', valLabel: null,   valDefault: 0 },
+                { label: '스킬 타입 봉인',code: 42, tab: '스킬', dataLabel: '스킬 타입',dataSource: 'skillTypes', valLabel: null,   valDefault: 0 },
+                { label: '스킬 추가',     code: 43, tab: '스킬', dataLabel: '스킬',     valLabel: null,            valDefault: 0, dataIsSkill: true },
+                { label: '스킬 봉인',     code: 44, tab: '스킬', dataLabel: '스킬',     valLabel: null,            valDefault: 0, dataIsSkill: true },
+                { label: '무기 타입 장착',code: 51, tab: '장비', dataLabel: '무기 타입',dataSource: 'weaponTypes',valLabel: null,   valDefault: 0 },
+                { label: '방어구 타입 장착',code:52,tab: '장비', dataLabel: '방어구 타입',dataSource:'armorTypes', valLabel: null,   valDefault: 0 },
+                { label: '장비 타입 고정',code: 53, tab: '장비', dataLabel: '장비 타입',dataSource: 'equipTypes', valLabel: null,   valDefault: 0 },
+                { label: '장비 타입 봉인',code: 54, tab: '장비', dataLabel: '장비 타입',dataSource: 'equipTypes', valLabel: null,   valDefault: 0 },
+                { label: '이중 장비',     code: 55, tab: '장비', dataLabel: null,       valLabel: null,            valDefault: 0 },
+                { label: '행동 횟수 추가',code: 61, tab: '기타', dataLabel: null,       valLabel: '확률',          valDefault: 1.0, valPercent: true },
+                { label: '특수 플래그',   code: 62, tab: '기타', dataLabel: '종류',     dataList: ['자동 전투','방어','은신','연속 방어'], valLabel: null, valDefault: 0 },
+                { label: '퇴장 효과',     code: 63, tab: '기타', dataLabel: '종류',     dataList: ['보스','즉시','사라짐','없음'], valLabel: null, valDefault: 0 },
+                { label: '파티 능력',     code: 64, tab: '기타', dataLabel: '종류',     dataList: ['기습 확률 증가','선제 공격 확률 증가','골드 2배','아이템 드롭 2배'], valLabel: null, valDefault: 0 },
+            ],
+            _TRAIT_TABS: ['내성','능력치','공격','스킬','장비','기타'],
+            _traitModalState: null, // {editIdx: number|null, selectedCode, selectedDataId, selectedValue}
+            _traitSelectedRow: -1,  // 요약 테이블에서 선택된 행
+
+            _getTraitCatByCode(code) {
+                return this._TRAIT_CATS.find(c => c.code === code);
+            },
+
+            _getTraitNames(source) {
+                const sys = (State.database && State.database.system) || {};
+                if (!source) return [];
+                const arr = sys[source] || [];
+                return arr.map((n, i) => n || (source + ' ' + i));
+            },
+
+            // 특성 요약 텍스트 생성
+            _traitSummary(trait) {
+                const cat = this._getTraitCatByCode(trait.code);
+                if (!cat) return '알 수 없음 (코드: ' + trait.code + ')';
+                let desc = '';
+                if (cat.dataSource || cat.dataList) {
+                    const names = cat.dataList || this._getTraitNames(cat.dataSource);
+                    desc = (names[trait.dataId] || ('#' + trait.dataId));
+                } else if (cat.dataIsSkill) {
+                    const skills = State.database.skills || [];
+                    const sk = skills[trait.dataId];
+                    desc = sk ? sk.name : ('#' + trait.dataId);
+                }
+                if (cat.valLabel && cat.valPercent) {
+                    desc += (desc ? ' ' : '') + Math.round((trait.value || cat.valDefault) * 100) + '%';
+                } else if (cat.valLabel) {
+                    desc += (desc ? ' ' : '') + (trait.value != null ? trait.value : cat.valDefault);
+                }
+                return desc;
+            },
+
+            renderTraitsSection(traits) {
+                this._traitSelectedRow = -1;
+                let rows = '';
+                traits.forEach((t, idx) => {
+                    const cat = this._getTraitCatByCode(t.code);
+                    const typeName = cat ? cat.label : ('코드 ' + t.code);
+                    const content = this._traitSummary(t);
+                    rows += '<tr ondblclick="UI.openTraitModal(' + idx + ')" onclick="UI._traitSelectedRow=' + idx + ';UI._highlightTraitRow(this);">' +
+                        '<td style="width:150px;">' + typeName + '</td>' +
+                        '<td>' + content + '</td></tr>';
+                });
+                return '<div class="formSection">' +
+                    '<div class="formSectionHeader" onclick="this.parentElement.querySelector(\'.formSectionContent\').classList.toggle(\'collapsed\'); this.classList.toggle(\'collapsed\');">특성</div>' +
+                    '<div class="formSectionContent">' +
+                        '<table class="traitSummaryTable"><thead><tr><th>유형</th><th>내용</th></tr></thead>' +
+                        '<tbody id="traitsSummaryBody">' + rows + '</tbody></table>' +
+                        '<div class="traitBtnRow">' +
+                            '<button class="btnAdd" onclick="UI.openTraitModal(null)">추가</button>' +
+                            '<button class="btnEdit" onclick="UI._editSelectedTrait()">편집</button>' +
+                            '<button class="btnRemove" onclick="UI._removeSelectedTrait()">제거</button>' +
+                        '</div>' +
+                    '</div></div>';
+            },
+
+            _highlightTraitRow(tr) {
+                const tbody = document.getElementById('traitsSummaryBody');
+                if (!tbody) return;
+                tbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+                tr.classList.add('selected');
+            },
+
+            _editSelectedTrait() {
+                if (this._traitSelectedRow < 0) return;
+                this.openTraitModal(this._traitSelectedRow);
+            },
+
+            _removeSelectedTrait() {
+                if (this._traitSelectedRow < 0) return;
+                const type = State.currentDBTab;
+                const list = State.database[type];
+                if (!list) return;
+                const item = list[State.currentDBItem];
+                if (!item || !item.traits) return;
+                item.traits.splice(this._traitSelectedRow, 1);
+                this._traitSelectedRow = -1;
+                this.renderDBForm();
+            },
+
+            // ─── 특성 모달 열기 ───
+            openTraitModal(editIdx) {
+                const type = State.currentDBTab;
+                const list = State.database[type];
+                if (!list) return;
+                const item = list[State.currentDBItem];
+                if (!item) return;
+                if (!item.traits) item.traits = [];
+
+                let trait;
+                if (editIdx != null && item.traits[editIdx]) {
+                    trait = JSON.parse(JSON.stringify(item.traits[editIdx]));
+                } else {
+                    trait = { code: 11, dataId: 0, value: 1.0 };
+                    editIdx = null;
+                }
+
+                this._traitModalState = {
+                    editIdx: editIdx,
+                    code: trait.code,
+                    dataId: trait.dataId || 0,
+                    value: trait.value != null ? trait.value : 1.0,
+                };
+
+                // 탭 생성
+                const tabsEl = document.getElementById('traitModalTabs');
+                const cat = this._getTraitCatByCode(trait.code);
+                const activeTab = cat ? cat.tab : '내성';
+                tabsEl.innerHTML = this._TRAIT_TABS.map(t =>
+                    '<button class="traitTab' + (t === activeTab ? ' active' : '') + '" onclick="UI._switchTraitTab(\'' + t + '\')">' + t + '</button>'
+                ).join('');
+
+                this._renderTraitTabBody(activeTab);
+                document.getElementById('traitModal').classList.add('active');
+            },
+
+            closeTraitModal() {
+                document.getElementById('traitModal').classList.remove('active');
+                this._traitModalState = null;
+            },
+
+            _switchTraitTab(tabName) {
+                // 탭 전환 전 현재 입력값 저장
+                this._readTraitModalInputs();
+                const tabsEl = document.getElementById('traitModalTabs');
+                tabsEl.querySelectorAll('.traitTab').forEach(btn => {
+                    btn.classList.toggle('active', btn.textContent === tabName);
+                });
+                this._renderTraitTabBody(tabName);
+            },
+
+            _renderTraitTabBody(tabName) {
+                const st = this._traitModalState;
+                if (!st) return;
+                const body = document.getElementById('traitModalBody');
+                const cats = this._TRAIT_CATS.filter(c => c.tab === tabName);
+
+                let html = '<div class="traitRadioGroup">';
+                cats.forEach(cat => {
+                    const checked = (st.code === cat.code) ? ' checked' : '';
+                    html += '<div class="traitRadioRow">' +
+                        '<input type="radio" name="traitType" id="traitR_' + cat.code + '" value="' + cat.code + '"' + checked +
+                        ' onchange="UI._onTraitRadioChange(' + cat.code + ')">' +
+                        '<label for="traitR_' + cat.code + '">' + cat.label + '</label>' +
+                        '<div class="traitFields" id="traitFields_' + cat.code + '">';
+
+                    // 필드 렌더링 (선택된 코드만 활성화)
+                    const isActive = (st.code === cat.code);
+                    html += this._renderTraitFields(cat, isActive ? st.dataId : (cat.dataList ? 0 : 0), isActive ? st.value : cat.valDefault, !isActive);
+                    html += '</div></div>';
+                });
+                html += '</div>';
+                body.innerHTML = html;
+            },
+
+            _renderTraitFields(cat, dataId, value, disabled) {
+                const dis = disabled ? ' disabled' : '';
+                const sys = (State.database && State.database.system) || {};
+                let html = '';
+
+                // dataId 입력
+                if (cat.dataSource || cat.dataList) {
+                    const names = cat.dataList || this._getTraitNames(cat.dataSource);
+                    html += '<select class="traitModalDataId"' + dis + '>';
+                    names.forEach((n, i) => {
+                        html += '<option value="' + i + '"' + (i === dataId ? ' selected' : '') + '>' + n + '</option>';
+                    });
+                    html += '</select>';
+                } else if (cat.dataIsSkill) {
+                    const skills = State.database.skills || [];
+                    html += '<select class="traitModalDataId"' + dis + '>';
+                    for (let i = 1; i < skills.length; i++) {
+                        if (!skills[i]) continue;
+                        html += '<option value="' + i + '"' + (i === dataId ? ' selected' : '') + '>' + skills[i].name + '</option>';
+                    }
+                    html += '</select>';
+                } else if (cat.dataLabel) {
+                    html += '<input type="number" class="traitModalDataId" value="' + (dataId || 0) + '"' + dis + ' style="width:60px;">';
+                }
+
+                // value 입력
+                if (cat.valLabel) {
+                    const displayVal = cat.valPercent ? Math.round((value != null ? value : cat.valDefault) * 100) : (value != null ? value : cat.valDefault);
+                    const step = cat.valPercent ? '1' : '0.1';
+                    const suffix = cat.valPercent ? ' %' : '';
+                    html += '<span style="color:#8899aa;font-size:0.82em;margin-left:4px;">' + cat.valLabel + '</span>' +
+                        '<input type="number" class="traitModalValue" data-percent="' + (cat.valPercent ? '1' : '0') + '" value="' + displayVal + '" step="' + step + '"' + dis + '>' +
+                        (suffix ? '<span style="color:#667;font-size:0.8em;">' + suffix + '</span>' : '');
+                }
+
+                return html;
+            },
+
+            _onTraitRadioChange(newCode) {
+                const st = this._traitModalState;
+                if (!st) return;
+                // 현재 입력값 저장
+                this._readTraitModalInputs();
+                // 코드 변경 + 기본값 적용
+                const cat = this._getTraitCatByCode(newCode);
+                st.code = newCode;
+                st.dataId = 0;
+                st.value = cat ? cat.valDefault : 0;
+                // 현재 탭 다시 렌더링
+                const activeTabBtn = document.querySelector('.traitTab.active');
+                if (activeTabBtn) this._renderTraitTabBody(activeTabBtn.textContent);
+            },
+
+            _readTraitModalInputs() {
+                const st = this._traitModalState;
+                if (!st) return;
+                // 현재 선택된 코드의 필드에서 값 읽기
+                const fieldsDiv = document.getElementById('traitFields_' + st.code);
+                if (!fieldsDiv) return;
+                const dataEl = fieldsDiv.querySelector('.traitModalDataId');
+                if (dataEl) st.dataId = parseInt(dataEl.value) || 0;
+                const valEl = fieldsDiv.querySelector('.traitModalValue');
+                if (valEl) {
+                    const raw = parseFloat(valEl.value) || 0;
+                    st.value = valEl.dataset.percent === '1' ? raw / 100 : raw;
+                }
+            },
+
+            saveTraitModal() {
+                const st = this._traitModalState;
+                if (!st) return;
+                this._readTraitModalInputs();
+
+                const type = State.currentDBTab;
+                const list = State.database[type];
+                if (!list) return;
+                const item = list[State.currentDBItem];
+                if (!item) return;
+                if (!item.traits) item.traits = [];
+
+                const newTrait = { code: st.code, dataId: st.dataId, value: st.value };
+                if (st.editIdx != null) {
+                    item.traits[st.editIdx] = newTrait;
+                } else {
+                    item.traits.push(newTrait);
+                }
+                this.closeTraitModal();
+                this.renderDBForm();
+            },
+
+            // 하위 호환 — 이전 onTraitCodeChange는 더 이상 사용 안 함
+            onTraitCodeChange() {},
+
+            // ─── 스탠딩 초상화 에디터 (단일/레이어 모드) ───
+            _portraitState: null,
+
+            _getStandingPlugin() {
+                return (State.plugins || []).find(p => p.name === 'StandingManager');
+            },
+
+            // ── Single-mode DB helpers ──
+            _getSingleDB() {
+                const plugin = this._getStandingPlugin();
+                if (!plugin || !plugin.parameters) return {};
+                try {
+                    const raw = JSON.parse(plugin.parameters.portraits || '[]');
+                    const db = {};
+                    for (const entry of raw) {
+                        const p = typeof entry === 'string' ? JSON.parse(entry) : entry;
+                        const aid = Number(p.actorId);
+                        if (!aid) continue;
+                        db[aid] = {};
+                        const imgs = JSON.parse(p.images || '[]');
+                        for (const img of imgs) {
+                            const d = typeof img === 'string' ? JSON.parse(img) : img;
+                            const tag = (d.tag || 'normal').trim();
+                            const face = (d.face||'216,30,400,400').split(',').map(Number);
+                            const mini = (d.mini||'266,80,200,200').split(',').map(Number);
+                            db[aid][tag] = { file: d.file || '', face, mini };
+                        }
+                    }
+                    return db;
+                } catch(e) { console.error('getSingleDB error', e); return {}; }
+            },
+
+            _saveSingleDB(db) {
+                let plugin = this._getStandingPlugin();
+                if (!plugin) {
+                    plugin = { name: 'StandingManager', status: true, description: '', parameters: { emotionPresets: 'normal', portraits: '[]', layered: '[]', defaultSlots: 'body,outfit,hair,expression,accessory' } };
+                    State.plugins.push(plugin);
+                }
+                const arr = [];
+                for (const [aid, tags] of Object.entries(db)) {
+                    const images = [];
+                    for (const [tag, d] of Object.entries(tags)) {
+                        images.push(JSON.stringify({ tag, file: d.file, face: d.face.join(','), mini: d.mini.join(',') }));
+                    }
+                    arr.push(JSON.stringify({ actorId: String(aid), images: '[' + images.join(',') + ']' }));
+                }
+                plugin.parameters.portraits = JSON.stringify(arr);
+            },
+
+            // ── Layered-mode DB helpers ──
+            _getLayeredDB() {
+                const plugin = this._getStandingPlugin();
+                if (!plugin || !plugin.parameters) return {};
+                try {
+                    const raw = JSON.parse(plugin.parameters.layered || '[]');
+                    const db = {};
+                    for (const entry of raw) {
+                        const p = typeof entry === 'string' ? JSON.parse(entry) : entry;
+                        const aid = Number(p.actorId);
+                        if (!aid) continue;
+                        const slotsStr = p.slots || '';
+                        const slots = slotsStr ? slotsStr.split(',').map(s=>s.trim()).filter(Boolean) : ['body','outfit','hair','expression','accessory'];
+                        const situationsRaw = JSON.parse(p.situations || '[]');
+                        const situations = {};
+                        for (const sEntry of situationsRaw) {
+                            const s = typeof sEntry === 'string' ? JSON.parse(sEntry) : sEntry;
+                            const name = (s.name || 'default').trim();
+                            const layersRaw = JSON.parse(s.layers || '[]');
+                            const layers = {};
+                            for (const lE of layersRaw) {
+                                const l = typeof lE === 'string' ? JSON.parse(lE) : lE;
+                                layers[l.slot] = { file: l.file || '', offsetX: Number(l.offsetX)||0, offsetY: Number(l.offsetY)||0 };
+                            }
+                            const exprsRaw = JSON.parse(s.expressions || '[]');
+                            const expressions = {};
+                            for (const eE of exprsRaw) {
+                                const e = typeof eE === 'string' ? JSON.parse(eE) : eE;
+                                expressions[(e.tag||'normal').trim()] = { file: e.file||'', offsetX: Number(e.offsetX)||0, offsetY: Number(e.offsetY)||0 };
+                            }
+                            situations[name] = { layers, expressions };
+                        }
+                        db[aid] = { slots, situations, faceRect: (p.faceRect||'216,30,400,400').split(',').map(Number), miniRect: (p.miniRect||'266,80,200,200').split(',').map(Number) };
+                    }
+                    return db;
+                } catch(e) { console.error('getLayeredDB error', e); return {}; }
+            },
+
+            _saveLayeredDB(db) {
+                let plugin = this._getStandingPlugin();
+                if (!plugin) {
+                    plugin = { name: 'StandingManager', status: true, description: '', parameters: { emotionPresets: 'normal', portraits: '[]', layered: '[]', defaultSlots: 'body,outfit,hair,expression,accessory' } };
+                    State.plugins.push(plugin);
+                }
+                const arr = [];
+                for (const [aid, data] of Object.entries(db)) {
+                    const sits = [];
+                    for (const [sName, sit] of Object.entries(data.situations)) {
+                        const layers = [];
+                        for (const [slot, l] of Object.entries(sit.layers)) {
+                            layers.push(JSON.stringify({ slot, file: l.file, offsetX: String(l.offsetX), offsetY: String(l.offsetY) }));
+                        }
+                        const exprs = [];
+                        for (const [tag, e] of Object.entries(sit.expressions)) {
+                            exprs.push(JSON.stringify({ tag, file: e.file, offsetX: String(e.offsetX), offsetY: String(e.offsetY) }));
+                        }
+                        sits.push(JSON.stringify({ name: sName, layers: '['+layers.join(',')+']', expressions: '['+exprs.join(',')+']' }));
+                    }
+                    arr.push(JSON.stringify({ actorId: String(aid), slots: data.slots.join(','), situations: '['+sits.join(',')+']', faceRect: data.faceRect.join(','), miniRect: data.miniRect.join(',') }));
+                }
+                plugin.parameters.layered = JSON.stringify(arr);
+            },
+
+            _getEmotionPresets() {
+                const plugin = this._getStandingPlugin();
+                if (!plugin || !plugin.parameters || !plugin.parameters.emotionPresets) return ['normal'];
+                return plugin.parameters.emotionPresets.split(',').map(s => s.trim()).filter(Boolean);
+            },
+
+            _getDefaultSlots() {
+                const plugin = this._getStandingPlugin();
+                if (!plugin || !plugin.parameters || !plugin.parameters.defaultSlots) return ['body','outfit','hair','expression','accessory'];
+                return plugin.parameters.defaultSlots.split(',').map(s => s.trim()).filter(Boolean);
+            },
+
+            _getActorMode(actorId) {
+                const ldb = this._getLayeredDB();
+                return ldb[actorId] ? 'layered' : 'single';
+            },
+
+            // ── renderPortraitSection: dispatches to single or layered ──
+            renderPortraitSection(item) {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState = this._portraitState || {};
+                if (!st.mode) st.mode = this._getActorMode(actorId);
+
+                let html = '<div class="formSection"><div class="formSectionHeader" onclick="this.parentElement.querySelector(\'.formSectionContent\').classList.toggle(\'collapsed\'); this.classList.toggle(\'collapsed\');">스탠딩 초상화</div><div class="formSectionContent">';
+
+                // Mode toggle
+                html += '<div class="modeToggle">';
+                html += '<button class="' + (st.mode==='single'?'active':'') + '" onclick="UI._switchActorMode(\'single\')">단일 이미지</button>';
+                html += '<button class="' + (st.mode==='layered'?'active':'') + '" onclick="UI._switchActorMode(\'layered\')">레이어 합성</button>';
+                html += '</div>';
+
+                // Resolution spec display
+                const resSpec = this._getResolutionSpec();
+                html += '<div style="font-size:0.75em;color:#555;margin-bottom:6px;">기준 해상도: ' + resSpec.w + '×' + resSpec.h + ' (W:H = 2:3)</div>';
+
+                if (st.mode === 'single') {
+                    html += this._renderSingleMode(item, actorId);
+                } else {
+                    html += this._renderLayeredMode(item, actorId);
+                }
+
+                html += '</div></div>';
+                return html;
+            },
+
+            _switchActorMode(mode) {
+                const st = this._portraitState = this._portraitState || {};
+                const actorId = State.currentDBItem;
+                const oldMode = st.mode;
+                st.mode = mode;
+
+                if (mode === 'layered' && oldMode !== 'layered') {
+                    const ldb = this._getLayeredDB();
+                    if (!ldb[actorId]) {
+                        ldb[actorId] = { slots: this._getDefaultSlots(), situations: {}, faceRect: [216,30,400,400], miniRect: [266,80,200,200] };
+                        this._saveLayeredDB(ldb);
+                    }
+                }
+                if (mode === 'single' && oldMode !== 'single') {
+                    const ldb = this._getLayeredDB();
+                    if (ldb[actorId]) {
+                        if (confirm('레이어 데이터를 삭제하고 단일 모드로 전환합니까?')) {
+                            delete ldb[actorId];
+                            this._saveLayeredDB(ldb);
+                        } else {
+                            st.mode = 'layered';
+                            return;
+                        }
+                    }
+                }
+                this.renderDBForm();
+            },
+
+            // ═══════════════════════════════════════════
+            //  SINGLE IMAGE MODE
+            // ═══════════════════════════════════════════
+            _renderSingleMode(item, actorId) {
+                const db = this._getSingleDB();
+                const st = this._portraitState;
+                const actorData = db[actorId] || {};
+                const tags = Object.keys(actorData);
+                if (!st.currentTag || !actorData[st.currentTag]) st.currentTag = tags[0] || 'normal';
+                const curTag = st.currentTag;
+                const presets = this._getEmotionPresets();
+
+                // Thumbnails
+                let thumbList = '';
+                for (const tag of tags) {
+                    const d = actorData[tag];
+                    const active = tag === curTag ? ' class="portraitThumb active"' : '';
+                    thumbList += '<div class="portraitThumb" onclick="UI._selectSingleTag(\'' + tag + '\')"' + active + '>' +
+                        (d.file ? '<img src="Project1/img/standing/' + d.file + '.png">' : tag.substring(0,3)) + '</div>';
+                }
+
+                // Tag select + buttons
+                let tagOptions = '';
+                for (const p of presets) {
+                    tagOptions += '<option value="' + p + '"' + (p === curTag ? ' selected' : '') + '>' + p + '</option>';
+                }
+
+                let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">' + thumbList + '</div>';
+                html += '<div class="portraitBtnRow" style="margin-bottom:8px;flex-wrap:wrap;gap:6px;">';
+                html += '<select id="portraitTagSelect" onchange="UI._selectSingleTag(this.value)" style="padding:4px 8px;background:#1a1a2e;color:#eee;border:1px solid #333;border-radius:4px;font-size:12px;">' + tagOptions + '</select>';
+                html += '<button class="btnPrimary" onclick="UI._uploadSingleForTag()" style="font-size:12px;">업로드</button>';
+                html += '<button onclick="UI._selectSingleFile()" style="font-size:12px;">기존 선택</button>';
+                html += '<button onclick="UI._removeSingleTag()" style="font-size:12px;color:#e94560;">삭제</button>';
+                html += '</div>';
+
+                // Canvas + previews
+                html += '<div class="portraitEditor">';
+                html += '<div><div class="portraitCanvasWrap"><canvas id="portraitCanvas" width="400" height="600"></canvas></div>';
+                html += '<div class="portraitBtnRow" style="margin-bottom:6px;">';
+                html += '<button id="btnEditFace" class="btnPrimary" onclick="UI._switchPortraitEditMode(\'face\')" style="font-size:11px;padding:2px 8px;">얼굴</button>';
+                html += '<button id="btnEditMini" onclick="UI._switchPortraitEditMode(\'mini\')" style="font-size:11px;padding:2px 8px;">미니</button>';
+                html += '</div></div>';
+                html += '<div class="portraitPreviewCol">';
+                html += '<div class="portraitPreviewLabel">얼굴 프리뷰</div><div class="portraitPreviewBox"><canvas id="facePreview" width="96" height="96"></canvas></div>';
+                html += '<div class="portraitPreviewLabel">미니 프리뷰</div><div class="portraitPreviewBox"><canvas id="miniPreview" width="96" height="96"></canvas></div>';
+                html += '</div></div>';
+
+                return html;
+            },
+
+            _selectSingleTag(tag) {
+                const st = this._portraitState = this._portraitState || {};
+                st.currentTag = tag;
+                this.renderDBForm();
+            },
+
+            // ═══════════════════════════════════════════
+            //  LAYERED MODE
+            // ═══════════════════════════════════════════
+            _renderLayeredMode(item, actorId) {
+                const ldb = this._getLayeredDB();
+                const st = this._portraitState;
+                const data = ldb[actorId];
+                if (!data) return '<div class="portraitNone">레이어 데이터 없음</div>';
+
+                const situations = Object.keys(data.situations);
+                if (!st.currentSituation || !data.situations[st.currentSituation]) {
+                    st.currentSituation = situations[0] || '';
+                }
+                if (!st.currentExpr) st.currentExpr = 'normal';
+
+                let html = '';
+
+                // ── Slot management ──
+                html += '<div style="font-size:0.8em;color:#888;margin-bottom:4px;">레이어 슬롯: ' + data.slots.join(' → ') + ' <button onclick="UI._editLayerSlots()" style="font-size:0.75em;padding:1px 6px;background:#0f3460;color:#ccc;border:1px solid #333;border-radius:3px;cursor:pointer;">편집</button></div>';
+
+                // ── Situation tabs ──
+                html += '<div style="margin-bottom:2px;">';
+                for (const sName of situations) {
+                    html += '<span class="situationTab' + (sName === st.currentSituation ? ' active' : '') + '" onclick="UI._selectSituation(\'' + sName + '\')">' + sName + '</span>';
+                }
+                html += ' <button onclick="UI._addSituation()" style="font-size:0.75em;padding:2px 8px;background:#16213e;color:#4a9eff;border:1px solid #333;border-radius:3px;cursor:pointer;">+ 상황 추가</button>';
+                if (situations.length > 0) html += ' <button onclick="UI._removeSituation()" style="font-size:0.75em;padding:2px 8px;background:#16213e;color:#e94560;border:1px solid #333;border-radius:3px;cursor:pointer;">삭제</button>';
+                html += '</div>';
+
+                if (st.currentSituation && data.situations[st.currentSituation]) {
+                    const sit = data.situations[st.currentSituation];
+
+                    // ── Layer slots with file assignments ──
+                    html += '<div class="layerEditorPanel">';
+                    html += '<div style="font-size:0.8em;color:#4a9eff;margin-bottom:6px;font-weight:bold;">' + st.currentSituation + ' — 레이어</div>';
+                    for (const slot of data.slots) {
+                        if (slot === 'expression') continue; // Expression handled separately
+                        const layer = sit.layers[slot] || {};
+                        html += '<div class="layerSlotRow">';
+                        html += '<span class="slotName">' + slot + '</span>';
+                        html += '<span class="slotFile">' + (layer.file || '(없음)') + '</span>';
+                        html += '<button onclick="UI._uploadLayerFile(\'' + slot + '\')">업로드</button>';
+                        html += '<button onclick="UI._selectLayerFile(\'' + slot + '\')">선택</button>';
+                        if (layer.file) html += '<button onclick="UI._removeLayerFile(\'' + slot + '\')" style="color:#e94560;">X</button>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+
+                    // ── Expression chips ──
+                    const presets = this._getEmotionPresets();
+                    html += '<div class="layerEditorPanel">';
+                    html += '<div style="font-size:0.8em;color:#4a9eff;margin-bottom:6px;font-weight:bold;">' + st.currentSituation + ' — 표정</div>';
+                    html += '<div class="exprGrid">';
+                    for (const tag of presets) {
+                        const expr = sit.expressions[tag];
+                        let cls = 'exprChip';
+                        if (expr && expr.file) cls += ' hasFile';
+                        if (tag === st.currentExpr) cls += ' active';
+                        html += '<span class="' + cls + '" onclick="UI._selectExpr(\'' + tag + '\')">' + tag + '</span>';
+                    }
+                    html += '</div>';
+                    const curExpr = sit.expressions[st.currentExpr];
+                    html += '<div style="margin-top:6px;display:flex;gap:6px;align-items:center;">';
+                    html += '<span style="font-size:0.8em;color:#ccc;">' + st.currentExpr + ':</span>';
+                    html += '<span style="font-size:0.8em;color:#aaa;">' + (curExpr && curExpr.file ? curExpr.file : '(없음)') + '</span>';
+                    html += '<button onclick="UI._uploadExprFile()" style="font-size:0.75em;padding:2px 8px;background:#0f3460;color:#ccc;border:1px solid #333;border-radius:3px;cursor:pointer;">업로드</button>';
+                    html += '<button onclick="UI._selectExprFile()" style="font-size:0.75em;padding:2px 8px;background:#0f3460;color:#ccc;border:1px solid #333;border-radius:3px;cursor:pointer;">선택</button>';
+                    if (curExpr && curExpr.file) html += '<button onclick="UI._removeExprFile()" style="font-size:0.75em;padding:2px 8px;background:#16213e;color:#e94560;border:1px solid #333;border-radius:3px;cursor:pointer;">X</button>';
+                    html += '</div>';
+                    html += '</div>';
+                }
+
+                // ── Canvas preview (composite) + face/mini rect ──
+                html += '<div class="portraitEditor">';
+                html += '<div><div class="portraitCanvasWrap"><canvas id="portraitCanvas" width="400" height="600"></canvas></div>';
+                html += '<div class="portraitBtnRow" style="margin-bottom:6px;">';
+                html += '<button id="btnEditFace" class="btnPrimary" onclick="UI._switchPortraitEditMode(\'face\')" style="font-size:11px;padding:2px 8px;">얼굴</button>';
+                html += '<button id="btnEditMini" onclick="UI._switchPortraitEditMode(\'mini\')" style="font-size:11px;padding:2px 8px;">미니</button>';
+                html += '</div></div>';
+                html += '<div class="portraitPreviewCol">';
+                html += '<div class="portraitPreviewLabel">얼굴 프리뷰</div><div class="portraitPreviewBox"><canvas id="facePreview" width="96" height="96"></canvas></div>';
+                html += '<div class="portraitPreviewLabel">미니 프리뷰</div><div class="portraitPreviewBox"><canvas id="miniPreview" width="96" height="96"></canvas></div>';
+                html += '</div></div>';
+
+                return html;
+            },
+
+            _selectSituation(name) {
+                const st = this._portraitState = this._portraitState || {};
+                st.currentSituation = name;
+                st.currentExpr = 'normal';
+                this.renderDBForm();
+            },
+
+            _selectExpr(tag) {
+                const st = this._portraitState = this._portraitState || {};
+                st.currentExpr = tag;
+                this.renderDBForm();
+            },
+
+            _addSituation() {
+                const name = prompt('상황 이름 (예: clothed, nude, battle):');
+                if (!name) return;
+                const actorId = State.currentDBItem;
+                const ldb = this._getLayeredDB();
+                if (!ldb[actorId]) return;
+                const key = name.toLowerCase().trim();
+                if (!ldb[actorId].situations[key]) {
+                    ldb[actorId].situations[key] = { layers: {}, expressions: {} };
+                    this._saveLayeredDB(ldb);
+                }
+                const st = this._portraitState || {};
+                st.currentSituation = key;
+                this.renderDBForm();
+            },
+
+            _removeSituation() {
+                const st = this._portraitState || {};
+                if (!st.currentSituation) return;
+                if (!confirm(st.currentSituation + ' 상황을 삭제합니까?')) return;
+                const actorId = State.currentDBItem;
+                const ldb = this._getLayeredDB();
+                if (ldb[actorId]) {
+                    delete ldb[actorId].situations[st.currentSituation];
+                    this._saveLayeredDB(ldb);
+                }
+                st.currentSituation = '';
+                this.renderDBForm();
+            },
+
+            _editLayerSlots() {
+                const actorId = State.currentDBItem;
+                const ldb = this._getLayeredDB();
+                if (!ldb[actorId]) return;
+                const current = ldb[actorId].slots.join(',');
+                const newSlots = prompt('레이어 슬롯 (쉼표 구분, 아래→위):', current);
+                if (!newSlots) return;
+                ldb[actorId].slots = newSlots.split(',').map(s=>s.trim()).filter(Boolean);
+                this._saveLayeredDB(ldb);
+                this.renderDBForm();
+            },
+
+            _uploadLayerFile(slot) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/png';
+                input.onchange = async () => {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const actorId = State.currentDBItem;
+                    const st = this._portraitState || {};
+                    const actorName = (State.database.actors[actorId] || {}).name || 'actor' + actorId;
+                    const autoName = actorName + '_' + slot + '_' + st.currentSituation;
+
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        try {
+                            const resp = await fetch('/api/upload', {
+                                method: 'POST', headers: {'Content-Type':'application/json'},
+                                body: JSON.stringify({ path: 'img/standing', filename: autoName + '.png', data: base64 })
+                            });
+                            if (resp.ok) {
+                                const ldb = this._getLayeredDB();
+                                if (ldb[actorId] && ldb[actorId].situations[st.currentSituation]) {
+                                    ldb[actorId].situations[st.currentSituation].layers[slot] = { file: autoName, offsetX: 0, offsetY: 0 };
+                                    this._saveLayeredDB(ldb);
+                                }
+                                this.renderDBForm();
+                            }
+                        } catch(e) { console.error('upload error', e); }
+                    };
+                    reader.readAsDataURL(file);
+                };
+                input.click();
+            },
+
+            async _selectLayerFile(slot) {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                try {
+                    const resp = await fetch('/api/list?path=img/standing');
+                    const files = await resp.json();
+                    const pngs = (files.files || []).filter(f => f.endsWith('.png')).map(f => f.replace('.png',''));
+                    if (pngs.length === 0) { alert('img/standing에 이미지 파일이 없습니다.'); return; }
+
+                    let html = '<div style="max-height:300px;overflow-y:auto;">';
+                    for (const f of pngs) {
+                        html += '<div class="pickerRow" onclick="UI._pickerState.selected=\'' + f + '\'; UI._pickerState.callback(\'' + f + '\'); UI.closePicker();">' + f + '</div>';
+                    }
+                    html += '</div>';
+
+                    const self = this;
+                    UI._pickerState = { selected: null, callback: function(val) {
+                        const ldb2 = self._getLayeredDB();
+                        if (ldb2[actorId] && ldb2[actorId].situations[st.currentSituation]) {
+                            ldb2[actorId].situations[st.currentSituation].layers[slot] = { file: val, offsetX: 0, offsetY: 0 };
+                            self._saveLayeredDB(ldb2);
+                        }
+                        self.renderDBForm();
+                    }};
+                    UI._openPickerModal('레이어 이미지 선택 (' + slot + ')', html);
+                } catch(e) { console.error(e); }
+            },
+
+            _removeLayerFile(slot) {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                const ldb = this._getLayeredDB();
+                if (ldb[actorId] && ldb[actorId].situations[st.currentSituation]) {
+                    delete ldb[actorId].situations[st.currentSituation].layers[slot];
+                    this._saveLayeredDB(ldb);
+                }
+                this.renderDBForm();
+            },
+
+            _uploadExprFile() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/png';
+                input.onchange = async () => {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const actorId = State.currentDBItem;
+                    const st = this._portraitState || {};
+                    const actorName = (State.database.actors[actorId] || {}).name || 'actor' + actorId;
+                    const autoName = actorName + '_expr_' + st.currentSituation + '_' + st.currentExpr;
+
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        try {
+                            const resp = await fetch('/api/upload', {
+                                method: 'POST', headers: {'Content-Type':'application/json'},
+                                body: JSON.stringify({ path: 'img/standing', filename: autoName + '.png', data: base64 })
+                            });
+                            if (resp.ok) {
+                                const ldb = this._getLayeredDB();
+                                if (ldb[actorId] && ldb[actorId].situations[st.currentSituation]) {
+                                    ldb[actorId].situations[st.currentSituation].expressions[st.currentExpr] = { file: autoName, offsetX: 0, offsetY: 0 };
+                                    this._saveLayeredDB(ldb);
+                                }
+                                this.renderDBForm();
+                            }
+                        } catch(e) { console.error('upload error', e); }
+                    };
+                    reader.readAsDataURL(file);
+                };
+                input.click();
+            },
+
+            async _selectExprFile() {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                try {
+                    const resp = await fetch('/api/list?path=img/standing');
+                    const files = await resp.json();
+                    const pngs = (files.files || []).filter(f => f.endsWith('.png')).map(f => f.replace('.png',''));
+                    if (pngs.length === 0) { alert('img/standing에 이미지 파일이 없습니다.'); return; }
+
+                    let html = '<div style="max-height:300px;overflow-y:auto;">';
+                    for (const f of pngs) {
+                        html += '<div class="pickerRow" onclick="UI._pickerState.selected=\'' + f + '\'; UI._pickerState.callback(\'' + f + '\'); UI.closePicker();">' + f + '</div>';
+                    }
+                    html += '</div>';
+
+                    const self = this;
+                    UI._pickerState = { selected: null, callback: function(val) {
+                        const ldb2 = self._getLayeredDB();
+                        if (ldb2[actorId] && ldb2[actorId].situations[st.currentSituation]) {
+                            ldb2[actorId].situations[st.currentSituation].expressions[st.currentExpr] = { file: val, offsetX: 0, offsetY: 0 };
+                            self._saveLayeredDB(ldb2);
+                        }
+                        self.renderDBForm();
+                    }};
+                    UI._openPickerModal('표정 이미지 선택 (' + st.currentExpr + ')', html);
+                } catch(e) { console.error(e); }
+            },
+
+            _removeExprFile() {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                const ldb = this._getLayeredDB();
+                if (ldb[actorId] && ldb[actorId].situations[st.currentSituation]) {
+                    delete ldb[actorId].situations[st.currentSituation].expressions[st.currentExpr];
+                    this._saveLayeredDB(ldb);
+                }
+                this.renderDBForm();
+            },
+
+            // ═══════════════════════════════════════════
+            //  SHARED: Canvas editor (face/mini rect)
+            // ═══════════════════════════════════════════
+            _getResolutionSpec() {
+                const plugin = this._getStandingPlugin();
+                if (!plugin || !plugin.parameters) return { w: 832, h: 1216 };
+                return {
+                    w: Number(plugin.parameters.standingWidth) || 832,
+                    h: Number(plugin.parameters.standingHeight) || 1216
+                };
+            },
+
+            _initPortraitEditor() {
+                const st = this._portraitState = this._portraitState || {};
+                st.editMode = st.editMode || 'face';
+                st.dragging = false;
+                st.resizing = false;
+
+                const canvas = document.getElementById('portraitCanvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const spec = this._getResolutionSpec();
+
+                const actorId = State.currentDBItem;
+                let faceRect, miniRect, imgSrc;
+
+                if (st.mode === 'layered') {
+                    const ldb = this._getLayeredDB();
+                    const data = ldb[actorId];
+                    if (!data) return;
+                    faceRect = data.faceRect || [216,30,400,400];
+                    miniRect = data.miniRect || [266,80,200,200];
+
+                    // Composite layers for preview
+                    const sit = data.situations[st.currentSituation];
+                    if (sit) {
+                        const layerFiles = [];
+                        for (const slot of data.slots) {
+                            if (slot === 'expression') {
+                                const expr = sit.expressions[st.currentExpr || 'normal'];
+                                if (expr && expr.file) layerFiles.push({ file: expr.file, ox: expr.offsetX, oy: expr.offsetY });
+                            } else {
+                                const l = sit.layers[slot];
+                                if (l && l.file) layerFiles.push({ file: l.file, ox: l.offsetX, oy: l.offsetY });
+                            }
+                        }
+                        if (layerFiles.length > 0) {
+                            st._compositeImages = layerFiles;
+                            this._loadCompositeAndDraw(canvas, layerFiles, faceRect, miniRect);
+                            this._setupCanvasEvents(canvas, faceRect, miniRect);
+                            return;
+                        }
+                    }
+                    // No layers - show empty
+                    ctx.fillStyle = '#0a0a1a';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#555';
+                    ctx.font = '14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('(레이어 이미지 없음)', canvas.width/2, canvas.height/2);
+                    return;
+                }
+
+                // Single mode
+                const db = this._getSingleDB();
+                const actorData = db[actorId] || {};
+                const curTag = st.currentTag || 'normal';
+                const entry = actorData[curTag];
+                if (!entry || !entry.file) {
+                    ctx.fillStyle = '#0a0a1a';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#555';
+                    ctx.font = '14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('(이미지 없음)', canvas.width/2, canvas.height/2);
+                    return;
+                }
+
+                faceRect = entry.face;
+                miniRect = entry.mini;
+                imgSrc = 'Project1/img/standing/' + entry.file + '.png';
+
+                const img = new Image();
+                img.onload = () => {
+                    st._img = img;
+                    // Letterbox: fit entire image within canvas, center with margins
+                    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                    st._scale = scale;
+                    st._ox = (canvas.width - img.width * scale) / 2;
+                    st._oy = (canvas.height - img.height * scale) / 2;
+                    st.faceRect = [...faceRect];
+                    st.miniRect = [...miniRect];
+                    this._drawPortraitCanvas(canvas);
+                };
+                img.src = imgSrc;
+                this._setupCanvasEvents(canvas, faceRect, miniRect);
+            },
+
+            _loadCompositeAndDraw(canvas, layerFiles, faceRect, miniRect) {
+                const st = this._portraitState;
+                const images = [];
+                let loadedCount = 0;
+
+                const onAllLoaded = () => {
+                    // Determine max size
+                    let maxW = 0, maxH = 0;
+                    for (const item of images) {
+                        maxW = Math.max(maxW, item.img.width + item.ox);
+                        maxH = Math.max(maxH, item.img.height + item.oy);
+                    }
+                    if (maxW === 0 || maxH === 0) return;
+
+                    // Create offscreen composite
+                    const offscreen = document.createElement('canvas');
+                    offscreen.width = maxW;
+                    offscreen.height = maxH;
+                    const octx = offscreen.getContext('2d');
+                    for (const item of images) {
+                        octx.drawImage(item.img, item.ox, item.oy);
+                    }
+
+                    // Treat composite as single image
+                    const compositeImg = new Image();
+                    compositeImg.onload = () => {
+                        st._img = compositeImg;
+                        // Letterbox: fit entire composite within canvas
+                        const scale = Math.min(canvas.width / compositeImg.width, canvas.height / compositeImg.height);
+                        st._scale = scale;
+                        st._ox = (canvas.width - compositeImg.width * scale) / 2;
+                        st._oy = (canvas.height - compositeImg.height * scale) / 2;
+                        st.faceRect = [...faceRect];
+                        st.miniRect = [...miniRect];
+                        this._drawPortraitCanvas(canvas);
+                    };
+                    compositeImg.src = offscreen.toDataURL();
+                };
+
+                for (const lf of layerFiles) {
+                    const img = new Image();
+                    const entry = { img, ox: lf.ox || 0, oy: lf.oy || 0 };
+                    images.push(entry);
+                    img.onload = () => {
+                        loadedCount++;
+                        if (loadedCount === layerFiles.length) onAllLoaded();
+                    };
+                    img.onerror = () => {
+                        loadedCount++;
+                        if (loadedCount === layerFiles.length) onAllLoaded();
+                    };
+                    img.src = 'Project1/img/standing/' + lf.file + '.png';
+                }
+            },
+
+            _setupCanvasEvents(canvas, faceRect, miniRect) {
+                const st = this._portraitState;
+                st.faceRect = st.faceRect || [...faceRect];
+                st.miniRect = st.miniRect || [...miniRect];
+
+                canvas.onmousedown = (e) => this._portraitMouseDown(e);
+                canvas.onmousemove = (e) => this._portraitMouseMove(e);
+                canvas.onmouseup = () => this._portraitMouseUp();
+                canvas.onmouseleave = () => this._portraitMouseUp();
+            },
+
+            _drawPortraitCanvas(canvas) {
+                const st = this._portraitState;
+                if (!st || !st._img) return;
+                const ctx = canvas.getContext('2d');
+                const { _img: img, _scale: scale, _ox: ox, _oy: oy, editMode } = st;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Letterbox background
+                ctx.fillStyle = '#050510';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // Image area background (slightly lighter)
+                ctx.fillStyle = '#0a0a1a';
+                ctx.fillRect(ox, oy, img.width * scale, img.height * scale);
+                ctx.drawImage(img, ox, oy, img.width * scale, img.height * scale);
+                // Resolution info overlay
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(Math.round(img.width) + 'x' + Math.round(img.height), 4, canvas.height - 4);
+
+                const drawRect = (rect, color, label) => {
+                    const [rx, ry, rw, rh] = rect;
+                    const sx = ox + rx * scale, sy = oy + ry * scale;
+                    const sw = rw * scale, sh = rh * scale;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 3]);
+                    ctx.strokeRect(sx, sy, sw, sh);
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.08;
+                    ctx.fillRect(sx, sy, sw, sh);
+                    ctx.globalAlpha = 1.0;
+                    ctx.font = '11px sans-serif';
+                    ctx.fillStyle = color;
+                    ctx.fillText(label, sx + 4, sy - 4);
+
+                    // Resize handle
+                    ctx.fillStyle = color;
+                    ctx.fillRect(sx + sw - 6, sy + sh - 6, 6, 6);
+                };
+
+                drawRect(st.faceRect, '#e94560', 'Face');
+                drawRect(st.miniRect, '#4a9eff', 'Mini');
+
+                // Active indicator
+                const activeRect = editMode === 'mini' ? st.miniRect : st.faceRect;
+                const activeColor = editMode === 'mini' ? '#4a9eff' : '#e94560';
+                const [arx, ary, arw, arh] = activeRect;
+                ctx.strokeStyle = activeColor;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(ox + arx * scale, oy + ary * scale, arw * scale, arh * scale);
+
+                // Preview update
+                this._updatePreviews(img);
+            },
+
+            _updatePreviews(img) {
+                const st = this._portraitState;
+                if (!st || !img) return;
+                const drawPreview = (canvasId, rect) => {
+                    const c = document.getElementById(canvasId);
+                    if (!c) return;
+                    const pctx = c.getContext('2d');
+                    pctx.clearRect(0, 0, c.width, c.height);
+                    pctx.fillStyle = '#0a0a1a';
+                    pctx.fillRect(0, 0, c.width, c.height);
+                    const [rx, ry, rw, rh] = rect;
+                    if (rw > 0 && rh > 0) {
+                        pctx.drawImage(img, rx, ry, rw, rh, 0, 0, c.width, c.height);
+                    }
+                };
+                drawPreview('facePreview', st.faceRect);
+                drawPreview('miniPreview', st.miniRect);
+            },
+
+            _switchPortraitEditMode(mode) {
+                const st = this._portraitState;
+                if (!st) return;
+                st.editMode = mode;
+                document.getElementById('btnEditFace').className = mode === 'face' ? 'btnPrimary' : '';
+                document.getElementById('btnEditMini').className = mode === 'mini' ? 'btnPrimary' : '';
+                const canvas = document.getElementById('portraitCanvas');
+                if (canvas) this._drawPortraitCanvas(canvas);
+            },
+
+            _portraitMouseDown(e) {
+                const st = this._portraitState;
+                if (!st || !st._img) return;
+                const canvas = e.target;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                const { _scale: scale, _ox: ox, _oy: oy, editMode } = st;
+                const curRect = editMode === 'mini' ? st.miniRect : st.faceRect;
+                const [rx, ry, rw, rh] = curRect;
+                const sx = ox + rx * scale, sy = oy + ry * scale;
+                const sw = rw * scale, sh = rh * scale;
+
+                // Check resize handle (bottom-right corner)
+                if (Math.abs(mx - (sx+sw)) < 10 && Math.abs(my - (sy+sh)) < 10) {
+                    st.resizing = true;
+                    st.dragStart = { mx, my, rect: [...curRect] };
+                    return;
+                }
+                // Check drag (inside rect)
+                if (mx >= sx && mx <= sx+sw && my >= sy && my <= sy+sh) {
+                    st.dragging = true;
+                    st.dragStart = { mx, my, rect: [...curRect] };
+                }
+            },
+
+            _portraitMouseMove(e) {
+                const st = this._portraitState;
+                if (!st || (!st.dragging && !st.resizing)) return;
+                const canvas = e.target;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                const { _scale: scale, _ox: ox, _oy: oy, editMode, dragStart } = st;
+                const curRect = editMode === 'mini' ? st.miniRect : st.faceRect;
+
+                if (st.dragging) {
+                    const dx = (mx - dragStart.mx) / scale;
+                    const dy = (my - dragStart.my) / scale;
+                    curRect[0] = Math.round(dragStart.rect[0] + dx);
+                    curRect[1] = Math.round(dragStart.rect[1] + dy);
+                } else if (st.resizing) {
+                    const nw = Math.max(20, Math.round((mx - ox) / scale - dragStart.rect[0]));
+                    const nh = Math.max(20, Math.round((my - oy) / scale - dragStart.rect[1]));
+                    const size = Math.max(nw, nh); // Square constraint
+                    curRect[2] = size;
+                    curRect[3] = size;
+                }
+
+                this._drawPortraitCanvas(canvas);
+            },
+
+            _portraitMouseUp() {
+                const st = this._portraitState;
+                if (!st) return;
+                if (st.dragging || st.resizing) {
+                    st.dragging = false;
+                    st.resizing = false;
+                    this._savePortraitRect();
+                }
+            },
+
+            _savePortraitRect() {
+                const st = this._portraitState;
+                if (!st) return;
+                const actorId = State.currentDBItem;
+
+                if (st.mode === 'layered') {
+                    const ldb = this._getLayeredDB();
+                    if (ldb[actorId]) {
+                        ldb[actorId].faceRect = [...st.faceRect];
+                        ldb[actorId].miniRect = [...st.miniRect];
+                        this._saveLayeredDB(ldb);
+                    }
+                } else {
+                    const db = this._getSingleDB();
+                    const curTag = st.currentTag || 'normal';
+                    if (db[actorId] && db[actorId][curTag]) {
+                        db[actorId][curTag].face = [...st.faceRect];
+                        db[actorId][curTag].mini = [...st.miniRect];
+                        this._saveSingleDB(db);
+                    }
+                }
+            },
+
+            // ── Single mode file operations ──
+            _uploadSingleForTag() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/png';
+                input.onchange = async () => {
+                    const file = input.files[0];
+                    if (!file) return;
+                    const actorId = State.currentDBItem;
+                    const st = this._portraitState || {};
+                    const tag = st.currentTag || document.getElementById('portraitTagSelect')?.value || 'normal';
+                    const actorName = (State.database.actors[actorId] || {}).name || 'actor' + actorId;
+                    const autoName = actorName + '_' + tag;
+
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        try {
+                            const resp = await fetch('/api/upload', {
+                                method: 'POST', headers: {'Content-Type':'application/json'},
+                                body: JSON.stringify({ path: 'img/standing', filename: autoName + '.png', data: base64 })
+                            });
+                            if (resp.ok) {
+                                this._setSingleImage(autoName, tag);
+                            }
+                        } catch(e) { console.error('upload error', e); }
+                    };
+                    reader.readAsDataURL(file);
+                };
+                input.click();
+            },
+
+            async _selectSingleFile() {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                const tag = st.currentTag || 'normal';
+                try {
+                    const resp = await fetch('/api/list?path=img/standing');
+                    const files = await resp.json();
+                    const pngs = (files.files || []).filter(f => f.endsWith('.png')).map(f => f.replace('.png',''));
+                    if (pngs.length === 0) { alert('img/standing에 이미지 파일이 없습니다.'); return; }
+
+                    let html = '<div style="max-height:300px;overflow-y:auto;">';
+                    for (const f of pngs) {
+                        html += '<div class="pickerRow" onclick="UI._pickerState.selected=\'' + f + '\'; UI._pickerState.callback(\'' + f + '\'); UI.closePicker();">' + f + '</div>';
+                    }
+                    html += '</div>';
+
+                    const self = this;
+                    UI._pickerState = { selected: null, callback: function(val) { self._setSingleImage(val, tag); } };
+                    UI._openPickerModal('이미지 선택', html);
+                } catch(e) { console.error(e); }
+            },
+
+            _setSingleImage(fileName, tag) {
+                const actorId = State.currentDBItem;
+                const st = this._portraitState || {};
+                st.currentTag = tag;
+                const db = this._getSingleDB();
+                if (!db[actorId]) db[actorId] = {};
+                if (!db[actorId][tag]) {
+                    db[actorId][tag] = { file: fileName, face: [216,30,400,400], mini: [266,80,200,200] };
+                } else {
+                    db[actorId][tag].file = fileName;
+                }
+                this._saveSingleDB(db);
+                this.renderDBForm();
+            },
+
+            _removeSingleTag() {
+                const st = this._portraitState || {};
+                const tag = st.currentTag;
+                if (!tag) return;
+                if (!confirm(tag + ' 태그의 이미지를 삭제합니까?')) return;
+                const actorId = State.currentDBItem;
+                const db = this._getSingleDB();
+                if (db[actorId]) {
+                    delete db[actorId][tag];
+                    this._saveSingleDB(db);
+                }
+                const remaining = Object.keys(db[actorId] || {});
+                st.currentTag = remaining[0] || 'normal';
+                this.renderDBForm();
+            },
+
+
+            renderArraySection(fieldName, label, items, renderItem) {
+                return `<div class="formSection">
+                    <div class="formSectionHeader" onclick="this.parentElement.querySelector('.formSectionContent').classList.toggle('collapsed'); this.classList.toggle('collapsed');">${label}</div>
+                    <div class="formSectionContent">
+                        <button class="addArrayItemBtn" onclick="UI.addArrayItem('${fieldName}', {})">항목 추가</button>
+                        <div id="${fieldName}Container">
+                            ${items.map((item, idx) => `
+                                <div class="arrayItemBox">
+                                    <div class="arrayItemHeader">
+                                        <span>${renderItem(item)}</span>
+                                        <button onclick="UI.removeArrayItem('${fieldName}', ${idx})">제거</button>
+                                    </div>
+                                    ${createField(`${fieldName}_${idx}`, 'JSON', 'textarea', JSON.stringify(item))}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>`;
+            },
+
+            // ─── 적 행동 패턴 전용 에디터 ───
+            renderActionsSection(actions) {
+                const COND_TYPES = [
+                    {v:0, l:'항상'},
+                    {v:1, l:'턴 (X + Y*n)'},
+                    {v:2, l:'HP (%)'},
+                    {v:3, l:'MP (%)'},
+                    {v:4, l:'상태'},
+                    {v:5, l:'파티 레벨'},
+                    {v:6, l:'스위치'},
+                ];
+
+                // 스킬 이름 목록
+                const skills = State.database.skills || [];
+
+                let html = '<div class="formSection">';
+                html += '<div class="formSectionHeader" onclick="this.parentElement.querySelector(\'.formSectionContent\').classList.toggle(\'collapsed\'); this.classList.toggle(\'collapsed\');">행동 패턴</div>';
+                html += '<div class="formSectionContent">';
+                html += '<button class="addArrayItemBtn" onclick="UI.addArrayItem(\'actions\', {skillId:1,conditionType:0,conditionParam1:0,conditionParam2:0,rating:5})">패턴 추가</button>';
+                html += '<div id="actionsContainer">';
+
+                actions.forEach((act, idx) => {
+                    const skillName = (skills[act.skillId] && skills[act.skillId].name) || ('스킬 #' + act.skillId);
+
+                    html += '<div class="arrayItemBox">';
+                    html += '<div class="arrayItemHeader"><span>' + skillName + ' (R:' + (act.rating||5) + ')</span>';
+                    html += '<button onclick="UI.removeArrayItem(\'actions\', ' + idx + ')">제거</button></div>';
+
+                    html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+
+                    // 스킬 선택
+                    html += '<label style="color:#aaa;font-size:0.78em;">스킬</label>';
+                    html += '<select data-field="actions_' + idx + '_skillId" style="min-width:140px;">';
+                    for (let i = 1; i < skills.length; i++) {
+                        if (!skills[i]) continue;
+                        html += '<option value="' + i + '"' + (i === act.skillId ? ' selected' : '') + '>' + i + ': ' + skills[i].name + '</option>';
+                    }
+                    html += '</select>';
+
+                    // Rating
+                    html += '<label style="color:#aaa;font-size:0.78em;margin-left:4px;">우선도</label>';
+                    html += '<input type="number" data-field="actions_' + idx + '_rating" value="' + (act.rating || 5) + '" style="width:45px;" min="1" max="10">';
+
+                    html += '</div>';
+
+                    // 조건 행
+                    html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px;">';
+                    html += '<label style="color:#aaa;font-size:0.78em;">조건</label>';
+                    html += '<select data-field="actions_' + idx + '_conditionType" style="min-width:100px;">';
+                    COND_TYPES.forEach(ct => {
+                        html += '<option value="' + ct.v + '"' + (ct.v === act.conditionType ? ' selected' : '') + '>' + ct.l + '</option>';
+                    });
+                    html += '</select>';
+
+                    // 조건 파라미터
+                    if (act.conditionType === 1) {
+                        html += '<label style="color:#aaa;font-size:0.78em;">시작턴</label><input type="number" data-field="actions_' + idx + '_conditionParam1" value="' + (act.conditionParam1||0) + '" style="width:40px;">';
+                        html += '<label style="color:#aaa;font-size:0.78em;">간격</label><input type="number" data-field="actions_' + idx + '_conditionParam2" value="' + (act.conditionParam2||0) + '" style="width:40px;">';
+                    } else if (act.conditionType === 2 || act.conditionType === 3) {
+                        html += '<label style="color:#aaa;font-size:0.78em;">최소%</label><input type="number" data-field="actions_' + idx + '_conditionParam1" value="' + (act.conditionParam1||0) + '" style="width:45px;">';
+                        html += '<label style="color:#aaa;font-size:0.78em;">최대%</label><input type="number" data-field="actions_' + idx + '_conditionParam2" value="' + (act.conditionParam2||100) + '" style="width:45px;">';
+                    } else if (act.conditionType === 4) {
+                        html += '<label style="color:#aaa;font-size:0.78em;">상태 ID</label><input type="number" data-field="actions_' + idx + '_conditionParam1" value="' + (act.conditionParam1||0) + '" style="width:45px;">';
+                    } else if (act.conditionType === 5) {
+                        html += '<label style="color:#aaa;font-size:0.78em;">레벨</label><input type="number" data-field="actions_' + idx + '_conditionParam1" value="' + (act.conditionParam1||0) + '" style="width:45px;">';
+                    } else if (act.conditionType === 6) {
+                        html += '<label style="color:#aaa;font-size:0.78em;">스위치 ID</label><input type="number" data-field="actions_' + idx + '_conditionParam1" value="' + (act.conditionParam1||0) + '" style="width:45px;">';
+                    }
+
+                    html += '</div></div>';
+                });
+
+                html += '</div></div></div>';
+                return html;
+            },
+
+                        // ─── 효과(Effects) 전용 에디터 ───
+            renderEffectsSection(effects) {
+                const EFF = [
+                    {c:11,l:'HP 회복',d:false,v1:'비율',v2:'고정값',p1:true},
+                    {c:12,l:'MP 회복',d:false,v1:'비율',v2:'고정값',p1:true},
+                    {c:13,l:'TP 획득',d:false,v1:'값'},
+                    {c:21,l:'상태 부여',d:'states',v1:'확률',p1:true},
+                    {c:22,l:'상태 해제',d:'states',v1:'확률',p1:true},
+                    {c:31,l:'버프 부여',d:'params',v1:'턴'},
+                    {c:32,l:'디버프 부여',d:'params',v1:'턴'},
+                    {c:33,l:'버프 해제',d:'params'},
+                    {c:34,l:'디버프 해제',d:'params'},
+                    {c:41,l:'특수 효과',d:'special'},
+                    {c:42,l:'성장',d:'params',v1:'값'},
+                    {c:43,l:'스킬 습득',d:'skillId'},
+                    {c:44,l:'공통 이벤트',d:'ceId'},
+                ];
+                const EM = {}; EFF.forEach(e => EM[e.c] = e);
+                const PN = ['최대HP','최대MP','공격력','방어력','마법공격','마법방어','민첩성','운'];
+                const sys = (State.database && State.database.system) || {};
+                const stNames = (sys.states || (State.database.states || [])).map ? (State.database.states || []).map((s,i) => s ? s.name : ('상태'+i)) : [];
+
+                let html = '<div class="formSection">';
+                html += '<div class="formSectionHeader" onclick="this.parentElement.querySelector(\'.formSectionContent\').classList.toggle(\'collapsed\'); this.classList.toggle(\'collapsed\');">사용 효과</div>';
+                html += '<div class="formSectionContent">';
+                html += '<button class="addArrayItemBtn" onclick="UI.addArrayItem(\'effects\', {code:11,dataId:0,value1:0,value2:0})">효과 추가</button>';
+                html += '<div id="effectsContainer">';
+
+                effects.forEach((eff, idx) => {
+                    const def = EM[eff.code];
+                    const label = def ? def.l : ('코드 ' + eff.code);
+
+                    html += '<div class="arrayItemBox">';
+                    html += '<div class="arrayItemHeader"><span>' + label + '</span>';
+                    html += '<button onclick="UI.removeArrayItem(\'effects\', ' + idx + ')">제거</button></div>';
+                    html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+
+                    // Code select
+                    html += '<select data-field="effects_' + idx + '_code" onchange="UI.onEffectCodeChange(' + idx + ',this.value)" style="min-width:120px;">';
+                    EFF.forEach(e => { html += '<option value="' + e.c + '"' + (e.c === eff.code ? ' selected' : '') + '>' + e.l + '</option>'; });
+                    html += '</select>';
+
+                    // DataId
+                    if (def) {
+                        if (def.d === 'params') {
+                            html += '<select data-field="effects_' + idx + '_dataId" style="min-width:90px;">';
+                            PN.forEach((n,i) => { html += '<option value="' + i + '"' + (i===eff.dataId?' selected':'') + '>' + n + '</option>'; });
+                            html += '</select>';
+                        } else if (def.d === 'states') {
+                            html += '<select data-field="effects_' + idx + '_dataId" style="min-width:90px;">';
+                            stNames.forEach((n,i) => { if(i>0) html += '<option value="' + i + '"' + (i===eff.dataId?' selected':'') + '>' + i + ':' + n + '</option>'; });
+                            html += '</select>';
+                        } else if (def.d === 'special') {
+                            html += '<select data-field="effects_' + idx + '_dataId" style="min-width:90px;"><option value="0"' + (eff.dataId===0?' selected':'') + '>도주</option></select>';
+                        } else if (def.d === 'skillId' || def.d === 'ceId') {
+                            html += '<input type="number" data-field="effects_' + idx + '_dataId" value="' + (eff.dataId||0) + '" style="width:60px;" placeholder="ID">';
+                        }
+                    }
+
+                    // Value1
+                    if (def && def.v1) {
+                        const v1 = def.p1 ? Math.round((eff.value1||0)*100) : (eff.value1||0);
+                        html += '<label style="color:#aaa;font-size:0.78em;margin-left:4px;">' + def.v1 + (def.p1?'%':'') + '</label>';
+                        html += '<input type="number" data-field="effects_' + idx + '_value1" data-eff-percent="' + (def.p1?'true':'false') + '" value="' + v1 + '" style="width:55px;">';
+                    }
+                    // Value2
+                    if (def && def.v2) {
+                        html += '<label style="color:#aaa;font-size:0.78em;margin-left:4px;">' + def.v2 + '</label>';
+                        html += '<input type="number" data-field="effects_' + idx + '_value2" value="' + (eff.value2||0) + '" style="width:55px;">';
+                    }
+
+                    html += '</div></div>';
+                });
+
+                html += '</div></div></div>';
+                return html;
+            },
+
+            onEffectCodeChange(idx, newCode) {
+                const type = State.currentDBTab;
+                const list = State.database[type];
+                if (!list) return;
+                const item = list[State.currentDBItem];
+                if (!item || !item.effects || !item.effects[idx]) return;
+                item.effects[idx] = {code: parseInt(newCode), dataId: 0, value1: 0, value2: 0};
+                this.renderDBForm();
+            },
+
+            // SRPG 거리/범위 보정 → 노트태그 적용
+            applySrpgDistMod() {
+                const type = State.currentDBTab;
+                const list = State.database[type];
+                if (!list) return;
+                const item = list[State.currentDBItem];
+                if (!item) return;
+
+                let note = item.note || '';
+                // 기존 태그 제거
+                note = note.replace(/<srpgDistMod:[^>]+>/gi, '').replace(/<srpgAreaFalloff:[^>]+>/gi, '');
+
+                const factor = document.getElementById('srpgDistFactor')?.value;
+                const base = document.getElementById('srpgDistBase')?.value;
+                const falloff = document.getElementById('srpgAreaFalloff')?.value;
+
+                if (factor && base) {
+                    note = note.trim() + '\n<srpgDistMod:' + factor + ',' + base + '>';
+                }
+                if (falloff) {
+                    note = note.trim() + '\n<srpgAreaFalloff:' + falloff + '>';
+                }
+
+                item.note = note.trim();
+                // 노트 textarea 갱신
+                const ta = document.querySelector('[data-field="note"]');
+                if (ta) ta.value = item.note;
+            },
+
+                        addTypeEntry(key) {
+                const item = State.database.system;
+                if (!item) return;
+                if (!item[key]) item[key] = [];
+                item[key].push('');
+                this.renderDBForm();
+            },
+
+            removeTypeEntry(key, idx) {
+                const item = State.database.system;
+                if (!item || !item[key]) return;
+                item[key].splice(idx, 1);
+                this.renderDBForm();
+            },
+
+                        renderGenericForm(item) {
+                let html = `<div class="formSection">
+                    <div class="formSectionHeader">정보</div>
+                    <div class="formSectionContent">`;
+
+                for (const [key, value] of Object.entries(item)) {
+                    if (typeof value === 'object') {
+                        html += createField(key, key, 'textarea', JSON.stringify(value));
+                    } else if (typeof value === 'boolean') {
+                        html += createField(key, key, 'checkbox', value);
+                    } else if (typeof value === 'number') {
+                        html += createField(key, key, 'number', value);
+                    } else {
+                        html += createField(key, key, 'text', value);
+                    }
+                }
+                html += `</div></div>`;
+                return html;
+            },
+
+            attachFormHandlers(item) {
+                const container = document.getElementById('dbFormContainer');
+                const type = State.currentDBTab;
+
+                // SRPG 초기화
+                if (type === 'actors') setTimeout(() => this.drawSrpgGridPreview(), 50);
+                // 가호 섹션은 inline onchange로 처리됨 (추가 초기화 불필요)
+                if (type === 'skills') setTimeout(() => { if(this.syncSummonNote) this.syncSummonNote(); }, 50);
+
+                // Attach change handlers
+                container.querySelectorAll('[data-field]').forEach(el => {
+                    el.addEventListener('change', (e) => {
+                        const field = e.target.dataset.field;
+                        const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+
+                        // System tab: handle nested object fields
+                        if (type === 'system' && field.includes('_')) {
+                            const parts = field.split('_');
+                            // sounds_N_prop (3 parts)
+                            if (parts[0] === 'sounds' && parts.length === 3) {
+                                if (!item.sounds) item.sounds = [];
+                                const idx = parseInt(parts[1]);
+                                if (!item.sounds[idx]) item.sounds[idx] = {name:'',pan:0,pitch:100,volume:90};
+                                const prop = parts[2];
+                                item.sounds[idx][prop] = (prop === 'name') ? value : (parseInt(value) || 0);
+                            }
+                            // advanced_prop
+                            else if (parts[0] === 'advanced') {
+                                if (!item.advanced) item.advanced = {};
+                                const prop = parts.slice(1).join('_');
+                                const numFields = ['gameId','screenWidth','screenHeight','uiAreaWidth','uiAreaHeight','fontSize','screenScale','windowOpacity','picturesUpperLimit'];
+                                item.advanced[prop] = numFields.includes(prop) ? (parseFloat(value) || 0) : value;
+                            }
+                            // audioJson fields: battleBgm_audioName, titleBgm_vol, etc.
+                            else if (/^(battleBgm|titleBgm|victoryMe|defeatMe|gameoverMe)_(audioName|vol|pitch|pan)$/.test(field)) {
+                                const audioKey = parts[0];
+                                const subProp = parts[1];
+                                if (!item[audioKey]) item[audioKey] = {name:'',volume:90,pitch:100,pan:0};
+                                if (subProp === 'audioName') item[audioKey].name = value;
+                                else if (subProp === 'vol') item[audioKey].volume = parseInt(value) || 0;
+                                else if (subProp === 'pitch') item[audioKey].pitch = parseInt(value) || 0;
+                                else if (subProp === 'pan') item[audioKey].pan = parseInt(value) || 0;
+                            }
+                            // vehicle: boat_prop, ship_prop, airship_prop
+                            else if (['boat','ship','airship'].includes(parts[0])) {
+                                const vKey = parts[0];
+                                if (!item[vKey]) item[vKey] = {};
+                                const prop = parts.slice(1).join('_');
+                                // Vehicle audioJson: boat_bgm_audioName, boat_bgm_vol, etc.
+                                if (prop.startsWith('bgm_')) {
+                                    if (!item[vKey].bgm) item[vKey].bgm = {name:'',volume:90,pitch:100,pan:0};
+                                    const sub = prop.replace('bgm_', '');
+                                    if (sub === 'audioName') item[vKey].bgm.name = value;
+                                    else if (sub === 'vol') item[vKey].bgm.volume = parseInt(value) || 0;
+                                    else if (sub === 'pitch') item[vKey].bgm.pitch = parseInt(value) || 0;
+                                    else if (sub === 'pan') item[vKey].bgm.pan = parseInt(value) || 0;
+                                } else if (prop === 'bgm' && e.target.type === 'textarea') {
+                                    try { item[vKey].bgm = JSON.parse(value); } catch(x) {}
+                                } else {
+                                    const numProps = ['characterIndex','startMapId','startX','startY'];
+                                    if (numProps.includes(prop)) item[vKey][prop] = parseInt(value) || 0;
+                                    else item[vKey][prop] = value;
+                                }
+                            }
+                            // menuCommands_N, itemCategories_N
+                            else if (parts[0] === 'menuCommands' || parts[0] === 'itemCategories') {
+                                if (!item[parts[0]]) item[parts[0]] = [];
+                                item[parts[0]][parseInt(parts[1])] = e.target.type === 'checkbox' ? e.target.checked : value;
+                            }
+                            // titleCommandWindow_prop
+                            else if (parts[0] === 'titleCommandWindow') {
+                                if (!item.titleCommandWindow) item.titleCommandWindow = {};
+                                item.titleCommandWindow[parts[1]] = parseInt(value) || 0;
+                            }
+                            // typeEntry_key_idx (타입 목록 개별 입력)
+                            else if (parts[0] === 'typeEntry' && parts.length === 3) {
+                                const arrKey = parts[1];
+                                const arrIdx = parseInt(parts[2]);
+                                if (!item[arrKey]) item[arrKey] = [];
+                                item[arrKey][arrIdx] = value;
+                            }
+                            // terms_category_idx (용어 개별 입력)
+                            else if (parts[0] === 'terms' && parts.length === 3) {
+                                if (!item.terms) item.terms = {};
+                                const cat = parts[1]; // basic, params, commands
+                                const tIdx = parseInt(parts[2]);
+                                if (!item.terms[cat]) item.terms[cat] = [];
+                                item.terms[cat][tIdx] = value;
+                            }
+                            // terms_prop (JSON textarea — messages 등)
+                            else if (parts[0] === 'terms') {
+                                if (!item.terms) item.terms = {};
+                                const prop = parts.slice(1).join('_');
+                                if (e.target.type === 'textarea') {
+                                    try { item.terms[prop] = JSON.parse(value); } catch(x) {}
+                                } else {
+                                    item.terms[prop] = value;
+                                }
+                            }
+                            else {
+                                // fallback for other system underscore fields
+                                item[field] = isNaN(value) ? value : parseInt(value);
+                            }
+                        }
+                        // Handle nested fields like params_0, params_1, etc.
+                        else if (field.includes('_') && type !== 'system') {
+                            const parts = field.split('_');
+                            const baseField = parts[0];
+                            const index = parts[1];
+
+                            if (!item[baseField]) item[baseField] = [];
+                            try {
+                                item[baseField][index] = isNaN(value) ? value : (field.includes('params') ? parseInt(value) : value);
+                            } catch(e) {
+                                item[baseField][index] = value;
+                            }
+                        } else if (field === 'equips_weapon' || field === 'equips_shield' || field === 'equips_head' || field === 'equips_body' || field === 'equips_accessory') {
+                            if (!item.equips) item.equips = [0, 0, 0, 0, 0];
+                            const idx = {equips_weapon: 0, equips_shield: 1, equips_head: 2, equips_body: 3, equips_accessory: 4}[field];
+                            item.equips[idx] = parseInt(value) || 0;
+                        } else if (field.match(/^actions_\d+_(skillId|conditionType|conditionParam1|conditionParam2|rating)$/)) {
+                            const m3 = field.match(/^actions_(\d+)_(\w+)$/);
+                            if (m3 && item.actions) {
+                                const aIdx = parseInt(m3[1]);
+                                if (!item.actions[aIdx]) item.actions[aIdx] = {};
+                                item.actions[aIdx][m3[2]] = parseInt(value) || 0;
+                            }
+                        } else if (field.match(/^effects_\d+_value1$/) && e.target.dataset.effPercent === 'true') {
+                            const m2 = field.match(/^effects_(\d+)_value1$/);
+                            if (m2 && item.effects) {
+                                const eIdx = parseInt(m2[1]);
+                                if (item.effects[eIdx]) item.effects[eIdx].value1 = parseFloat(value) / 100;
+                            }
+                        } else if (field.match(/^effects_\d+_(code|dataId|value1|value2)$/)) {
+                            const m2 = field.match(/^effects_(\d+)_(\w+)$/);
+                            if (m2 && item.effects) {
+                                const eIdx = parseInt(m2[1]);
+                                if (!item.effects[eIdx]) item.effects[eIdx] = {};
+                                item.effects[eIdx][m2[2]] = parseFloat(value) || 0;
+                            }
+                        } else if (field.startsWith('trait_') && field.endsWith('_value') && e.target.dataset.traitPercent === 'true') {
+                            // 퍼센트 → 배율 변환 (100% → 1.0)
+                            const match = field.match(/^trait_(\d+)_value$/);
+                            if (match && item.traits) {
+                                const tIdx = parseInt(match[1]);
+                                if (item.traits[tIdx]) {
+                                    item.traits[tIdx].value = parseFloat(value) / 100;
+                                }
+                            }
+                        } else if (field.startsWith('trait_') || field.startsWith('learnings_') || field.startsWith('effects_') || field.startsWith('actions_') || field.startsWith('dropItems_')) {
+                            // Handle complex array fields - parse as JSON if textarea
+                            const match = field.match(/^(\w+)_(\d+)(?:_(\w+))?$/);
+                            if (match) {
+                                const arrayName = match[1];
+                                const itemIdx = parseInt(match[2]);
+                                const subField = match[3];
+
+                                if (!item[arrayName]) item[arrayName] = [];
+                                if (!item[arrayName][itemIdx]) item[arrayName][itemIdx] = {};
+
+                                if (e.target.type === 'textarea') {
+                                    try {
+                                        item[arrayName][itemIdx] = JSON.parse(value);
+                                    } catch(e) {
+                                        item[arrayName][itemIdx] = value;
+                                    }
+                                } else if (subField) {
+                                    item[arrayName][itemIdx][subField] = isNaN(value) ? value : parseInt(value);
+                                }
+                            }
+                        } else if (field.startsWith('tilesetNames_')) {
+                            const idx = parseInt(field.split('_')[1]);
+                            if (!item.tilesetNames) item.tilesetNames = [];
+                            item.tilesetNames[idx] = value;
+                        } else {
+                            // Try parsing JSON for known JSON fields
+                            if ((field === 'expParams' || field === 'params' || field === 'list' ||
+                                 field === 'partyMembers' || field === 'elements' || field === 'skillTypes' ||
+                                 field === 'weaponTypes' || field === 'armorTypes' || field === 'equipTypes' ||
+                                 field === 'switches' || field === 'variables' || field === 'battleBgm' ||
+                                 field === 'titleBgm' || field === 'victoryMe' || field === 'defeatMe' ||
+                                 field === 'gameoverMe' || field === 'windowTone' || field === 'flags' ||
+                                 field === 'effects' || field === 'damage_formula' || field === 'traits' ||
+                                 field === 'magicSkills' || field === 'testBattlers' || field === 'attackMotions') &&
+                                e.target.type === 'textarea') {
+                                try {
+                                    item[field] = JSON.parse(value);
+                                } catch(e) {
+                                    item[field] = value;
+                                }
+                            } else {
+                                item[field] = isNaN(value) && e.target.type !== 'number' ? value : (e.target.type === 'number' ? parseInt(value) : value);
+                            }
+                        }
+                    });
+                });
+
+                // Attach collapsible handlers
+                container.querySelectorAll('.formSectionHeader').forEach(header => {
+                    header.addEventListener('click', (e) => {
+                        if (e.target === header) {
+                            const content = header.nextElementSibling;
+                            if (content && content.classList.contains('formSectionContent')) {
+                                content.classList.toggle('collapsed');
+                                header.classList.toggle('collapsed');
+                            }
+                        }
+                    });
+                });
+            },
+
+            addArrayItem(fieldName, defaultItem) {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item || !item[fieldName]) return;
+                item[fieldName].push(defaultItem);
+                UI.renderDBForm();
+            },
+
+            removeArrayItem(fieldName, index) {
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (!item || !item[fieldName]) return;
+                item[fieldName].splice(index, 1);
+                UI.renderDBForm();
+            },
+
+            // ===================== MAP METHODS =====================
+            refreshMapList() {
+                const list = document.getElementById('mapList');
+                list.innerHTML = '';
+                // 트리 구조: parentId 기반 계층 구성
+                const infos = State.mapInfos || {};
+                const children = {}; // parentId -> [mapId, ...]
+                for (const [k, v] of Object.entries(infos)) {
+                    if (!v || k === 'null') continue;
+                    const pid = v.parentId || 0;
+                    if (!children[pid]) children[pid] = [];
+                    children[pid].push(parseInt(k));
+                }
+                // order 기준 정렬
+                for (const pid in children) {
+                    children[pid].sort((a, b) => ((infos[a]||{}).order||0) - ((infos[b]||{}).order||0));
+                }
+                // 재귀 렌더
+                const renderNode = (mapId, depth) => {
+                    const info = infos[mapId];
+                    if (!info) return;
+                    const hasChildren = children[mapId] && children[mapId].length > 0;
+                    const isExpanded = info.expanded !== false; // 기본 펼침
+                    const node = document.createElement('div');
+                    node.className = 'treeNode';
+                    node.style.paddingLeft = (8 + depth * 16) + 'px';
+                    // 토글 아이콘
+                    let toggleHtml = '';
+                    if (hasChildren) {
+                        toggleHtml = `<span class="mapTreeToggle" data-map="${mapId}" style="cursor:pointer;margin-right:4px;font-size:0.7em;display:inline-block;width:12px;user-select:none;">${isExpanded ? '▼' : '▶'}</span>`;
+                    } else {
+                        toggleHtml = '<span style="display:inline-block;width:16px;"></span>';
+                    }
+                    node.innerHTML = `${toggleHtml}<span class="mapNodeLabel">ID${mapId}: ${info.name || ''}</span>`;
+                    node.querySelector('.mapNodeLabel').onclick = () => UI.mapLoadMap(mapId);
+                    node.oncontextmenu = (e) => { e.preventDefault(); UI._showMapListContextMenu(e, mapId); };
+                    if (hasChildren) {
+                        node.querySelector('.mapTreeToggle').onclick = (e) => {
+                            e.stopPropagation();
+                            info.expanded = !isExpanded;
+                            UI.refreshMapList();
+                        };
+                    }
+                    if (State.currentMap === mapId) node.classList.add('selected');
+                    list.appendChild(node);
+                    // 자식 렌더 (펼쳐진 경우만)
+                    if (hasChildren && isExpanded) {
+                        for (const childId of children[mapId]) {
+                            renderNode(childId, depth + 1);
+                        }
+                    }
+                };
+                // 루트 노드 (parentId === 0) 렌더
+                if (children[0]) {
+                    for (const rootId of children[0]) {
+                        renderNode(rootId, 0);
+                    }
+                }
+            },
+
+            _showMapListContextMenu(e, mapId) {
+                UI._closeContextMenu();
+                const menu = document.createElement('div');
+                menu.className = 'ctx-menu';
+                const items = [
+                    { label: '맵 열기', action: () => { UI._closeContextMenu(); UI.mapLoadMap(mapId); } },
+                    { label: '맵 속성...', action: () => { UI._closeContextMenu(); UI.mapLoadMap(mapId); setTimeout(() => UI.mapShowProperties(), 100); } },
+                    { sep: true },
+                    { label: '새 맵 추가', action: () => { UI._closeContextMenu(); UI._addMap(0); } },
+                    { label: '하위 맵 추가', action: () => { UI._closeContextMenu(); UI._addMap(mapId); } },
+                    { label: '맵 복제', action: () => { UI._closeContextMenu(); UI._duplicateMap(mapId); } },
+                    { sep: true },
+                    { label: '맵 삭제', action: () => { UI._closeContextMenu(); UI._deleteMap(mapId); } },
+                ];
+                items.forEach(it => {
+                    if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-menu-sep'; menu.appendChild(s); }
+                    else {
+                        const d = document.createElement('div'); d.className = 'ctx-menu-item'; d.textContent = it.label;
+                        if (it.action) d.onclick = it.action; menu.appendChild(d);
+                    }
+                });
+                menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
+                document.body.appendChild(menu);
+                const rect = menu.getBoundingClientRect();
+                if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
+                if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+                setTimeout(() => {
+                    const h = (ev) => { if (!menu.contains(ev.target)) { UI._closeContextMenu(); document.removeEventListener('mousedown', h); } };
+                    document.addEventListener('mousedown', h);
+                }, 0);
+            },
+
+            _addMap(parentId) {
+                const infos = State.mapInfos || {};
+                // 새 맵 ID: 기존 최대 + 1
+                const existingIds = Object.keys(infos).map(Number).filter(n => !isNaN(n) && n > 0);
+                const newId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+                // 형제 맵 중 order 최대값 + 1
+                let maxOrder = 0;
+                for (const [k, v] of Object.entries(infos)) {
+                    if (v && (v.parentId || 0) === parentId) {
+                        maxOrder = Math.max(maxOrder, v.order || 0);
+                    }
+                }
+                // MapInfos 등록
+                infos[newId] = {
+                    id: newId,
+                    expanded: false,
+                    name: 'MAP' + String(newId).padStart(3, '0'),
+                    order: maxOrder + 1,
+                    parentId: parentId,
+                    scrollX: 0,
+                    scrollY: 0
+                };
+                State.mapInfos = infos;
+                // 빈 맵 데이터 생성 (17x13, 6레이어)
+                const w = 17, h = 13, layers = 6;
+                State.maps[newId] = {
+                    autoplayBgm: false, autoplayBgs: false,
+                    battleback1Name: '', battleback2Name: '',
+                    bgm: { name: '', pan: 0, pitch: 100, volume: 90 },
+                    bgs: { name: '', pan: 0, pitch: 100, volume: 90 },
+                    data: new Array(w * h * layers).fill(0),
+                    disableDashing: false,
+                    displayName: '',
+                    encounterList: [],
+                    encounterStep: 30,
+                    events: [null],
+                    height: h,
+                    note: '',
+                    parallaxLoopX: false, parallaxLoopY: false,
+                    parallaxName: '',
+                    parallaxShow: true,
+                    parallaxSx: 0, parallaxSy: 0,
+                    scrollType: 0,
+                    specifyBattleback: false,
+                    tilesetId: 1,
+                    width: w
+                };
+                UI.refreshMapList();
+                UI.mapLoadMap(newId);
+                UI._showNotice('MAP' + String(newId).padStart(3,'0') + ' 생성됨');
+            },
+
+            _duplicateMap(mapId) {
+                const src = State.maps[mapId];
+                if (!src) return;
+                const newId = Math.max(...Object.keys(State.mapInfos).map(Number).filter(n=>!isNaN(n))) + 1;
+                State.maps[newId] = JSON.parse(JSON.stringify(src));
+                const srcInfo = State.mapInfos[mapId] || {};
+                State.mapInfos[newId] = { ...srcInfo, name: (srcInfo.name||'') + ' (복사)' };
+                UI.refreshMapList();
+            },
+
+            _deleteMap(mapId) {
+                if (!confirm(`MAP${String(mapId).padStart(3,'0')}을(를) 정말 삭제하시겠습니까?`)) return;
+                delete State.maps[mapId];
+                delete State.mapInfos[mapId];
+                if (State.currentMap === mapId) State.currentMap = null;
+                UI.refreshMapList();
+                UI.drawMap();
+            },
+
+            mapSearch() {
+                const query = document.getElementById('mapSearch').value.toLowerCase();
+                const nodes = document.querySelectorAll('#mapList .treeNode');
+                nodes.forEach(node => {
+                    node.style.display = node.textContent.toLowerCase().includes(query) ? '' : 'none';
+                });
+            },
+
+            mapLoadMap(mapId) {
+                State.currentMap = mapId;
+                // Reset pan when switching maps to prevent coordinate mismatch
+                State.mapPanX = 0;
+                State.mapPanY = 0;
+                UI.refreshMapList();
+                // Load map from State (server/API mode) or from projectFiles
+                const file = State.projectFiles[`data/Map${String(mapId).padStart(3, '0')}.json`];
+                if (file) {
+                    file.text().then(text => {
+                        State.maps[mapId] = JSON.parse(text);
+                        UI._loadTilesetImages(mapId);
+                    });
+                } else if (State.maps[mapId]) {
+                    UI._loadTilesetImages(mapId);
+                }
+            },
+
+            _loadTilesetImages(mapId) {
+                const mapData = State.maps[mapId];
+                if (!mapData) { UI.drawMap(); return; }
+                const tsData = State.database?.tilesets?.[mapData.tilesetId];
+                if (!tsData || !tsData.tilesetNames) { UI.drawMap(); return; }
+
+                State.tilesetImages = State.tilesetImages || {};
+                const isServer = !!window.__RMMZ_SERVER;
+                const basePath = isServer ? '/project/img/tilesets/' : '';
+                const names = tsData.tilesetNames.filter(n => n && n.length > 0);
+                let loaded = 0;
+                const total = names.length;
+                if (total === 0) { UI.drawMap(); return; }
+
+                const onAllLoaded = () => {
+                    // Recalculate autotile shapes on map load
+                    // RMMZ stores shape=0 for uniform areas but computes shapes at runtime
+                    const md = State.maps[mapId];
+                    if (md) UI._recalcAllShapes(md);
+                    UI.drawMap();
+                    UI.refreshTilePalette();
+                };
+
+                names.forEach(name => {
+                    if (State.tilesetImages[name] && State.tilesetImages[name].complete) {
+                        loaded++;
+                        if (loaded >= total) onAllLoaded();
+                        return;
+                    }
+                    const img = new Image();
+                    img.onload = () => {
+                        State.tilesetImages[name] = img;
+                        loaded++;
+                        if (loaded >= total) onAllLoaded();
+                    };
+                    img.onerror = () => {
+                        loaded++;
+                        if (loaded >= total) onAllLoaded();
+                    };
+                    if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                        img.src = GitHubAdapter.getImageUrl(GitHubAdapter._projPath('img/tilesets/' + name + '.png'));
+                    } else if (isServer) {
+                        img.src = '/project/img/tilesets/' + name + '.png';
+                    } else {
+                        // file:// mode - try projectFiles first, then relative path
+                        const fileKey = 'img/tilesets/' + name + '.png';
+                        const fileBlob = State.projectFiles[fileKey];
+                        if (fileBlob) {
+                            img.src = URL.createObjectURL(fileBlob);
+                        } else {
+                            // Try relative path from HTML (Project1/img/tilesets/...)
+                            const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                            img.src = projPath + '/img/tilesets/' + name + '.png';
+                        }
+                    }
+                });
+            },
+
+            drawMap() {
+                const canvas = document.getElementById('mapCanvas');
+                if (!State.currentMap || !State.maps[State.currentMap]) {
+                    canvas.width = 1; canvas.height = 1; return;
+                }
+                const mapData = State.maps[State.currentMap];
+                const w = mapData.width || 13, h = mapData.height || 9;
+                const TS = 48, zoom = State.mapZoomLevel;
+                const editLayer = State.mapEditLayer;
+
+                canvas.width = w * TS * zoom;
+                canvas.height = h * TS * zoom;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(zoom, zoom);
+                ctx.imageSmoothingEnabled = false;
+
+                // Background
+                ctx.fillStyle = '#0f3460';
+                ctx.fillRect(0, 0, w * TS, h * TS);
+
+                const data = mapData.data || [];
+                const totalLayers = Math.floor(data.length / (w * h));
+
+                // Draw tile layers 0-3 only (4=shadow, 5=region are overlays)
+                for (let z = 0; z < Math.min(totalLayers, 4); z++) {
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const tileId = data[z * w * h + y * w + x] || 0;
+                            if (tileId) {
+                                UI.drawTile(ctx, tileId, x * TS, y * TS, TS, mapData.tilesetId);
+                            }
+                        }
+                    }
+                }
+
+                // Highlight current edit layer with subtle tint
+                if (editLayer > 0 && editLayer < 4) {
+                    ctx.fillStyle = 'rgba(255,255,0,0.05)';
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const tileId = data[editLayer * w * h + y * w + x] || 0;
+                            if (tileId) ctx.fillRect(x * TS, y * TS, TS, TS);
+                        }
+                    }
+                }
+
+                // Draw shadow layer (layer 4) overlay
+                if (totalLayers > 4) {
+                    const shadowBase = 4 * w * h;
+                    const showShadowEdit = (State.mapEditMode === 'shadow');
+                    ctx.fillStyle = showShadowEdit ? 'rgba(0, 0, 0, 0.55)' : 'rgba(0, 0, 0, 0.35)';
+                    const half = TS / 2;
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const bits = data[shadowBase + y * w + x] || 0;
+                            if (!bits) continue;
+                            // Bit 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+                            if (bits & 1) ctx.fillRect(x * TS, y * TS, half, half);
+                            if (bits & 2) ctx.fillRect(x * TS + half, y * TS, half, half);
+                            if (bits & 4) ctx.fillRect(x * TS, y * TS + half, half, half);
+                            if (bits & 8) ctx.fillRect(x * TS + half, y * TS + half, half, half);
+                        }
+                    }
+                    // In shadow edit mode, draw grid overlay for shadow quadrants
+                    if (showShadowEdit) {
+                        ctx.strokeStyle = 'rgba(100, 200, 255, 0.25)';
+                        ctx.lineWidth = 0.5;
+                        for (let x = 0; x < w; x++) {
+                            for (let y = 0; y < h; y++) {
+                                ctx.strokeRect(x * TS, y * TS, half, half);
+                                ctx.strokeRect(x * TS + half, y * TS, half, half);
+                                ctx.strokeRect(x * TS, y * TS + half, half, half);
+                                ctx.strokeRect(x * TS + half, y * TS + half, half, half);
+                            }
+                        }
+                    }
+                }
+
+                // Draw passage overlay
+                if (State.mapEditMode === 'passage') {
+                    UI._drawPassageOverlay(ctx, mapData, w, h, TS);
+                }
+
+                // Draw region overlay
+                if (State.mapEditMode === 'region') {
+                    UI._drawRegionOverlay(ctx, mapData, w, h, TS);
+                }
+
+                // SRPG 구역 오버레이 (SRPG 탭 활성 + 구역 서브탭일 때)
+                if (UI._srpgPanelVisible && UI._srpgSubTab === 'zone') {
+                    UI._drawSrpgZoneOverlay(ctx, mapData, w, h, TS);
+                }
+
+                // Draw events
+                const events = mapData.events || [];
+                events.forEach((ev, idx) => {
+                    if (!ev || ev.x < 0 || ev.x >= w || ev.y < 0 || ev.y >= h) return;
+                    const ex = ev.x * TS, ey = ev.y * TS;
+
+                    // Try to render character sprite if available
+                    const page = ev.pages?.[0];
+                    const charName = page?.image?.characterName;
+                    const charIdx = page?.image?.characterIndex || 0;
+                    let drawn = false;
+
+                    if (charName && State.tilesetImages?.['$char_' + charName]) {
+                        // Character image cached - draw it
+                        const cimg = State.tilesetImages['$char_' + charName];
+                        if (cimg.complete) {
+                            const pw = cimg.naturalWidth / 12;
+                            const ph = cimg.naturalHeight / 8;
+                            const cx = (charIdx % 4) * 3 * pw + pw;
+                            const cy = Math.floor(charIdx / 4) * 4 * ph;
+                            try { ctx.drawImage(cimg, cx, cy, pw, ph, ex, ey + TS - ph * (TS/pw), TS, ph * (TS/pw)); drawn = true; } catch(e){}
+                        }
+                    }
+
+                    // Event marker overlay - SRPG team color support
+                    const isSelected = (State._selectedEventIdx === idx && State.mapEditMode === 'event');
+                    const _evN = ev.note || '';
+                    const _tmM = _evN.match(/<srpgTeam:(\d+)>/i);
+                    const _umM = _evN.match(/<srpgUnit:(actor|enemy)>/i);
+                    const _obM = _evN.match(/<srpgObject:true>/i);
+                    var _tId = _tmM ? parseInt(_tmM[1]) : (_umM ? (_umM[1]==='actor'?1:2) : 0);
+                    var _TC = [null,
+                        {h:'#0042FF'},{h:'#FF0303'},{h:'#1CE6B9'},{h:'#540081'},
+                        {h:'#FEBA0E'},{h:'#20C000'},{h:'#E55BB0'},{h:'#959697'}];
+                    var _tc = (_tId > 0 && _tId <= 8) ? _TC[_tId] : null;
+                    var _isCtrl = (ev.name||'').indexOf('컨트롤러') >= 0 || (ev.name||'').indexOf('SRPG') >= 0;
+                    ctx.save();
+                    if (_tc) {
+                        ctx.fillStyle = _tc.h + (drawn ? '59' : '99');
+                        ctx.strokeStyle = isSelected ? '#ffdd57' : _tc.h;
+                        ctx.lineWidth = isSelected ? 3 : 2;
+                        ctx.strokeRect(ex + 2, ey + 2, TS - 4, TS - 4);
+                        if (!drawn) ctx.fillRect(ex + 4, ey + 4, TS - 8, TS - 8);
+                        // Team badge
+                        ctx.fillStyle = _tc.h;
+                        ctx.fillRect(ex + 1, ey + 1, 14, 10);
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 7px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.shadowColor = '#000'; ctx.shadowBlur = 0;
+                        ctx.fillText('T' + _tId, ex + 8, ey + 9);
+                    } else if (_obM) {
+                        ctx.fillStyle = drawn ? 'rgba(150,150,150,0.3)' : 'rgba(150,150,150,0.6)';
+                        ctx.strokeStyle = isSelected ? '#ffdd57' : '#999';
+                        ctx.lineWidth = isSelected ? 3 : 2;
+                        ctx.strokeRect(ex + 2, ey + 2, TS - 4, TS - 4);
+                        if (!drawn) ctx.fillRect(ex + 4, ey + 4, TS - 8, TS - 8);
+                    } else if (_isCtrl) {
+                        ctx.fillStyle = 'rgba(255,215,0,0.3)';
+                        ctx.strokeStyle = isSelected ? '#ffdd57' : '#ffd700';
+                        ctx.lineWidth = isSelected ? 3 : 2;
+                        ctx.strokeRect(ex + 2, ey + 2, TS - 4, TS - 4);
+                        ctx.fillRect(ex + 4, ey + 4, TS - 8, TS - 8);
+                    } else {
+                        ctx.fillStyle = drawn ? 'rgba(233,69,96,0.4)' : 'rgba(233,69,96,0.7)';
+                        ctx.strokeStyle = isSelected ? '#ffdd57' : '#e94560';
+                        ctx.lineWidth = isSelected ? 3 : 2;
+                        ctx.strokeRect(ex + 2, ey + 2, TS - 4, TS - 4);
+                        if (!drawn) ctx.fillRect(ex + 4, ey + 4, TS - 8, TS - 8);
+                    }
+                    if (isSelected) {
+                        ctx.fillStyle = 'rgba(255,221,87,0.25)';
+                        ctx.fillRect(ex, ey, TS, TS);
+                    }
+                    // Event name
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#000'; ctx.shadowBlur = 3;
+                    const evName = ev.name || ('EV' + String(idx).padStart(3, '0'));
+                    ctx.fillText(evName, ex + TS/2, ey + TS/2 + 4);
+                    ctx.restore();
+                });
+
+                // Apply pan transform
+                UI._applyCanvasTransform();
+                UI._updateZoomIndicator();
+
+                // Grid on separate overlay canvas (always on top, never overwritten by brush)
+                UI._drawGridOverlay(w, h, TS, zoom);
+
+                // 이벤트 모드: 좌측 패널에 이벤트 리스트 갱신
+                if (State.mapEditMode === 'event') {
+                    UI._refreshMapEventList(mapData);
+                }
+
+                // === Mouse interaction ===
+                // Only bind events once (use wrapper element)
+                const wrap = document.getElementById('mapCanvasWrap');
+                if (!wrap._bindDone) {
+                    UI._bindMapEvents(wrap, canvas);
+                    wrap._bindDone = true;
+                }
+            },
+
+            drawTile(ctx, tileId, dx, dy, ts, tilesetId) {
+                if (tileId === 0) return;
+                const tsData = State.database?.tilesets?.[tilesetId];
+                if (!tsData) return;
+                const names = tsData.tilesetNames || [];
+                const imgs = State.tilesetImages || {};
+                const TW = 48;
+
+                // Use RMMZ's exact coordinate system
+                // kind = global autotile kind, shape = autotile shape index
+                const kind = Math.floor((tileId - RMMZ.TILE_ID_A1) / 48);
+                const shape = (tileId - RMMZ.TILE_ID_A1) % 48;
+                const tx = kind % 8;
+                const ty = Math.floor(kind / 8);
+                let sheetName = '', img = null, bx = 0, by = 0, atTable = 'floor';
+
+                if (tileId >= RMMZ.TILE_ID_A4) {
+                    // A4 autotile (kind 80+)
+                    sheetName = names[3]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        bx = tx * 2;
+                        by = Math.floor((ty - 10) * 2.5 + (ty % 2 === 1 ? 0.5 : 0));
+                        atTable = (ty % 2 === 1) ? 'wall' : 'floor';
+                        UI._drawAutotile(ctx, img, bx * TW, by * TW, shape, dx, dy, ts, atTable);
+                        return;
+                    }
+                } else if (tileId >= RMMZ.TILE_ID_A3) {
+                    // A3 autotile (kind 48-79)
+                    sheetName = names[2]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        bx = tx * 2;
+                        by = (ty - 6) * 2;
+                        UI._drawAutotile(ctx, img, bx * TW, by * TW, shape, dx, dy, ts, 'wall');
+                        return;
+                    }
+                } else if (tileId >= RMMZ.TILE_ID_A2) {
+                    // A2 autotile (kind 16-47)
+                    sheetName = names[1]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        bx = tx * 2;
+                        by = (ty - 2) * 3;
+                        UI._drawAutotile(ctx, img, bx * TW, by * TW, shape, dx, dy, ts, 'floor');
+                        return;
+                    }
+                } else if (tileId >= RMMZ.TILE_ID_A1) {
+                    // A1 autotile (kind 0-15) - complex animated layout
+                    sheetName = names[0]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        atTable = 'floor';
+                        if (kind === 0) { bx = 0; by = 0; }
+                        else if (kind === 1) { bx = 0; by = 3; }
+                        else if (kind === 2) { bx = 6; by = 0; }
+                        else if (kind === 3) { bx = 6; by = 3; }
+                        else {
+                            bx = Math.floor(tx / 4) * 8;
+                            by = ty * 6 + (Math.floor(tx / 2) % 2) * 3;
+                            if (kind % 2 === 0) {
+                                bx += 0; // animation frame 0
+                            } else {
+                                bx += 6;
+                                atTable = 'waterfall';
+                            }
+                        }
+                        UI._drawAutotile(ctx, img, bx * TW, by * TW, shape, dx, dy, ts, atTable);
+                        return;
+                    }
+                } else if (tileId >= RMMZ.TILE_ID_A5) {
+                    // A5 normal tiles (no autotile)
+                    sheetName = names[4]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        const local = tileId - RMMZ.TILE_ID_A5;
+                        const sx = (local % 8) * TW;
+                        const sy = Math.floor(local / 8) * TW;
+                        try { ctx.drawImage(img, sx, sy, TW, TW, dx, dy, ts, ts); return; } catch(e) {}
+                    }
+                } else {
+                    // B/C/D/E normal tiles - use RMMZ exact formula
+                    const setIdx = Math.floor(tileId / 256);
+                    sheetName = names[5 + setIdx]; img = imgs[sheetName];
+                    if (img && img.complete) {
+                        const sx = ((Math.floor(tileId / 128) % 2) * 8 + (tileId % 8)) * TW;
+                        const sy = (Math.floor((tileId % 256) / 8) % 16) * TW;
+                        try { ctx.drawImage(img, sx, sy, TW, TW, dx, dy, ts, ts); return; } catch(e) {}
+                    }
+                }
+
+                // Fallback: color box
+                let color = '#333';
+                if (tileId >= RMMZ.TILE_ID_A4) color = '#2d5a27';
+                else if (tileId >= RMMZ.TILE_ID_A3) color = '#4a3728';
+                else if (tileId >= RMMZ.TILE_ID_A2) color = '#3a7d44';
+                else if (tileId >= RMMZ.TILE_ID_A1) color = '#2563a0';
+                else if (tileId >= RMMZ.TILE_ID_A5) color = '#6b5b3a';
+                else color = '#6a6a3a';
+                ctx.fillStyle = color;
+                ctx.fillRect(dx, dy, ts, ts);
+            },
+
+            // RMMZ exact autotile tables from rmmz_core.js
+            _FLOOR_AT: [
+                [[2,4],[1,4],[2,3],[1,3]],[[2,0],[1,4],[2,3],[1,3]],[[2,4],[3,0],[2,3],[1,3]],[[2,0],[3,0],[2,3],[1,3]],
+                [[2,4],[1,4],[2,3],[3,1]],[[2,0],[1,4],[2,3],[3,1]],[[2,4],[3,0],[2,3],[3,1]],[[2,0],[3,0],[2,3],[3,1]],
+                [[2,4],[1,4],[2,1],[1,3]],[[2,0],[1,4],[2,1],[1,3]],[[2,4],[3,0],[2,1],[1,3]],[[2,0],[3,0],[2,1],[1,3]],
+                [[2,4],[1,4],[2,1],[3,1]],[[2,0],[1,4],[2,1],[3,1]],[[2,4],[3,0],[2,1],[3,1]],[[2,0],[3,0],[2,1],[3,1]],
+                [[0,4],[1,4],[0,3],[1,3]],[[0,4],[3,0],[0,3],[1,3]],[[0,4],[1,4],[0,3],[3,1]],[[0,4],[3,0],[0,3],[3,1]],
+                [[2,2],[1,2],[2,3],[1,3]],[[2,2],[1,2],[2,3],[3,1]],[[2,2],[1,2],[2,1],[1,3]],[[2,2],[1,2],[2,1],[3,1]],
+                [[2,4],[3,4],[2,3],[3,3]],[[2,4],[3,4],[2,1],[3,3]],[[2,0],[3,4],[2,3],[3,3]],[[2,0],[3,4],[2,1],[3,3]],
+                [[2,4],[1,4],[2,5],[1,5]],[[2,0],[1,4],[2,5],[1,5]],[[2,4],[3,0],[2,5],[1,5]],[[2,0],[3,0],[2,5],[1,5]],
+                [[0,4],[3,4],[0,3],[3,3]],[[2,2],[1,2],[2,5],[1,5]],[[0,2],[1,2],[0,3],[1,3]],[[0,2],[1,2],[0,3],[3,1]],
+                [[2,2],[3,2],[2,3],[3,3]],[[2,2],[3,2],[2,1],[3,3]],[[2,4],[3,4],[2,5],[3,5]],[[2,0],[3,4],[2,5],[3,5]],
+                [[0,4],[1,4],[0,5],[1,5]],[[0,4],[3,0],[0,5],[1,5]],[[0,2],[3,2],[0,3],[3,3]],[[0,2],[1,2],[0,5],[1,5]],
+                [[0,4],[3,4],[0,5],[3,5]],[[2,2],[3,2],[2,5],[3,5]],[[0,2],[3,2],[0,5],[3,5]],[[0,0],[1,0],[0,1],[1,1]],
+            ],
+
+            _WALL_AT: [
+                [[2,2],[1,2],[2,1],[1,1]],[[0,2],[1,2],[0,1],[1,1]],[[2,0],[1,0],[2,1],[1,1]],[[0,0],[1,0],[0,1],[1,1]],
+                [[2,2],[3,2],[2,1],[3,1]],[[0,2],[3,2],[0,1],[3,1]],[[2,0],[3,0],[2,1],[3,1]],[[0,0],[3,0],[0,1],[3,1]],
+                [[2,2],[1,2],[2,3],[1,3]],[[0,2],[1,2],[0,3],[1,3]],[[2,0],[1,0],[2,3],[1,3]],[[0,0],[1,0],[0,3],[1,3]],
+                [[2,2],[3,2],[2,3],[3,3]],[[0,2],[3,2],[0,3],[3,3]],[[2,0],[3,0],[2,3],[3,3]],[[0,0],[3,0],[0,3],[3,3]],
+            ],
+
+            _WATERFALL_AT: [
+                [[2,0],[1,0],[2,1],[1,1]],[[0,0],[1,0],[0,1],[1,1]],
+                [[2,0],[3,0],[2,1],[3,1]],[[0,0],[3,0],[0,1],[3,1]],
+            ],
+
+            _drawAutotile(ctx, img, gx, gy, shape, dx, dy, ts, type) {
+                const HW = 24;
+                const table = type === 'wall' ? UI._WALL_AT : type === 'waterfall' ? UI._WATERFALL_AT : UI._FLOOR_AT;
+                const safeShape = Math.min(shape, table.length - 1);
+                const quarters = table[safeShape];
+                if (!quarters) return;
+                const scale = ts / 48;
+                try {
+                    // Top-left quarter
+                    ctx.drawImage(img, gx + quarters[0][0]*HW, gy + quarters[0][1]*HW, HW, HW,
+                                  dx, dy, HW*scale, HW*scale);
+                    // Top-right quarter
+                    ctx.drawImage(img, gx + quarters[1][0]*HW, gy + quarters[1][1]*HW, HW, HW,
+                                  dx + HW*scale, dy, HW*scale, HW*scale);
+                    // Bottom-left quarter
+                    ctx.drawImage(img, gx + quarters[2][0]*HW, gy + quarters[2][1]*HW, HW, HW,
+                                  dx, dy + HW*scale, HW*scale, HW*scale);
+                    // Bottom-right quarter
+                    ctx.drawImage(img, gx + quarters[3][0]*HW, gy + quarters[3][1]*HW, HW, HW,
+                                  dx + HW*scale, dy + HW*scale, HW*scale, HW*scale);
+                } catch(e) {
+                    // fallback
+                    ctx.fillStyle = '#3a7d44';
+                    ctx.fillRect(dx, dy, ts, ts);
+                }
+            },
+
+            // === AUTOTILE SHAPE CALCULATION (RMMZ-exact) ===
+            // Autotile kind = global group index (0-15 for A1, 16-47 for A2, etc.)
+            _getAutotileKind(tileId) {
+                if (tileId >= RMMZ.TILE_ID_A1) return Math.floor((tileId - RMMZ.TILE_ID_A1) / 48);
+                return -1; // not an autotile
+            },
+
+            _isWallType(tileId) {
+                if (tileId >= RMMZ.TILE_ID_A3 && tileId < RMMZ.TILE_ID_A4) return true;
+                if (tileId >= RMMZ.TILE_ID_A4) {
+                    const kind = Math.floor((tileId - RMMZ.TILE_ID_A1) / 48);
+                    return Math.floor(kind / 8) % 2 === 1;
+                }
+                return false;
+            },
+
+            _isWaterfallType(tileId) {
+                if (tileId >= RMMZ.TILE_ID_A1 && tileId < RMMZ.TILE_ID_A2) {
+                    const kind = Math.floor((tileId - RMMZ.TILE_ID_A1) / 48);
+                    return kind >= 4 && kind % 2 === 1;
+                }
+                return false;
+            },
+
+            // Compute autotile shape from neighbor connectivity
+            // RMMZ encoding: shape index based on number/position of DIFFERENT neighbors
+            // shape 0 = all 8 same (smooth interior), shape 47 = all 8 different (isolated blob)
+            // Floor: 48 shapes (0-47), Wall: 16 shapes (0-15), Waterfall: 4 shapes (0-3)
+            _calcAutoShape(mapData, layer, x, y) {
+                const w = mapData.width, h = mapData.height;
+                const data = mapData.data, base = layer * w * h;
+                const tileId = data[base + y * w + x] || 0;
+                const kind = UI._getAutotileKind(tileId);
+                if (kind < 0) return -1;
+
+                const same = (nx, ny) => {
+                    if (nx < 0 || nx >= w || ny < 0 || ny >= h) return true;
+                    return UI._getAutotileKind(data[base + ny * w + nx] || 0) === kind;
+                };
+
+                if (UI._isWaterfallType(tileId)) {
+                    return (!same(x-1,y)?1:0) + (!same(x+1,y)?2:0);
+                }
+
+                const n = same(x,y-1), s = same(x,y+1);
+                const ww = same(x-1,y), e = same(x+1,y);
+
+                if (UI._isWallType(tileId)) {
+                    // Wall: bit = 1 if neighbor is SAME
+                    return (ww?1:0) + (n?2:0) + (e?4:0) + (s?8:0);
+                }
+
+                // Floor autotile: 48 shapes
+                // RMMZ indexes by DIFFERENT neighbors (0=all same, 47=all different)
+                const nw = same(x-1,y-1), ne = same(x+1,y-1);
+                const sw = same(x-1,y+1), se = same(x+1,y+1);
+                // Count cardinal neighbors that are DIFFERENT
+                const diffs = (!n?1:0)+(!s?1:0)+(!ww?1:0)+(!e?1:0);
+
+                if (diffs === 0) {
+                    // All 4 cardinal same → shapes 0-15, corner bits for DIFFERENT diagonals
+                    return (!nw?1:0) | (!ne?2:0) | (!se?4:0) | (!sw?8:0);
+                }
+                if (diffs === 1) {
+                    // One cardinal different
+                    if (!ww) return 16 + (!ne?1:0) + (!se?2:0);
+                    if (!n)  return 20 + (!se?1:0) + (!sw?2:0);
+                    if (!e)  return 24 + (!sw?1:0) + (!nw?2:0);
+                    if (!s)  return 28 + (!nw?1:0) + (!ne?2:0);
+                }
+                if (diffs === 2) {
+                    // Two cardinal different
+                    if (!ww && !e)  return 32;                     // W+E corridor
+                    if (!n  && !s)  return 33;                     // N+S corridor
+                    if (!n  && !ww) return 34 + (!se?1:0);        // NW L-shape
+                    if (!n  && !e)  return 36 + (!sw?1:0);        // NE L-shape
+                    if (!s  && !e)  return 38 + (!nw?1:0);        // SE L-shape
+                    if (!s  && !ww) return 40 + (!ne?1:0);        // SW L-shape
+                }
+                if (diffs === 3) {
+                    // Three cardinal different (only one same)
+                    if (s)  return 42;  // only S same
+                    if (e)  return 43;  // only E same
+                    if (n)  return 44;  // only N same
+                    if (ww) return 45;  // only W same
+                }
+                // diffs === 4: all cardinal different
+                return (!nw && !ne && !sw && !se) ? 47 : 46;
+            },
+
+            // Recalculate autotile shapes for tile at (x,y) and all its neighbors
+            _updateAutoShapes(mapData, layer, x, y) {
+                const w = mapData.width, h = mapData.height;
+                const base = layer * w * h;
+                // Update 3×3 area centered on (x,y)
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                        const idx = base + ny * w + nx;
+                        const tileId = mapData.data[idx] || 0;
+                        const kind = UI._getAutotileKind(tileId);
+                        if (kind < 0) continue; // not autotile
+                        const baseId = RMMZ.TILE_ID_A1 + kind * 48;
+                        const shape = UI._calcAutoShape(mapData, layer, nx, ny);
+                        mapData.data[idx] = baseId + shape;
+                    }
+                }
+            },
+
+            // Recalculate ALL autotile shapes on the entire map (all layers)
+            _recalcAllShapes(mapData) {
+                const w = mapData.width, h = mapData.height;
+                const layers = Math.floor(mapData.data.length / (w * h));
+                for (let layer = 0; layer < layers; layer++) {
+                    const base = layer * w * h;
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const idx = base + y * w + x;
+                            const tileId = mapData.data[idx] || 0;
+                            const kind = UI._getAutotileKind(tileId);
+                            if (kind < 0) continue;
+                            const baseId = RMMZ.TILE_ID_A1 + kind * 48;
+                            const shape = UI._calcAutoShape(mapData, layer, x, y);
+                            mapData.data[idx] = baseId + shape;
+                        }
+                    }
+                }
+            },
+
+            // === UNDO/REDO SYSTEM ===
+            _pushUndo(mapId) {
+                const mapData = State.maps[mapId];
+                if (!mapData) return;
+                // Deep copy the data array
+                State.undoStack.push({ mapId, data: mapData.data.slice() });
+                if (State.undoStack.length > State.maxUndoSteps) State.undoStack.shift();
+                State.redoStack = []; // clear redo on new action
+            },
+
+            _undo() {
+                if (State.undoStack.length === 0) return;
+                const entry = State.undoStack.pop();
+                const mapData = State.maps[entry.mapId];
+                if (!mapData) return;
+                // Save current state to redo
+                State.redoStack.push({ mapId: entry.mapId, data: mapData.data.slice() });
+                // Restore
+                mapData.data = entry.data;
+                if (State.currentMap === entry.mapId) UI.drawMap();
+            },
+
+            _redo() {
+                if (State.redoStack.length === 0) return;
+                const entry = State.redoStack.pop();
+                const mapData = State.maps[entry.mapId];
+                if (!mapData) return;
+                // Save current state to undo
+                State.undoStack.push({ mapId: entry.mapId, data: mapData.data.slice() });
+                // Restore
+                mapData.data = entry.data;
+                if (State.currentMap === entry.mapId) UI.drawMap();
+            },
+
+            // === MAP EDITING TOOLS ===
+            _getBaseTileId(tileId) {
+                const kind = UI._getAutotileKind(tileId);
+                if (kind >= 0) return RMMZ.TILE_ID_A1 + kind * 48;
+                return tileId;
+            },
+
+            _placeTile(mapData, layer, x, y, tileId) {
+                const w = mapData.width, h = mapData.height;
+                if (x < 0 || x >= w || y < 0 || y >= h) return;
+                mapData.data[layer * w * h + y * w + x] = tileId;
+                if (UI._getAutotileKind(tileId) >= 0) UI._updateAutoShapes(mapData, layer, x, y);
+            },
+
+            mapSetTile(x, y, skipFullRedraw) {
+                if (!State.currentMap || !State.maps[State.currentMap]) return;
+                const mapData = State.maps[State.currentMap];
+                const layer = State.mapEditLayer;
+                const tool = State.mapTool;
+                const w = mapData.width, h = mapData.height;
+
+                // ─── Region painting (layer 5) ───
+                if (layer === 5) {
+                    const regionId = State._selectedRegionId || 0;
+                    const isEraser = (tool === 'eraser');
+                    const val = isEraser ? 0 : regionId;
+                    const brushSize = State.mapBrushSize || 1;
+                    if (!State._regionPaintUndo) {
+                        UI._pushUndo(State.currentMap);
+                        State._regionPaintUndo = true;
+                    }
+                    for (let dy = 0; dy < brushSize; dy++) {
+                        for (let dx = 0; dx < brushSize; dx++) {
+                            const tx = x + dx, ty = y + dy;
+                            if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+                            const idx = 5 * w * h + ty * w + tx;
+                            while (mapData.data.length <= idx) mapData.data.push(0);
+                            mapData.data[idx] = val;
+                        }
+                    }
+                    State._dirty = true;
+                    UI.drawMap();
+                    return;
+                }
+
+                if (tool === 'fill') {
+                    UI._pushUndo(State.currentMap);
+                    UI.mapFloodFill(mapData, layer, x, y);
+                    UI.drawMap();
+                    return;
+                }
+
+                // Pencil/Eraser: place tiles
+                const isEraser = (tool === 'eraser');
+                const sel = isEraser ? null : State.selectedTileRect;
+                const selW = sel ? sel.w : 1;
+                const selH = sel ? sel.h : 1;
+
+                // Step 1: Place all tiles (raw base IDs, no shape calc yet)
+                const placed = [];
+                for (let dy = 0; dy < selH; dy++) {
+                    for (let dx = 0; dx < selW; dx++) {
+                        const tx = x + dx, ty = y + dy;
+                        if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+                        const tileId = isEraser ? 0 : (sel ? sel.tiles[dy][dx] : State.selectedTile);
+                        const baseTile = UI._getBaseTileId(tileId);
+                        mapData.data[layer * w * h + ty * w + tx] = baseTile;
+                        placed.push([tx, ty, baseTile]);
+                    }
+                }
+
+                // Step 1.5: Auto-fill wall-side tiles below wall-top/roof tiles
+                // Native RMMZ behavior: placing roof/wall-top auto-extends wall-side below
+                const extraPlaced = [];
+                for (const [px, py, baseTile] of placed) {
+                    const pk = UI._getAutotileKind(baseTile);
+                    if (pk < 0) continue;
+                    let sideKind = -1;
+                    // A3 roof (kind%16 < 8) → side is kind+8
+                    if (pk >= 48 && pk < 80 && pk%16 < 8) sideKind = pk + 8;
+                    // A4 wall-top (even ty) → side is kind+8
+                    if (pk >= 80 && Math.floor(pk/8)%2 === 0) sideKind = pk + 8;
+                    if (sideKind >= 0) {
+                        const sideBase = RMMZ.TILE_ID_A1 + sideKind * 48;
+                        // Fill downward until hitting map edge or non-empty non-wall-side tile
+                        for (let fy = py + 1; fy < h; fy++) {
+                            const fidx = layer * w * h + fy * w + px;
+                            const existing = mapData.data[fidx] || 0;
+                            const ek = UI._getAutotileKind(existing);
+                            // Stop if: non-empty and not our wall-side pair
+                            if (existing !== 0 && ek !== sideKind && ek !== pk) break;
+                            // Already our side tile? keep going but still update shape
+                            if (ek === sideKind) { extraPlaced.push([px, fy, sideBase]); continue; }
+                            // Empty cell → place wall-side
+                            if (existing === 0) {
+                                mapData.data[fidx] = sideBase;
+                                extraPlaced.push([px, fy, sideBase]);
+                            } else break;
+                        }
+                    }
+                }
+                placed.push(...extraPlaced);
+
+                // Step 2: Recalculate autotile shapes for all affected tiles + neighbors
+                const toRecalc = new Set();
+                for (const [px, py, baseTile] of placed) {
+                    if (UI._getAutotileKind(baseTile) < 0) continue;
+                    for (let dy2 = -1; dy2 <= 1; dy2++) {
+                        for (let dx2 = -1; dx2 <= 1; dx2++) {
+                            const nx = px + dx2, ny = py + dy2;
+                            if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                toRecalc.add(ny * w + nx);
+                            }
+                        }
+                    }
+                }
+                if (toRecalc.size > 0) {
+                    const base = layer * w * h;
+                    for (const idx of toRecalc) {
+                        const tileId = mapData.data[base + idx] || 0;
+                        const kind = UI._getAutotileKind(tileId);
+                        if (kind < 0) continue;
+                        const tx2 = idx % w, ty2 = Math.floor(idx / w);
+                        const shape = UI._calcAutoShape(mapData, layer, tx2, ty2);
+                        mapData.data[base + idx] = RMMZ.TILE_ID_A1 + kind * 48 + shape;
+                    }
+                }
+
+                if (skipFullRedraw && extraPlaced.length === 0) {
+                    UI._drawBrushArea(mapData, x, y);
+                } else {
+                    UI.drawMap();
+                }
+            },
+
+            // Quick partial redraw of area around (cx, cy) with radius r
+            _drawTileAreaR(mapData, cx, cy, r) {
+                const canvas = document.getElementById('mapCanvas');
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const w = mapData.width, h = mapData.height;
+                const TS = 48, zoom = State.mapZoomLevel;
+                const data = mapData.data || [];
+                const totalLayers = Math.floor(data.length / (w * h));
+
+                ctx.save();
+                ctx.setTransform(zoom, 0, 0, zoom, 0, 0);
+                for (let dy = -r; dy <= r; dy++) {
+                    for (let dx = -r; dx <= r; dx++) {
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                        ctx.fillStyle = '#0f3460';
+                        ctx.fillRect(nx * TS, ny * TS, TS, TS);
+                        for (let z = 0; z < Math.min(totalLayers, 4); z++) {
+                            const tileId = data[z * w * h + ny * w + nx] || 0;
+                            if (tileId) UI.drawTile(ctx, tileId, nx * TS, ny * TS, TS, mapData.tilesetId);
+                        }
+                    }
+                }
+                ctx.restore();
+            },
+
+            // Redraw brush-sized area (for preview erase/redraw)
+            _drawBrushArea(mapData, cx, cy) {
+                const sel = State.selectedTileRect;
+                const selW = sel ? sel.w : 1, selH = sel ? sel.h : 1;
+                const r = Math.max(selW, selH) + 1;
+                this._drawTileAreaR(mapData, cx, cy, r);
+            },
+
+            // Backward-compat alias
+            _drawTileArea(mapData, cx, cy) {
+                this._drawTileAreaR(mapData, cx, cy, 1);
+            },
+
+            mapFloodFill(mapData, layer, sx, sy) {
+                const w = mapData.width, h = mapData.height, base = layer * w * h;
+                const targetTile = mapData.data[base + sy * w + sx] || 0;
+                const targetBase = UI._getBaseTileId(targetTile);
+                const fillBase = UI._getBaseTileId(State.selectedTile);
+                if (targetBase === fillBase) return;
+
+                const visited = new Set();
+                const queue = [[sx, sy]];
+                const filled = [];
+                while (queue.length > 0) {
+                    const [cx, cy] = queue.shift();
+                    const key = cy * w + cx;
+                    if (visited.has(key) || cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+                    const cur = mapData.data[base + key] || 0;
+                    if (UI._getBaseTileId(cur) !== targetBase) continue;
+                    visited.add(key);
+                    mapData.data[base + key] = fillBase;
+                    filled.push([cx, cy]);
+                    queue.push([cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]);
+                }
+                // Recalculate autotile shapes for all filled + neighbor tiles at once
+                if (UI._getAutotileKind(fillBase) >= 0) {
+                    const toRecalc = new Set();
+                    for (const [fx, fy] of filled) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                const nx = fx + dx, ny = fy + dy;
+                                if (nx >= 0 && nx < w && ny >= 0 && ny < h) toRecalc.add(ny * w + nx);
+                            }
+                        }
+                    }
+                    for (const idx of toRecalc) {
+                        const tileId = mapData.data[base + idx] || 0;
+                        const kind = UI._getAutotileKind(tileId);
+                        if (kind < 0) continue;
+                        const tx = idx % w, ty = Math.floor(idx / w);
+                        const shape = UI._calcAutoShape(mapData, layer, tx, ty);
+                        mapData.data[base + idx] = RMMZ.TILE_ID_A1 + kind * 48 + shape;
+                    }
+                }
+            },
+
+            mapRectFill(mapData, layer, x1, y1, x2, y2) {
+                const w = mapData.width, h = mapData.height;
+
+                // ─── Region layer 5: fill with selected region ID ───
+                if (layer === 5) {
+                    const regionId = State._selectedRegionId || 0;
+                    const isEraser = (State.mapTool === 'eraser');
+                    const val = isEraser ? 0 : regionId;
+                    const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                    const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+                    for (let y = minY; y <= maxY; y++) {
+                        for (let x = minX; x <= maxX; x++) {
+                            const idx = 5 * w * h + y * w + x;
+                            while (mapData.data.length <= idx) mapData.data.push(0);
+                            mapData.data[idx] = val;
+                        }
+                    }
+                    State._dirty = true;
+                    return;
+                }
+
+                const sel = State.selectedTileRect;
+                const selW = sel ? sel.w : 1, selH = sel ? sel.h : 1;
+                const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+                const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+                for (let y = minY; y <= maxY; y++) {
+                    for (let x = minX; x <= maxX; x++) {
+                        const tileId = sel
+                            ? sel.tiles[(y - minY) % selH][(x - minX) % selW]
+                            : State.selectedTile;
+                        mapData.data[layer * w * h + y * w + x] = UI._getBaseTileId(tileId);
+                    }
+                }
+                // Recalculate autotile shapes for rectangle + border
+                for (let y = minY - 1; y <= maxY + 1; y++) {
+                    for (let x = minX - 1; x <= maxX + 1; x++) {
+                        if (x < 0 || x >= w || y < 0 || y >= h) continue;
+                        const t = mapData.data[layer * w * h + y * w + x] || 0;
+                        const k = UI._getAutotileKind(t);
+                        if (k >= 0) {
+                            const shape = UI._calcAutoShape(mapData, layer, x, y);
+                            mapData.data[layer * w * h + y * w + x] = RMMZ.TILE_ID_A1 + k * 48 + shape;
+                        }
+                    }
+                }
+            },
+
+            // Shadow painting: toggle shadow quadrant bit at mouse position
+            _shadowPaint(e, mapData) {
+                const wrap = document.getElementById('mapCanvasWrap');
+                const wrapRect = wrap.getBoundingClientRect();
+                const zoom = State.mapZoomLevel;
+                const TS = 48, half = TS / 2;
+                const w = mapData.width, h = mapData.height;
+                // Get pixel position on map
+                const canvasRect2 = document.getElementById('mapCanvas')?.getBoundingClientRect();
+                if (!canvasRect2) return;
+                const px = (e.clientX - canvasRect2.left) / zoom;
+                const py = (e.clientY - canvasRect2.top) / zoom;
+                const tileX = Math.floor(px / TS);
+                const tileY = Math.floor(py / TS);
+                if (tileX < 0 || tileX >= w || tileY < 0 || tileY >= h) return;
+                // Determine which quadrant (0-3)
+                const qx = Math.floor((px - tileX * TS) / half); // 0 or 1
+                const qy = Math.floor((py - tileY * TS) / half); // 0 or 1
+                const bit = (qy * 2 + qx); // 0=TL, 1=TR, 2=BL, 3=BR
+                const bitMask = 1 << bit;
+                const shadowBase = 4 * w * h;
+                const idx = shadowBase + tileY * w + tileX;
+                // Toggle the bit
+                const current = mapData.data[idx] || 0;
+                mapData.data[idx] = current ^ bitMask;
+                UI.drawMap();
+            },
+
+            // Passage display overlay
+            _drawPassageOverlay(ctx, mapData, w, h, TS) {
+                const tsData = State.database?.tilesets?.[mapData.tilesetId];
+                if (!tsData) return;
+                const flags = tsData.flags || [];
+                const data = mapData.data || [];
+                const half = TS / 2;
+
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        // Check passability: combine flags from all 4 tile layers
+                        let combinedFlags = 0;
+                        for (let z = 0; z < 4; z++) {
+                            const tileId = data[z * w * h + y * w + x] || 0;
+                            if (tileId > 0 && tileId < flags.length) {
+                                combinedFlags |= flags[tileId];
+                            }
+                        }
+                        // Bit 0 = down impassable, bit 1 = left, bit 2 = right, bit 3 = up
+                        // If bit 4 (0x10) is set, it means impassable (RMMZ uses 0x0f for 4-dir)
+                        const passable = (combinedFlags & 0x0f) === 0; // all directions passable if lower 4 bits are 0
+                        const impassable = (combinedFlags & 0x0f) === 0x0f; // all blocked
+
+                        if (impassable) {
+                            // Draw X mark
+                            ctx.fillStyle = 'rgba(255, 50, 50, 0.4)';
+                            ctx.fillRect(x * TS, y * TS, TS, TS);
+                            ctx.strokeStyle = 'rgba(255, 50, 50, 0.9)';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(x * TS + 8, y * TS + 8);
+                            ctx.lineTo((x + 1) * TS - 8, (y + 1) * TS - 8);
+                            ctx.moveTo((x + 1) * TS - 8, y * TS + 8);
+                            ctx.lineTo(x * TS + 8, (y + 1) * TS - 8);
+                            ctx.stroke();
+                        } else if (passable) {
+                            // Draw O mark
+                            ctx.fillStyle = 'rgba(50, 200, 50, 0.3)';
+                            ctx.fillRect(x * TS, y * TS, TS, TS);
+                            ctx.strokeStyle = 'rgba(50, 200, 50, 0.8)';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.arc(x * TS + half, y * TS + half, 12, 0, Math.PI * 2);
+                            ctx.stroke();
+                        } else {
+                            // Partial passage - draw arrows for passable directions
+                            ctx.fillStyle = 'rgba(255, 200, 50, 0.3)';
+                            ctx.fillRect(x * TS, y * TS, TS, TS);
+                            ctx.strokeStyle = 'rgba(255, 200, 50, 0.9)';
+                            ctx.lineWidth = 2;
+                            const cx = x * TS + half, cy = y * TS + half;
+                            // Down (bit 0)
+                            if (!(combinedFlags & 0x01)) {
+                                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + 14); ctx.stroke();
+                            }
+                            // Left (bit 1)
+                            if (!(combinedFlags & 0x02)) {
+                                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - 14, cy); ctx.stroke();
+                            }
+                            // Right (bit 2)
+                            if (!(combinedFlags & 0x04)) {
+                                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 14, cy); ctx.stroke();
+                            }
+                            // Up (bit 3)
+                            if (!(combinedFlags & 0x08)) {
+                                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 14); ctx.stroke();
+                            }
+                        }
+                    }
+                }
+            },
+
+            mapChangeTileset(sheet) {
+                State.selectedTileSheet = sheet;
+                document.querySelectorAll('.tileSheetTab').forEach(t => {
+                    const isActive = t.textContent.trim() === sheet;
+                    t.style.background = isActive ? '#2563a0' : '#333';
+                    t.style.color = isActive ? '#fff' : '#ccc';
+                });
+                // Switch to region edit mode when R tab selected
+                if (sheet === 'R') {
+                    State.mapEditMode = 'region';
+                    State.mapEditLayer = 5;
+                    document.querySelectorAll('.layerBtn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.modeBtn').forEach(b => b.classList.remove('active'));
+                    const rb = document.getElementById('modeBtnRegion');
+                    if (rb) rb.classList.add('active');
+                } else if (State.mapEditMode === 'region') {
+                    // Switching away from R tab: restore tile mode
+                    State.mapEditMode = 'tile';
+                    State.mapEditLayer = 0;
+                    document.querySelectorAll('.modeBtn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.layerBtn').forEach(b => b.classList.remove('active'));
+                    const lb = document.getElementById('layerBtn0');
+                    if (lb) lb.classList.add('active');
+                }
+                UI.refreshTilePalette();
+                UI.drawMap();
+            },
+
+            refreshTilePalette() {
+                const palette = document.getElementById('tilePalette');
+                palette.innerHTML = '';
+                const sheet = State.selectedTileSheet;
+                const mapData = State.maps[State.currentMap];
+                const tsData = mapData ? State.database?.tilesets?.[mapData.tilesetId] : null;
+                const names = tsData?.tilesetNames || [];
+                const imgs = State.tilesetImages || {};
+
+                // Determine image and tile range for this sheet
+                let imgName = '', start = 0, isAutotile = false, gridCols = 8;
+                if (sheet === 'A1') { imgName = names[0]; start = RMMZ.TILE_ID_A1; isAutotile = true; }
+                else if (sheet === 'A2') { imgName = names[1]; start = RMMZ.TILE_ID_A2; isAutotile = true; }
+                else if (sheet === 'A3') { imgName = names[2]; start = RMMZ.TILE_ID_A3; isAutotile = true; }
+                else if (sheet === 'A4') { imgName = names[3]; start = RMMZ.TILE_ID_A4; isAutotile = true; }
+                else if (sheet === 'A5') { imgName = names[4]; start = RMMZ.TILE_ID_A5; }
+                else if (sheet === 'B') { imgName = names[5]; start = RMMZ.TILE_ID_B; gridCols = 16; }
+                else if (sheet === 'C') { imgName = names[6]; start = RMMZ.TILE_ID_C; gridCols = 16; }
+                else if (sheet === 'D') { imgName = names[7]; start = RMMZ.TILE_ID_D; gridCols = 16; }
+                else if (sheet === 'E') { imgName = names[8]; start = RMMZ.TILE_ID_E; gridCols = 16; }
+
+                // ─── Region ID palette (2열 리스트, 256행) ───
+                if (sheet === 'R') {
+                    palette.style.display = 'flex';
+                    palette.style.flexDirection = 'column';
+                    palette.style.gap = '1px';
+                    palette.style.position = 'relative';
+                    palette.style.userSelect = 'none';
+
+                    const regionNames = UI._getRegionNames();
+                    const elevColors = { cliff: '#c0392b', 0: '#2ecc71', 1: '#3498db', 2: '#9b59b6', 3: '#e67e22', 4: '#e74c3c' };
+                    const elevLabels = { cliff: '낭떠러지', 0: '저지대', 1: '저-중', 2: '중지대', 3: '중-고', 4: '고지대' };
+
+                    const selectedRegion = State._selectedRegionId || 0;
+
+                    for (let rid = 0; rid < 256; rid++) {
+                        const row = document.createElement('div');
+                        const info = regionNames[rid];
+                        const hasName = !!info;
+                        const colorKey = hasName ? (info.elevType === 'cliff' ? 'cliff' : info.elevationLevel) : '';
+                        const elevColor = hasName ? (elevColors[colorKey] || '#9b59b6') : '';
+
+                        row.className = 'regionCell';
+                        row.dataset.regionId = rid;
+                        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;border-radius:3px;'
+                            + 'background:' + (rid === selectedRegion ? '#1e3a5f' : (rid % 2 === 0 ? '#1a1a2e' : '#1e1e38')) + ';'
+                            + 'border:1px solid ' + (rid === selectedRegion ? '#e94560' : 'transparent') + ';'
+                            + 'min-height:24px;box-sizing:border-box;';
+
+                        // ID badge
+                        const badge = document.createElement('span');
+                        badge.style.cssText = 'min-width:32px;text-align:right;font-weight:bold;font-size:11px;color:' + (hasName ? '#fff' : '#666') + ';font-family:monospace;flex-shrink:0;';
+                        badge.textContent = rid;
+                        row.appendChild(badge);
+
+                        // Color dot (elevation indicator)
+                        if (hasName) {
+                            const dot = document.createElement('span');
+                            dot.style.cssText = 'width:8px;height:8px;border-radius:' + (info.isStair ? '0' : '50%') + ';flex-shrink:0;background:' + elevColor + ';';
+                            dot.title = info.elevType === 'cliff' ? '낭떠러지' : ('고도 ' + info.elevationLevel + (info.isStair ? ' (계단)' : ''));
+                            row.appendChild(dot);
+                        }
+
+                        // Name / description
+                        const label = document.createElement('span');
+                        label.style.cssText = 'flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+                            + 'color:' + (hasName ? '#ddd' : '#555') + ';';
+                        if (hasName) {
+                            if (info.elevType === 'cliff') {
+                                label.textContent = info.name + ' [낭떠러지]';
+                            } else {
+                                const lvl = info.elevationLevel;
+                                label.textContent = info.name + ' (Lv' + lvl + ')' + (info.isStair ? ' [계단]' : '');
+                            }
+                        } else if (rid === 0) {
+                            label.textContent = '(없음)';
+                            label.style.color = '#444';
+                        } else {
+                            label.textContent = '—';
+                        }
+                        row.appendChild(label);
+
+                        // Edit button for defined regions
+                        if (hasName || rid >= 0) {
+                            const editBtn = document.createElement('span');
+                            editBtn.style.cssText = 'font-size:10px;color:#666;cursor:pointer;flex-shrink:0;padding:0 2px;';
+                            editBtn.textContent = '✎';
+                            editBtn.title = '편집';
+                            editBtn.onclick = (e) => { e.stopPropagation(); UI._editRegionDef(rid); };
+                            row.appendChild(editBtn);
+                        }
+
+                        // Tooltip
+                        if (hasName) {
+                            row.title = 'ID ' + rid + ': ' + info.name + ' — ' + (info.elevType === 'cliff' ? '낭떠러지' : '고도 Lv' + info.elevationLevel + (info.isStair ? ' (계단)' : ''));
+                        }
+
+                        palette.appendChild(row);
+                    }
+
+                    // Click handler — select region ID for painting
+                    palette.addEventListener('mousedown', (e) => {
+                        const cell = e.target.closest('.regionCell');
+                        if (!cell) return;
+                        const rid = +cell.dataset.regionId;
+                        State._selectedRegionId = rid;
+                        palette.querySelectorAll('.regionCell').forEach((c, i) => {
+                            const cid = +c.dataset.regionId;
+                            c.style.background = cid === rid ? '#1e3a5f' : (cid % 2 === 0 ? '#1a1a2e' : '#1e1e38');
+                            c.style.borderColor = cid === rid ? '#e94560' : 'transparent';
+                        });
+                    });
+
+                    return; // Skip normal tile rendering
+                }
+
+                const img = imgs[imgName];
+                palette.style.display = 'grid';
+                palette.style.gridTemplateColumns = 'repeat(' + gridCols + ', 36px)';
+                palette.style.gap = '2px';
+                palette.style.position = 'relative';
+                palette.style.userSelect = 'none';
+
+                // Build tile grid data: array of {tileId, col, row} for each cell
+                const gridItems = [];
+
+                if (isAutotile) {
+                    let totalGroups = 0;
+                    if (sheet === 'A1') totalGroups = 16;
+                    else if (sheet === 'A2') totalGroups = 32;
+                    else if (sheet === 'A3') totalGroups = 16;
+                    else if (sheet === 'A4') totalGroups = 48;
+
+                    for (let g = 0; g < totalGroups; g++) {
+                        let repShape = 46;
+                        if (sheet === 'A3') repShape = 15;
+                        else if (sheet === 'A4' && Math.floor(g / 8) % 2 === 1) repShape = 15;
+                        const tileId = start + g * 48 + repShape;
+                        const baseTileId = start + g * 48;
+                        const col = g % gridCols, row = Math.floor(g / gridCols);
+                        gridItems.push({ tileId, baseTileId, col, row, index: g });
+                    }
+                } else if (sheet === 'A5') {
+                    for (let i = 0; i < 128; i++) {
+                        const tileId = start + i;
+                        const col = i % gridCols, row = Math.floor(i / gridCols);
+                        gridItems.push({ tileId, baseTileId: tileId, col, row, index: i });
+                    }
+                } else {
+                    for (let i = 0; i < 256; i++) {
+                        const tileId = start + i;
+                        const col = i % gridCols, row = Math.floor(i / gridCols);
+                        gridItems.push({ tileId, baseTileId: tileId, col, row, index: i });
+                    }
+                }
+
+                const totalRows = gridItems.length > 0 ? gridItems[gridItems.length - 1].row + 1 : 0;
+
+                // Render each tile
+                const canvases = [];
+                for (const item of gridItems) {
+                    const cv = document.createElement('canvas');
+                    cv.width = 36; cv.height = 36;
+                    cv.className = 'gridItem';
+                    cv.style.cssText = 'cursor:pointer;border:1px solid #333;box-sizing:border-box;';
+                    cv.dataset.col = item.col;
+                    cv.dataset.row = item.row;
+                    cv.dataset.tileId = item.baseTileId;
+                    const dctx = cv.getContext('2d');
+                    if (img && img.complete) {
+                        if (isAutotile) {
+                            UI.drawTile(dctx, item.tileId, 0, 0, 36, mapData.tilesetId);
+                        } else if (sheet === 'A5') {
+                            const sx = (item.index % 8) * 48;
+                            const sy = Math.floor(item.index / 8) * 48;
+                            try { dctx.drawImage(img, sx, sy, 48, 48, 0, 0, 36, 36); } catch(e) {}
+                        } else {
+                            const tileId = item.tileId;
+                            const sx = ((Math.floor(tileId / 128) % 2) * 8 + (tileId % 8)) * 48;
+                            const sy = (Math.floor((tileId % 256) / 8) % 16) * 48;
+                            try { dctx.drawImage(img, sx, sy, 48, 48, 0, 0, 36, 36); } catch(e) {}
+                        }
+                    } else {
+                        dctx.fillStyle = isAutotile ? '#3a7d44' : '#444';
+                        dctx.fillRect(0, 0, 36, 36);
+                        dctx.fillStyle = '#fff';
+                        dctx.font = '8px sans-serif';
+                        dctx.fillText(sheet + item.index, 2, 20);
+                    }
+                    canvases.push(cv);
+                    palette.appendChild(cv);
+                }
+
+                // === Highlight currently selected tile (for eyedropper etc.) ===
+                const selBase = State.selectedTile;
+                if (selBase) {
+                    canvases.forEach(cv => {
+                        if (+cv.dataset.tileId === selBase) {
+                            cv.style.border = '2px solid #e94560';
+                        }
+                    });
+                }
+
+                // === Drag selection logic ===
+                let dragStart = null;
+                let dragCurrent = null;
+
+                const updateSelection = (startCol, startRow, endCol, endRow) => {
+                    const minC = Math.min(startCol, endCol), maxC = Math.max(startCol, endCol);
+                    const minR = Math.min(startRow, endRow), maxR = Math.max(startRow, endRow);
+                    // Highlight selected tiles
+                    canvases.forEach(cv => {
+                        const c = +cv.dataset.col, r = +cv.dataset.row;
+                        if (c >= minC && c <= maxC && r >= minR && r <= maxR) {
+                            cv.style.border = '2px solid #e94560';
+                        } else {
+                            cv.style.border = '1px solid #333';
+                        }
+                    });
+                };
+
+                const finalizeSelection = (startCol, startRow, endCol, endRow) => {
+                    const minC = Math.min(startCol, endCol), maxC = Math.max(startCol, endCol);
+                    const minR = Math.min(startRow, endRow), maxR = Math.max(startRow, endRow);
+                    const selW = maxC - minC + 1, selH = maxR - minR + 1;
+
+                    // Build 2D tile array from selection
+                    const tiles = [];
+                    for (let r = minR; r <= maxR; r++) {
+                        const row = [];
+                        for (let c = minC; c <= maxC; c++) {
+                            const item = gridItems.find(it => it.col === c && it.row === r);
+                            row.push(item ? item.baseTileId : 0);
+                        }
+                        tiles.push(row);
+                    }
+
+                    if (selW === 1 && selH === 1) {
+                        // Single tile selection
+                        State.selectedTile = tiles[0][0];
+                        State.selectedTileRect = null;
+                    } else {
+                        // Multi-tile selection
+                        State.selectedTile = tiles[0][0];
+                        State.selectedTileRect = { x: minC, y: minR, w: selW, h: selH, tiles };
+                    }
+                };
+
+                palette.addEventListener('mousedown', (e) => {
+                    const cv = e.target.closest('.gridItem');
+                    if (!cv) return;
+                    e.preventDefault();
+                    dragStart = { col: +cv.dataset.col, row: +cv.dataset.row };
+                    dragCurrent = { ...dragStart };
+                    updateSelection(dragStart.col, dragStart.row, dragStart.col, dragStart.row);
+                });
+
+                palette.addEventListener('mousemove', (e) => {
+                    if (!dragStart) return;
+                    const cv = e.target.closest('.gridItem');
+                    if (!cv) return;
+                    dragCurrent = { col: +cv.dataset.col, row: +cv.dataset.row };
+                    updateSelection(dragStart.col, dragStart.row, dragCurrent.col, dragCurrent.row);
+                });
+
+                palette.addEventListener('mouseup', (e) => {
+                    if (!dragStart) return;
+                    const cv = e.target.closest('.gridItem');
+                    if (cv) dragCurrent = { col: +cv.dataset.col, row: +cv.dataset.row };
+                    finalizeSelection(dragStart.col, dragStart.row, dragCurrent.col, dragCurrent.row);
+                    dragStart = null;
+                    dragCurrent = null;
+                });
+
+                palette.addEventListener('mouseleave', () => {
+                    if (dragStart && dragCurrent) {
+                        finalizeSelection(dragStart.col, dragStart.row, dragCurrent.col, dragCurrent.row);
+                    }
+                    dragStart = null;
+                    dragCurrent = null;
+                });
+            },
+
+            // ─── Region overlay rendering ───
+            _drawRegionOverlay(ctx, mapData, w, h, TS) {
+                const data = mapData.data || [];
+                const regionBase = 5 * w * h;
+                if (data.length <= regionBase) return;
+                const regionNames = UI._getRegionNames();
+                const elevColors = { cliff: 'rgba(192,57,43,0.55)', 0: 'rgba(46,204,113,0.45)', 1: 'rgba(52,152,219,0.45)', 2: 'rgba(155,89,182,0.45)', 3: 'rgba(230,126,34,0.45)', 4: 'rgba(231,76,60,0.45)' };
+
+                ctx.save();
+                ctx.font = 'bold ' + Math.max(10, TS * 0.28) + 'px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        const rid = data[regionBase + y * w + x] || 0;
+                        const info = regionNames[rid];
+                        if (rid === 0 && !info) continue;
+                        const colorKey = info ? (info.elevType === 'cliff' ? 'cliff' : info.elevationLevel) : null;
+                        ctx.fillStyle = info ? (elevColors[colorKey] || 'rgba(155,89,182,0.45)') : 'rgba(100,100,200,0.35)';
+                        ctx.fillRect(x * TS, y * TS, TS, TS);
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(rid, x * TS + TS / 2, y * TS + TS / 2);
+                        if (info && info.name) {
+                            ctx.save();
+                            ctx.font = Math.max(7, TS * 0.16) + 'px sans-serif';
+                            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                            ctx.fillText(info.name, x * TS + TS / 2, y * TS + TS * 0.78);
+                            ctx.restore();
+                        }
+                    }
+                }
+                ctx.strokeStyle = 'rgba(100, 200, 255, 0.2)';
+                ctx.lineWidth = 0.5;
+                for (let x = 0; x <= w; x++) {
+                    ctx.beginPath(); ctx.moveTo(x * TS, 0); ctx.lineTo(x * TS, h * TS); ctx.stroke();
+                }
+                for (let y = 0; y <= h; y++) {
+                    ctx.beginPath(); ctx.moveTo(0, y * TS); ctx.lineTo(w * TS, y * TS); ctx.stroke();
+                }
+                ctx.restore();
+            },
+
+            // ─── Region definition editor modal ───
+            _editRegionDef(regionId) {
+                const regionNames = UI._getRegionNames();
+                const info = regionNames[regionId] || { name: '', elevType: 'elevation', elevationLevel: 2, isStair: false };
+                const curType = info.elevType || 'elevation';
+                const curLevel = info.elevationLevel || 0;
+
+                let html = '<div style="padding:12px;">';
+                html += '<h3 style="color:#e94560;margin:0 0 10px;">지역 ID ' + regionId + ' 고저차 설정</h3>';
+                html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:0.85em;">이름:</label><br>';
+                html += '<input id="regionDefName" type="text" value="' + (info.name || '') + '" style="width:100%;padding:4px;background:#1a1a2e;color:#fff;border:1px solid #333;border-radius:3px;box-sizing:border-box;" placeholder="\uC608: \uC800\uC9C0\uB300, \uACE0\uC9C0\uB300 \uB4F1"></div>';
+                html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:0.85em;">고저차 타입:</label><br>';
+                html += '<select id="regionDefType" style="width:100%;padding:4px;background:#1a1a2e;color:#fff;border:1px solid #333;border-radius:3px;">';
+                html += '<option value="elevation"' + (curType==='elevation'?' selected':'') + '>고저차 (이동/사거리 영향)</option>';
+                html += '<option value="cliff"' + (curType==='cliff'?' selected':'') + '>낭떠러지 (이동불가, 투사체통과)</option>';
+                html += '</select></div>';
+                html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:0.85em;">고도 레벨 (0~4):</label><br>';
+                html += '<select id="regionDefLevel" style="width:100%;padding:4px;background:#1a1a2e;color:#fff;border:1px solid #333;border-radius:3px;">';
+                for (let lv = 0; lv <= 4; lv++) {
+                    const lvNames = ['0 (저지대)', '1 (저-중 계단)', '2 (중지대)', '3 (중-고 계단)', '4 (고지대)'];
+                    html += '<option value="' + lv + '"' + (curLevel === lv ? ' selected' : '') + '>' + lvNames[lv] + '</option>';
+                }
+                html += '</select></div>';
+                html += '<div style="margin-bottom:12px;"><label style="color:#aaa;font-size:0.85em;"><input id="regionDefStair" type="checkbox"' + (info.isStair ? ' checked' : '') + ' style="margin-right:4px;">계단 (인접 고도 연결)</label></div>';
+                html += '<div style="display:flex;gap:8px;">';
+                html += '<button onclick="UI._saveRegionDef(' + regionId + ')" style="flex:1;padding:6px;background:#2563a0;color:#fff;border:none;border-radius:4px;cursor:pointer;">저장</button>';
+                html += '<button onclick="UI._deleteRegionDef(' + regionId + ')" style="padding:6px 12px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer;">삭제</button>';
+                html += '<button onclick="UI._closeRegionDefModal()" style="padding:6px 12px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;">취소</button>';
+                html += '</div></div>';
+
+                let modal = document.getElementById('regionDefModal');
+                if (!modal) {
+                    modal = document.createElement('div');
+                    modal.id = 'regionDefModal';
+                    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999;';
+                    document.body.appendChild(modal);
+                }
+                const box = document.createElement('div');
+                box.style.cssText = 'background:#16213e;border:1px solid #333;border-radius:8px;min-width:280px;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+                box.innerHTML = html;
+                modal.innerHTML = '';
+                modal.appendChild(box);
+                modal.style.display = 'flex';
+                setTimeout(() => { const inp = document.getElementById('regionDefName'); if (inp) inp.focus(); }, 100);
+            },
+
+            _saveRegionDef(regionId) {
+                const name = (document.getElementById('regionDefName')?.value || '').trim();
+                const elevType = document.getElementById('regionDefType')?.value || 'elevation';
+                const elevationLevel = Number(document.getElementById('regionDefLevel')?.value || 0);
+                const isStair = document.getElementById('regionDefStair')?.checked || false;
+                UI._setRegionElev(regionId, name, elevType, elevationLevel, isStair);
+                UI._closeRegionDefModal();
+                UI.refreshTilePalette();
+                UI.drawMap();
+            },
+
+            _deleteRegionDef(regionId) {
+                UI._setRegionElev(regionId, '', 'elevation', 0, false);
+                UI._closeRegionDefModal();
+                UI.refreshTilePalette();
+                UI.drawMap();
+            },
+
+            _closeRegionDefModal() {
+                const modal = document.getElementById('regionDefModal');
+                if (modal) modal.style.display = 'none';
+            },
+
+            mapTool(tool) {
+                State.mapTool = tool;
+                document.querySelectorAll('.mapToolBtn').forEach(b => b.classList.remove('active'));
+                document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1)).classList.add('active');
+            },
+
+            mapSetBrushSize(size) {
+                State.mapBrushSize = size;
+            },
+
+            mapToggleGrid() {
+                State.mapShowGrid = !State.mapShowGrid;
+                const btn = document.getElementById('btnGrid');
+                if (btn) btn.classList.toggle('active', State.mapShowGrid);
+                UI.drawMap();
+            },
+
+            mapZoom(level) {
+                State.mapZoomLevel = level;
+                UI._applyCanvasTransform();
+                UI._updateZoomIndicator();
+                UI.drawMap();
+            },
+
+            _applyCanvasTransform() {
+                const canvas = document.getElementById('mapCanvas');
+                if (!canvas) return;
+                const t = `translate(${State.mapPanX}px, ${State.mapPanY}px)`;
+                canvas.style.transform = t;
+                const overlay = document.getElementById('mapGridOverlay');
+                if (overlay) overlay.style.transform = t;
+            },
+
+            _drawGridOverlay(w, h, TS, zoom) {
+                const overlay = document.getElementById('mapGridOverlay');
+                if (!overlay) return;
+                overlay.width = w * TS * zoom;
+                overlay.height = h * TS * zoom;
+                const gctx = overlay.getContext('2d');
+                gctx.scale(zoom, zoom);
+                if (State.mapShowGrid) {
+                    gctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                    gctx.lineWidth = 1;
+                    for (let x = 0; x <= w; x++) { gctx.beginPath(); gctx.moveTo(x*TS, 0); gctx.lineTo(x*TS, h*TS); gctx.stroke(); }
+                    for (let y = 0; y <= h; y++) { gctx.beginPath(); gctx.moveTo(0, y*TS); gctx.lineTo(w*TS, y*TS); gctx.stroke(); }
+                }
+                // 브러시 프리뷰 커서 복원
+                if (State.mapHoverTile && State.mapEditMode === 'tile') {
+                    UI._drawBrushPreviewOnOverlay(gctx, w, h, TS);
+                }
+            },
+
+            _drawBrushPreviewOnOverlay(gctx, w, h, TS) {
+                const hover = State.mapHoverTile;
+                if (!hover) return;
+                const sel = State.selectedTileRect;
+                const selW = sel ? sel.w : 1, selH = sel ? sel.h : 1;
+                gctx.strokeStyle = 'rgba(233, 69, 96, 0.9)';
+                gctx.lineWidth = 2;
+                gctx.fillStyle = 'rgba(233, 69, 96, 0.15)';
+                for (let dy = 0; dy < selH; dy++) {
+                    for (let dx = 0; dx < selW; dx++) {
+                        const tx = hover.x + dx, ty = hover.y + dy;
+                        if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+                        gctx.fillRect(tx * TS, ty * TS, TS, TS);
+                        gctx.strokeRect(tx * TS + 1, ty * TS + 1, TS - 2, TS - 2);
+                    }
+                }
+            },
+
+            // ─── SRPG 구역 오버레이 ───
+            _drawSrpgZoneOverlay(ctx, mapData, w, h, TS) {
+                const data = mapData.data || [];
+                const size = w * h;
+                if (data.length <= 5 * size) return;
+
+                const ZCOL = {
+                    200: ['rgba(60,120,255,0.35)', '배'],
+                    201: ['rgba(0,66,255,0.35)', 'T1'], 202: ['rgba(255,3,3,0.35)', 'T2'],
+                    203: ['rgba(28,230,185,0.35)', 'T3'], 204: ['rgba(84,0,129,0.35)', 'T4'],
+                    205: ['rgba(254,186,14,0.35)', 'T5'], 206: ['rgba(32,192,0,0.35)', 'T6'],
+                    207: ['rgba(229,91,176,0.35)', 'T7'], 208: ['rgba(149,150,151,0.35)', 'T8'],
+                    210: ['rgba(160,80,255,0.45)', '점'], 211: ['rgba(255,220,40,0.45)', '깃'],
+                    212: ['rgba(255,160,40,0.45)', '베'], 220: ['rgba(40,200,80,0.45)', '탈'],
+                    230: ['rgba(255,120,180,0.45)', '호'],
+                    240: ['rgba(255,60,60,0.4)', '증0'], 241: ['rgba(255,60,60,0.4)', '증1'],
+                    242: ['rgba(255,68,68,0.4)', '증2'], 243: ['rgba(255,102,68,0.4)', '증3'],
+                    244: ['rgba(255,80,80,0.4)', '증4'], 245: ['rgba(255,90,90,0.4)', '증5'],
+                    246: ['rgba(255,100,100,0.4)', '증6'], 247: ['rgba(255,110,110,0.4)', '증7'],
+                    248: ['rgba(255,120,120,0.4)', '증8'],
+                };
+
+                ctx.font = Math.max(8, TS * 0.3) + 'px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        const rid = (data[5 * size + y * w + x] || 0) >> 8;
+                        if (rid < 200 || rid > 248) continue;
+                        const info = ZCOL[rid];
+                        if (!info) continue;
+
+                        const px = x * TS, py = y * TS;
+                        // 색상 채우기
+                        ctx.fillStyle = info[0];
+                        ctx.fillRect(px, py, TS, TS);
+                        // 테두리
+                        ctx.strokeStyle = info[0].replace(/[\d.]+\)$/, '0.7)');
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(px + 0.5, py + 0.5, TS - 1, TS - 1);
+                        // 라벨
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(info[1], px + TS / 2, py + TS / 2);
+                    }
+                }
+            },
+
+                        _refreshOverlay() {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                const w = mapData.width, h = mapData.height;
+                const TS = 48, zoom = State.mapZoomLevel;
+                UI._drawGridOverlay(w, h, TS, zoom);
+            },
+
+            _updateZoomIndicator() {
+                const el = document.getElementById('zoomIndicator');
+                if (el) el.textContent = Math.round(State.mapZoomLevel * 100) + '%';
+            },
+
+            // Convert mouse event to tile coordinates, accounting for pan + zoom
+            _tileAtEvent(e) {
+                const canvas = document.getElementById('mapCanvas');
+                if (!canvas) return [-1, -1];
+                // Use canvas rect directly — it includes CSS transform (translate)
+                // so no need to manually subtract panX/panY
+                const canvasRect = canvas.getBoundingClientRect();
+                const zoom = State.mapZoomLevel;
+                const TS = 48;
+                const px = (e.clientX - canvasRect.left) / zoom;
+                const py = (e.clientY - canvasRect.top) / zoom;
+                return [Math.floor(px / TS), Math.floor(py / TS)];
+            },
+
+            _bindMapEvents(wrap, canvas) {
+                if (!State._mapPaint) State._mapPaint = { painting: false, rectStart: null, lastPaintTile: null };
+
+                // Brush preview — overlay canvas에서 그림 (main canvas 오염 방지)
+                const drawBrushPreview = (mx, my) => {
+                    // overlay canvas에 그리드+커서를 다시 그림
+                    UI._refreshOverlay();
+                };
+
+                // --- Mouse wheel zoom (centered on cursor) ---
+                wrap.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const oldZoom = State.mapZoomLevel;
+                    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                    let newZoom = oldZoom * factor;
+                    newZoom = Math.max(0.25, Math.min(8, newZoom));
+                    // Zoom toward cursor position
+                    const wrapRect = wrap.getBoundingClientRect();
+                    const cx = e.clientX - wrapRect.left;
+                    const cy = e.clientY - wrapRect.top;
+                    // Adjust pan so point under cursor stays fixed
+                    State.mapPanX = cx - (cx - State.mapPanX) * (newZoom / oldZoom);
+                    State.mapPanY = cy - (cy - State.mapPanY) * (newZoom / oldZoom);
+                    State.mapZoomLevel = newZoom;
+                    UI.drawMap();
+                }, { passive: false });
+
+                // --- Spacebar panning + Ctrl+Z/Y ---
+                document.addEventListener('keydown', (e) => {
+                    if (e.code === 'Space' && !State.mapSpaceHeld && State.currentMode === 'map') {
+                        e.preventDefault();
+                        State.mapSpaceHeld = true;
+                        wrap.classList.add('space-held');
+                    }
+                    // Ctrl+Z undo, Ctrl+Y redo
+                    if (State.currentMode === 'map') {
+                        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ' && !e.shiftKey) {
+                            e.preventDefault();
+                            UI._undo();
+                        }
+                        if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || (e.code === 'KeyZ' && e.shiftKey))) {
+                            e.preventDefault();
+                            UI._redo();
+                        }
+                    }
+                });
+                document.addEventListener('keyup', (e) => {
+                    if (e.code === 'Space') {
+                        State.mapSpaceHeld = false;
+                        State.mapPanning = false;
+                        State.mapPanStart = null;
+                        wrap.classList.remove('space-held', 'panning');
+                    }
+                });
+
+                // --- Mouse move (panning + brush preview + drag paint) ---
+                wrap.addEventListener('mousemove', (e) => {
+                    // Panning
+                    if (State.mapPanning && State.mapPanStart) {
+                        State.mapPanX = State.mapPanStart.panX + (e.clientX - State.mapPanStart.x);
+                        State.mapPanY = State.mapPanStart.panY + (e.clientY - State.mapPanStart.y);
+                        UI._applyCanvasTransform();
+                        return;
+                    }
+                    if (State.mapSpaceHeld) return; // space held but not yet dragging
+
+                    const mapData = State.maps[State.currentMap];
+                    if (!mapData) return;
+                    const w = mapData.width, h = mapData.height;
+                    const mp = State._mapPaint;
+                    const [mx, my] = UI._tileAtEvent(e);
+
+                    if (mx >= 0 && mx < w && my >= 0 && my < h) {
+                        // Tooltip
+                        const data = mapData.data || [];
+                        const totalLayers = Math.floor(data.length / (w * h));
+                        const tiles = [];
+                        for (let z = 0; z < totalLayers; z++) {
+                            const tid = data[z*w*h + my*w + mx] || 0;
+                            if (tid) tiles.push('L' + z + ':' + tid);
+                        }
+                        const events = mapData.events || [];
+                        const ev = events.find(e2 => e2 && e2.x === mx && e2.y === my);
+                        wrap.title = '(' + mx + ',' + my + ') ' + tiles.join(' ') + (ev ? ' [' + (ev.name||'Ev') + ']' : '');
+
+                        // Event drag move
+                        if (State._eventDragging && State.mapEditMode === 'event' && State._selectedEventIdx != null) {
+                            const mapData2 = State.maps[State.currentMap];
+                            const ev = mapData2?.events?.[State._selectedEventIdx];
+                            if (ev && (ev.x !== mx || ev.y !== my) && mx >= 0 && mx < w && my >= 0 && my < h) {
+                                ev.x = mx; ev.y = my;
+                                UI.drawMap();
+                            }
+                            return;
+                        }
+
+                        // Shadow drag painting
+                        if (mp.painting && mp.shadowMode && State.mapEditMode === 'shadow') {
+                            UI._shadowPaint(e, mapData);
+                            return;
+                        }
+
+                        // SRPG 구역 드래그 페인팅
+                        if (UI._srpgZonePaint && UI._srpgZonePaint.active && UI._srpgPanelVisible) {
+                            if (UI._srpgZonePaint.brush !== 'rect') {
+                                UI._srpgPaintZone(mx, my);
+                            }
+                            return;
+                        }
+
+                        // Pencil/Eraser drag painting
+                        if (mp.painting && (State.mapTool === 'pencil' || State.mapTool === 'eraser')) {
+                            const key = mx + ',' + my;
+                            if (key !== mp.lastPaintTile) {
+                                mp.lastPaintTile = key;
+                                UI.mapSetTile(mx, my, true);
+                            }
+                        }
+
+                        // Rect preview: 드래그 중 사각형 프리뷰 표시
+                        if (State.mapTool === 'rect' && mp.rectStart) {
+                            State.mapHoverTile = { x: mx, y: my };
+                            UI._refreshOverlay();
+                            const overlay = document.getElementById('mapGridOverlay');
+                            if (overlay) {
+                                const gctx = overlay.getContext('2d');
+                                const TS = 48, zoom = State.mapZoomLevel;
+                                const rx1 = Math.min(mp.rectStart[0], mx);
+                                const ry1 = Math.min(mp.rectStart[1], my);
+                                const rx2 = Math.max(mp.rectStart[0], mx);
+                                const ry2 = Math.max(mp.rectStart[1], my);
+                                const rw = (rx2 - rx1 + 1) * TS;
+                                const rh = (ry2 - ry1 + 1) * TS;
+                                gctx.save();
+                                gctx.scale(zoom, zoom);
+                                gctx.fillStyle = 'rgba(100, 200, 255, 0.2)';
+                                gctx.fillRect(rx1 * TS, ry1 * TS, rw, rh);
+                                gctx.strokeStyle = 'rgba(100, 200, 255, 0.9)';
+                                gctx.lineWidth = 2;
+                                gctx.strokeRect(rx1 * TS + 1, ry1 * TS + 1, rw - 2, rh - 2);
+                                gctx.fillStyle = 'rgba(255,255,255,0.8)';
+                                gctx.font = '11px sans-serif';
+                                gctx.fillText((rx2-rx1+1) + '×' + (ry2-ry1+1), rx1*TS+4, ry1*TS-4 > 0 ? ry1*TS-4 : ry1*TS+14);
+                                gctx.restore();
+                            }
+                            return;
+                        }
+
+                        // Brush preview (overlay canvas만 갱신, main canvas 건드리지 않음)
+                        const prevHover = State.mapHoverTile;
+                        State.mapHoverTile = { x: mx, y: my };
+                        if (!mp.painting) {
+                            if (!prevHover || prevHover.x !== mx || prevHover.y !== my) {
+                                drawBrushPreview(mx, my);
+                            }
+                        }
+                    }
+                });
+
+                // --- Mouse down ---
+                wrap.addEventListener('mousedown', (e) => {
+                    // Spacebar panning
+                    if (State.mapSpaceHeld && e.button === 0) {
+                        State.mapPanning = true;
+                        State.mapPanStart = { x: e.clientX, y: e.clientY, panX: State.mapPanX, panY: State.mapPanY };
+                        wrap.classList.add('panning');
+                        e.preventDefault();
+                        return;
+                    }
+                    // Middle mouse button panning
+                    if (e.button === 1) {
+                        State.mapPanning = true;
+                        State.mapPanStart = { x: e.clientX, y: e.clientY, panX: State.mapPanX, panY: State.mapPanY };
+                        wrap.classList.add('panning');
+                        e.preventDefault();
+                        return;
+                    }
+
+                    if (e.button !== 0) return;
+                    const mapData = State.maps[State.currentMap];
+                    if (!mapData) return;
+                    const w = mapData.width, h = mapData.height;
+                    const mp = State._mapPaint;
+                    const [mx, my] = UI._tileAtEvent(e);
+                    if (mx < 0 || mx >= w || my < 0 || my >= h) return;
+
+                    // SRPG 유닛 배치 모드 체크 (SRPG 패널이 열려있으면 편집 모드 무관하게 동작)
+                    if (UI._srpgPlaceUnit && UI._srpgPlaceUnit._active && UI._srpgPanelVisible) {
+                        if (UI._srpgPlaceUnitAt(mx, my)) { return; }
+                    }
+
+                    // SRPG 구역 페인팅 모드 체크
+                    if (UI._srpgZonePaint && UI._srpgZonePaint.active && UI._srpgPanelVisible) {
+                        if (UI._srpgZonePaint.brush === 'rect') {
+                            // 사각형 브러시: 시작점 기록
+                            UI._srpgZoneRectStart = { x: mx, y: my };
+                        } else {
+                            UI._srpgPaintZone(mx, my);
+                        }
+                        return;
+                    }
+
+                    // Event mode: 이벤트 선택/더블클릭 편집
+                    if (State.mapEditMode === 'event') {
+                        const events = mapData.events || [];
+                        // 해당 타일의 이벤트 찾기
+                        let foundEvIdx = -1;
+                        events.forEach((ev, i) => {
+                            if (ev && ev.x === mx && ev.y === my) foundEvIdx = i;
+                        });
+                        if (foundEvIdx >= 0) {
+                            // 이벤트 선택 + 드래그 이동 시작
+                            State._selectedEventIdx = foundEvIdx;
+                            State._eventDragging = true;
+                            State._eventDragStart = { x: mx, y: my };
+                        } else {
+                            State._selectedEventIdx = null;
+                            State._eventDragging = false;
+                        }
+                        UI.drawMap();
+                        return;
+                    }
+
+                    // Shadow mode: toggle shadow quadrant bits
+                    if (State.mapEditMode === 'shadow') {
+                        UI._pushUndo(State.currentMap);
+                        UI._shadowPaint(e, mapData);
+                        mp.painting = true;
+                        mp.shadowMode = true;
+                        return;
+                    }
+
+                    if (State.mapTool === 'pencil' || State.mapTool === 'fill' || State.mapTool === 'eraser') {
+                        if (State.mapTool === 'pencil' || State.mapTool === 'eraser') UI._pushUndo(State.currentMap);
+                        mp.painting = true;
+                        mp.lastPaintTile = mx + ',' + my;
+                        UI.mapSetTile(mx, my);
+                    } else if (State.mapTool === 'rect') {
+                        UI._pushUndo(State.currentMap);
+                        mp.rectStart = [mx, my];
+                    }
+                });
+
+                // --- Mouse up ---
+                wrap.addEventListener('mouseup', (e) => {
+                    if (State.mapPanning) {
+                        State.mapPanning = false;
+                        State.mapPanStart = null;
+                        wrap.classList.remove('panning');
+                        return;
+                    }
+
+                    // 이벤트 드래그 종료
+                    if (State._eventDragging) {
+                        State._eventDragging = false;
+                        State._eventDragStart = null;
+                    }
+
+                    const mapData = State.maps[State.currentMap];
+                    if (!mapData) return;
+                    const w = mapData.width, h = mapData.height;
+                    const mp = State._mapPaint;
+
+                    // SRPG 구역 사각형 페인팅 완료
+                    if (UI._srpgZoneRectStart && UI._srpgZonePaint && UI._srpgZonePaint.active) {
+                        const [mx, my] = UI._tileAtEvent(e);
+                        const ex = Math.max(0, Math.min(w - 1, mx));
+                        const ey = Math.max(0, Math.min(h - 1, my));
+                        UI._srpgPaintZoneRect(UI._srpgZoneRectStart.x, UI._srpgZoneRectStart.y, ex, ey);
+                        UI._srpgZoneRectStart = null;
+                        var md = State.maps[State.currentMap];
+                        if (md) UI._refreshSrpgUnitPalette(md); // 통계 갱신
+                    }
+
+                    if (State.mapTool === 'rect' && mp.rectStart) {
+                        const [mx, my] = UI._tileAtEvent(e);
+                        const ex = Math.max(0, Math.min(w - 1, mx));
+                        const ey = Math.max(0, Math.min(h - 1, my));
+                        UI.mapRectFill(mapData,
+                            State.mapEditLayer,
+                            mp.rectStart[0], mp.rectStart[1], ex, ey);
+                        mp.rectStart = null;
+                        UI.drawMap();
+                    }
+                    if (mp.painting) {
+                        mp.painting = false;
+                    State._regionPaintUndo = false;
+                        mp.lastPaintTile = null;
+                        mp.shadowMode = false;
+                        UI.drawMap();
+                    }
+                    mp.painting = false;
+                    State._regionPaintUndo = false;
+                    mp.lastPaintTile = null;
+                    mp.shadowMode = false;
+                });
+
+                // --- Context menu (이벤트 모드) ---
+                wrap.addEventListener('contextmenu', (e) => {
+                    if (State.mapEditMode !== 'event') return;
+                    e.preventDefault();
+                    const mapData = State.maps[State.currentMap];
+                    if (!mapData) return;
+                    const [mx, my] = UI._tileAtEvent(e);
+                    const w = mapData.width, h = mapData.height;
+                    if (mx < 0 || mx >= w || my < 0 || my >= h) return;
+
+                    const events = mapData.events || [];
+                    let foundIdx = -1;
+                    events.forEach((ev, i) => { if (ev && ev.x === mx && ev.y === my) foundIdx = i; });
+
+                    UI._closeContextMenu();
+                    const menu = document.createElement('div');
+                    menu.className = 'ctx-menu';
+                    const items = [];
+                    if (foundIdx >= 0) {
+                        items.push({ label: '이벤트 편집', action: () => { UI._closeContextMenu(); UI._editEvent(foundIdx); } });
+                        items.push({ label: '이벤트 복제', action: () => { UI._closeContextMenu(); UI._duplicateEvent(foundIdx); } });
+                        items.push({ sep: true });
+                        items.push({ label: '이벤트 삭제', action: () => { UI._closeContextMenu(); UI._deleteEvent(foundIdx); } });
+                    } else {
+                        items.push({ label: '새 이벤트 추가', action: () => { UI._closeContextMenu(); UI._addEvent(mx, my); } });
+                    }
+                    items.forEach(it => {
+                        if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-menu-sep'; menu.appendChild(s); }
+                        else {
+                            const d = document.createElement('div'); d.className = 'ctx-menu-item'; d.textContent = it.label;
+                            if (it.action) d.onclick = it.action; menu.appendChild(d);
+                        }
+                    });
+                    menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
+                    document.body.appendChild(menu);
+                    setTimeout(() => {
+                        const handler = (ev2) => { if (!menu.contains(ev2.target)) { UI._closeContextMenu(); document.removeEventListener('mousedown', handler); } };
+                        document.addEventListener('mousedown', handler);
+                    }, 0);
+                });
+
+                // --- Mouse leave ---
+                wrap.addEventListener('mouseleave', () => {
+                    const prev = State.mapHoverTile;
+                    State.mapHoverTile = null;
+                    const mp = State._mapPaint;
+                    mp.painting = false;
+                    State._regionPaintUndo = false;
+                    mp.lastPaintTile = null;
+                    if (prev) {
+                        UI._refreshOverlay();
+                    }
+                    // Stop panning if mouse leaves
+                    if (State.mapPanning) {
+                        State.mapPanning = false;
+                        State.mapPanStart = null;
+                        wrap.classList.remove('panning');
+                    }
+                });
+
+                // --- Context menu (right click) ---
+                wrap.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    // Eyedropper: in tile edit mode, right-click picks up the tile
+                    if (State.mapEditMode === 'tile') {
+                        UI._eyedropperPick(e);
+                        return;
+                    }
+                    UI._showMapContextMenu(e);
+                });
+            },
+
+            // Close any open context menu
+            _closeContextMenu() {
+                const old = document.querySelector('.ctx-menu');
+                if (old) old.remove();
+            },
+
+            // Eyedropper: pick up tile at right-clicked position
+            _eyedropperPick(e) {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                const [mx, my] = UI._tileAtEvent(e);
+                const w = mapData.width, h = mapData.height;
+                if (mx < 0 || mx >= w || my < 0 || my >= h) return;
+
+                // Sample topmost non-zero tile from current layer, then fall through layers
+                const layer = State.mapEditLayer;
+                let tileId = 0;
+                // Try current layer first, then descend
+                for (let l = layer; l >= 0; l--) {
+                    const idx = l * w * h + my * w + mx;
+                    const t = mapData.data[idx] || 0;
+                    if (t !== 0) { tileId = t; break; }
+                }
+                if (tileId === 0) return; // nothing to pick
+
+                // Get base tile id (strip autotile shape)
+                const baseTile = UI._getBaseTileId(tileId);
+
+                // Determine which sheet this tile belongs to
+                let sheet = '';
+                if (baseTile >= RMMZ.TILE_ID_A4) sheet = 'A4';
+                else if (baseTile >= RMMZ.TILE_ID_A3) sheet = 'A3';
+                else if (baseTile >= RMMZ.TILE_ID_A2) sheet = 'A2';
+                else if (baseTile >= RMMZ.TILE_ID_A1) sheet = 'A1';
+                else if (baseTile >= RMMZ.TILE_ID_A5) sheet = 'A5';
+                else if (baseTile >= RMMZ.TILE_ID_E) sheet = 'E';
+                else if (baseTile >= RMMZ.TILE_ID_D) sheet = 'D';
+                else if (baseTile >= RMMZ.TILE_ID_C) sheet = 'C';
+                else sheet = 'B';
+
+                // Switch to the correct sheet tab and set selected tile
+                State.selectedTile = baseTile;
+                State.selectedTileRect = null;
+                if (State.selectedTileSheet !== sheet) {
+                    UI.mapChangeTileset(sheet);
+                } else {
+                    UI.refreshTilePalette();
+                }
+
+                // Visual feedback: brief cursor flash
+                const canvas = document.getElementById('mapCanvas');
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    const zoom = State.mapZoomLevel;
+                    ctx.save();
+                    ctx.setTransform(zoom, 0, 0, zoom, 0, 0);
+                    ctx.strokeStyle = '#00ff88';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(mx * 48 + 2, my * 48 + 2, 44, 44);
+                    ctx.restore();
+                    // Clear flash after short delay
+                    setTimeout(() => UI.drawMap(), 300);
+                }
+            },
+
+            _showMapContextMenu(e) {
+                UI._closeContextMenu();
+                const mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                const [mx, my] = UI._tileAtEvent(e);
+                const w = mapData.width, h = mapData.height;
+                const inBounds = mx >= 0 && mx < w && my >= 0 && my < h;
+                const events = mapData.events || [];
+                const evHere = inBounds ? events.find(ev => ev && ev.x === mx && ev.y === my) : null;
+
+                const menu = document.createElement('div');
+                menu.className = 'ctx-menu';
+
+                const items = [];
+                if (inBounds) {
+                    items.push({ label: `타일 (${mx}, ${my})`, disabled: true });
+                    items.push({ sep: true });
+                    if (evHere) {
+                        items.push({ label: '이벤트 편집: ' + (evHere.name || 'EV'), action: () => {
+                            // Could navigate to event editor
+                            UI._closeContextMenu();
+                        }});
+                    } else {
+                        items.push({ label: '새 이벤트 생성', action: () => {
+                            UI._closeContextMenu();
+                            UI._addEvent(mx, my);
+                        }});
+                        if (UI._srpgPlaceUnit && UI._srpgPlaceUnit._active) {
+                            items.push({ label: 'SRPG 유닛 배치', action: () => {
+                                UI._closeContextMenu();
+                                UI._srpgPlaceUnitAt(mx, my);
+                            }});
+                        }
+                        items.push({ label: 'SRPG 컨트롤러 생성', action: () => { UI._closeContextMenu(); UI._srpgAutoGenController(); } });
+                    }
+                    items.push({ sep: true });
+                }
+                items.push({ label: '맵 속성...', action: () => { UI._closeContextMenu(); UI.mapShowProperties(); } });
+                items.push({ label: '줌 초기화 (100%)', action: () => { UI._closeContextMenu(); State.mapPanX = 0; State.mapPanY = 0; UI.mapZoom(1); } });
+                items.push({ sep: true });
+                items.push({ label: '격자 ' + (State.mapShowGrid ? '끄기' : '켜기'), action: () => { UI._closeContextMenu(); UI.mapToggleGrid(); } });
+
+                items.forEach(it => {
+                    if (it.sep) {
+                        const sep = document.createElement('div');
+                        sep.className = 'ctx-menu-sep';
+                        menu.appendChild(sep);
+                    } else {
+                        const div = document.createElement('div');
+                        div.className = 'ctx-menu-item' + (it.disabled ? ' disabled' : '');
+                        div.textContent = it.label;
+                        if (it.action) div.onclick = it.action;
+                        menu.appendChild(div);
+                    }
+                });
+
+                // Position
+                menu.style.left = e.clientX + 'px';
+                menu.style.top = e.clientY + 'px';
+                document.body.appendChild(menu);
+
+                // Adjust if off screen
+                const rect = menu.getBoundingClientRect();
+                if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
+                if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+
+                // Close on click outside
+                setTimeout(() => {
+                    const closeHandler = (ev) => {
+                        if (!menu.contains(ev.target)) { UI._closeContextMenu(); document.removeEventListener('mousedown', closeHandler); }
+                    };
+                    document.addEventListener('mousedown', closeHandler);
+                }, 0);
+            },
+
+            // ===================== PROJECT SWITCHER =====================
+            _updateProjectBadge() {
+                const badge = document.getElementById('projectNameBadge');
+                if (!badge) return;
+                const name = State.projectName || State.database?.system?.gameTitle || '(프로젝트 없음)';
+                if (window.__RMMZ_GITHUB) {
+                    badge.textContent = name + ' [GitHub]';
+                    badge.style.borderColor = '#238636';
+                    badge.style.color = '#3fb950';
+                } else {
+                    badge.textContent = name;
+                    badge.style.borderColor = '#e94560';
+                    badge.style.color = '#e94560';
+                }
+                badge.title = State.projectPath ? State.projectPath : '프로젝트 교체';
+            },
+
+            showProjectSwitcher() {
+                const body = document.getElementById('projectSwitcherBody');
+                const isServer = !!window.__RMMZ_SERVER;
+
+                let html = '';
+
+                // Current project info
+                const curName = State.projectName || State.database?.system?.gameTitle || '없음';
+                const mapCount = Object.keys(State.maps || {}).length;
+                const dbCount = Object.keys(State.database || {}).length;
+                html += `<div style="background:#0f3460;border-radius:6px;padding:12px;margin-bottom:16px;">
+                    <div style="color:#e94560;font-weight:bold;margin-bottom:4px;">현재 프로젝트</div>
+                    <div style="color:#eee;font-size:0.95em;">${curName}</div>
+                    <div style="color:#888;font-size:0.8em;margin-top:4px;">DB ${dbCount}종 / 맵 ${mapCount}개${State.projectPath ? ' · ' + State.projectPath : ''}</div>
+                </div>`;
+
+                // Warning
+                html += `<div style="background:rgba(231,76,60,0.15);border:1px solid #e74c3c;border-radius:6px;padding:10px;margin-bottom:16px;font-size:0.85em;color:#e74c3c;">
+                    저장하지 않은 변경사항은 프로젝트 교체 시 사라집니다. 교체 전 반드시 저장하세요.
+                </div>`;
+
+                if (isServer) {
+                    // Server mode: list available projects or enter path
+                    html += `<div style="margin-bottom:12px;">
+                        <div style="color:#aaa;font-size:0.85em;margin-bottom:6px;">서버 프로젝트 경로 입력:</div>
+                        <div style="display:flex;gap:8px;">
+                            <input id="switchProjectPath" type="text" placeholder="예: Project2, /path/to/project"
+                                style="flex:1;padding:6px 10px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:4px;font-size:0.9em;"
+                                value="${State.projectPath || ''}">
+                            <button onclick="UI._switchServerProject()" style="padding:6px 16px;background:#e94560;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">로드</button>
+                        </div>
+                    </div>`;
+                    // Try fetching project list
+                    html += `<div id="serverProjectList" style="margin-top:8px;"><div style="color:#888;font-size:0.8em;">프로젝트 목록 로드 중...</div></div>`;
+                }
+
+                // File mode option (always available)
+                html += `<div style="border-top:1px solid #333;padding-top:12px;margin-top:8px;">
+                    <div style="color:#aaa;font-size:0.85em;margin-bottom:6px;">로컬 폴더에서 열기:</div>
+                    <button onclick="UI._switchLocalProject()" style="width:100%;padding:10px;background:#2563a0;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;font-weight:bold;">
+                        폴더 선택으로 프로젝트 열기
+                    </button>
+                </div>`;
+
+                // Return to loading screen option
+                html += `<div style="margin-top:12px;">
+                    <button onclick="UI._returnToLoadingScreen()" style="width:100%;padding:8px;background:transparent;color:#888;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:0.85em;">
+                        로딩 화면으로 돌아가기
+                    </button>
+                </div>`;
+
+                body.innerHTML = html;
+                document.getElementById('projectSwitcherModal').classList.add('active');
+
+                // If server mode, try to fetch project list
+                if (isServer) UI._fetchServerProjects();
+            },
+
+            closeProjectSwitcher() {
+                document.getElementById('projectSwitcherModal').classList.remove('active');
+            },
+
+            _resetProject() {
+                // Completely reset state
+                State.projectFiles = {};
+                State.database = {};
+                State.maps = {};
+                State.mapInfos = {};
+                State.currentMap = null;
+                State.currentEvent = null;
+                State.currentDBItem = null;
+                State.currentPlugin = null;
+                State.tilesetImages = {};
+                State.currentTileset = null;
+                State.selectedTile = 0;
+                State.eventCommands = [];
+                State.mapZoomLevel = 1;
+                State.mapPanX = 0;
+                State.mapPanY = 0;
+                State.mapHoverTile = null;
+                State.projectName = '';
+                State.projectPath = '';
+                State.undoStack = [];
+                State.redoStack = [];
+                State.mapEditLayer = 0;
+                State.mapEditMode = 'tile';
+                State.selectedTileRect = null;
+                // Stop preview if running
+                UI.previewStop();
+                // Reset canvas event binding flag
+                const wrap = document.getElementById('mapCanvasWrap');
+                if (wrap) wrap._bindDone = false;
+            },
+
+            async _switchServerProject() {
+                const pathInput = document.getElementById('switchProjectPath');
+                const path = pathInput?.value?.trim();
+                if (!path) return;
+
+                UI.closeProjectSwitcher();
+                const statusEl = document.getElementById('saveStatus');
+                statusEl.textContent = '프로젝트 로드 중...';
+                statusEl.style.color = '#e67e22';
+
+                try {
+                    const resp = await fetch('/api/load?project=' + encodeURIComponent(path));
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const data = await resp.json();
+
+                    UI._resetProject();
+                    State.projectPath = path;
+                    State.projectName = data.database?.system?.gameTitle || path;
+                    window.__RMMZ_PROJECT_PATH = path;
+
+                    API.loadProject(data);
+                    UI._updateProjectBadge();
+
+                    // Reload tileset images
+                    const firstMapId = Object.keys(data.maps || {})[0];
+                    if (firstMapId) UI._loadTilesetImages(parseInt(firstMapId));
+
+                    const dbCount = Object.keys(data.database || {}).length;
+                    const mapCount = Object.keys(data.maps || {}).length;
+                    statusEl.textContent = path + ': DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
+                    statusEl.style.color = '#2ecc71';
+                    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = '#aaa'; }, 4000);
+                } catch (e) {
+                    statusEl.textContent = '로드 실패: ' + e.message;
+                    statusEl.style.color = '#e74c3c';
+                }
+            },
+
+            _switchLocalProject() {
+                UI.closeProjectSwitcher();
+                // Create a fresh file input for selecting new project folder
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.webkitdirectory = true;
+                input.onchange = async () => {
+                    if (!input.files || input.files.length === 0) return;
+
+                    UI._resetProject();
+                    window.__RMMZ_SERVER = false;
+
+                    // Build file map
+                    for (let i = 0; i < input.files.length; i++) {
+                        const file = input.files[i];
+                        // Normalize path: remove the root folder prefix
+                        let path = file.webkitRelativePath;
+                        const firstSlash = path.indexOf('/');
+                        if (firstSlash >= 0) {
+                            State.projectPath = path.substring(0, firstSlash);
+                            path = path.substring(firstSlash + 1);
+                        }
+                        State.projectFiles[path] = file;
+                    }
+
+                    const statusEl = document.getElementById('saveStatus');
+                    statusEl.textContent = '프로젝트 로드 중...';
+                    statusEl.style.color = '#e67e22';
+
+                    try {
+                        // Load database
+                        const dbFiles = ['Actors', 'Classes', 'Skills', 'Items', 'Weapons', 'Armors', 'Enemies', 'Troops', 'States', 'Animations', 'CommonEvents', 'System', 'Tilesets'];
+                        for (const dbFile of dbFiles) {
+                            const file = State.projectFiles['data/' + dbFile + '.json'];
+                            if (file) {
+                                const text = await file.text();
+                                State.database[dbFile.toLowerCase()] = JSON.parse(text);
+                            }
+                        }
+
+                        // Load MapInfos
+                        const miFile = State.projectFiles['data/MapInfos.json'];
+                        if (miFile) State.mapInfos = JSON.parse(await miFile.text());
+
+                        // Load all map files
+                        for (const [path, file] of Object.entries(State.projectFiles)) {
+                            const m = path.match(/^data\/Map(\d{3})\.json$/);
+                            if (m) {
+                                const id = parseInt(m[1]);
+                                State.maps[id] = JSON.parse(await file.text());
+                            }
+                        }
+
+                        // Load tileset images
+                        for (const [path, file] of Object.entries(State.projectFiles)) {
+                            if (path.startsWith('img/tilesets/') && /\.(png|jpg)$/i.test(path)) {
+                                const dataUrl = await new Promise((res, rej) => {
+                                    const r = new FileReader();
+                                    r.onload = () => res(r.result); r.onerror = rej;
+                                    r.readAsDataURL(file);
+                                });
+                                const name = path.split('/').pop().split('.')[0];
+                                const img = new Image();
+                                img.src = dataUrl;
+                                State.tilesetImages[name] = img;
+                            }
+                        }
+
+                        State.projectName = State.database?.system?.gameTitle || State.projectPath || '로컬 프로젝트';
+
+                        // Show editor
+                        document.getElementById('loadingScreen').style.display = 'none';
+                        document.getElementById('editor').style.display = 'flex';
+                        UI._updateProjectBadge();
+                        UI.refreshDB();
+
+                        const dbCount = Object.keys(State.database).length;
+                        const mapCount = Object.keys(State.maps).length;
+                        statusEl.textContent = State.projectName + ': DB ' + dbCount + '종 / 맵 ' + mapCount + '개';
+                        statusEl.style.color = '#2ecc71';
+                        setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = '#aaa'; }, 4000);
+                    } catch (e) {
+                        statusEl.textContent = '로드 실패: ' + e.message;
+                        statusEl.style.color = '#e74c3c';
+                        console.error('[RMMZ Studio] Local project load error:', e);
+                    }
+                };
+                input.click();
+            },
+
+            _returnToLoadingScreen() {
+                if (!confirm('현재 프로젝트를 닫고 로딩 화면으로 돌아갑니다.\n저장하지 않은 변경사항은 사라집니다.')) return;
+                UI.closeProjectSwitcher();
+                UI._resetProject();
+                document.getElementById('editor').style.display = 'none';
+                document.getElementById('loadingScreen').style.display = 'flex';
+                UI._updateProjectBadge();
+            },
+
+            async _fetchServerProjects() {
+                try {
+                    const resp = await fetch('/api/projects');
+                    if (!resp.ok) return;
+                    const projects = await resp.json();
+                    const container = document.getElementById('serverProjectList');
+                    if (!container || !Array.isArray(projects) || projects.length === 0) {
+                        if (container) container.innerHTML = '<div style="color:#666;font-size:0.8em;">프로젝트 목록을 가져올 수 없습니다.</div>';
+                        return;
+                    }
+                    container.innerHTML = '<div style="color:#aaa;font-size:0.85em;margin-bottom:6px;">사용 가능한 프로젝트:</div>' +
+                        projects.map(p => `<div class="treeNode" style="padding:6px 10px;margin-bottom:2px;cursor:pointer;border-radius:4px;"
+                            onclick="document.getElementById('switchProjectPath').value='${p.path||p.name||p}';UI._switchServerProject()"
+                            oncontextmenu="return false;">
+                            <span style="color:#eee;">${p.name || p}</span>
+                            ${p.path ? '<span style="color:#666;font-size:0.75em;margin-left:8px;">' + p.path + '</span>' : ''}
+                        </div>`).join('');
+                } catch (e) {
+                    const container = document.getElementById('serverProjectList');
+                    if (container) container.innerHTML = '<div style="color:#666;font-size:0.8em;">/api/projects 없음 (경로 직접 입력)</div>';
+                }
+            },
+
+            showProjectInfo() {
+                // Quick project info tooltip on title click
+                const name = State.projectName || State.database?.system?.gameTitle || '없음';
+                const mapCount = Object.keys(State.maps || {}).length;
+                UI._showNotice('프로젝트: ' + name + ' | 맵: ' + mapCount + '개 | 경로: ' + (State.projectPath || '(서버)'));
+            },
+
+            mapSetLayer(layer) {
+                State.mapEditLayer = layer;
+                State.mapEditMode = 'tile';
+                // Update button styles
+                document.querySelectorAll('.layerBtn').forEach(b => b.classList.remove('active'));
+                const btn = document.getElementById('layerBtn' + layer);
+                if (btn) btn.classList.add('active');
+                document.querySelectorAll('.modeBtn').forEach(b => b.classList.remove('active'));
+                UI.drawMap();
+            },
+
+            _srpgPanelVisible: false,
+
+            mapToggleSrpgPanel() {
+                UI._srpgPanelVisible = !UI._srpgPanelVisible;
+                var tileC = document.getElementById('tilePaletteContainer');
+                var srpgC = document.getElementById('srpgPanelContainer');
+                var btn = document.getElementById('btnSrpgPanel');
+                if (UI._srpgPanelVisible) {
+                    if (tileC) tileC.style.display = 'none';
+                    if (srpgC) srpgC.style.display = '';
+                    if (btn) { btn.style.background = '#e94560'; btn.style.borderColor = '#ff6b81'; }
+                    var mapData = State.maps[State.currentMap];
+                    if (mapData) UI._refreshSrpgUnitPalette(mapData);
+                } else {
+                    if (tileC) tileC.style.display = '';
+                    if (srpgC) srpgC.style.display = 'none';
+                    if (btn) { btn.style.background = '#8e44ad'; btn.style.borderColor = '#9b59b6'; }
+                    // deactivate placement mode
+                    if (UI._srpgPlaceUnit) { UI._srpgPlaceUnit._active = false; UI._srpgPlaceUnit = null; }
+                }
+            },
+
+            mapSetEditMode(mode) {
+                State.mapEditMode = mode;
+                // Deselect layer buttons
+                document.querySelectorAll('.layerBtn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.modeBtn').forEach(b => b.classList.remove('active'));
+                const btn = document.getElementById('modeBtn' + mode.charAt(0).toUpperCase() + mode.slice(1));
+                if (btn) btn.classList.add('active');
+
+                if (mode === 'shadow') {
+                    State.mapEditLayer = 4;
+                } else if (mode === 'region') {
+                    State.mapEditLayer = 5;
+                    State.selectedTileSheet = 'R';
+                    UI.refreshTilePalette();
+                    // Update tab highlight
+                    document.querySelectorAll('.tileSheetTab').forEach(t => {
+                        const isActive = t.textContent.trim() === 'R';
+                        t.style.background = isActive ? '#2563a0' : '#333';
+                        t.style.color = isActive ? '#fff' : '#ccc';
+                    });
+                } else if (mode === 'passage') {
+                    // Passage is view-only overlay, keep current tile layer
+                }
+                UI.drawMap();
+            },
+
+            mapChangeLayer() {
+                UI.drawMap();
+            },
+
+            mapShowProperties() {
+                if (!State.currentMap || !State.maps[State.currentMap]) return;
+                const map = State.maps[State.currentMap];
+                const info = State.mapInfos?.[State.currentMap] || {};
+                const form = document.getElementById('mapPropertiesForm');
+
+                const row = (label, html) => `<div style="display:flex;align-items:center;margin-bottom:6px;gap:8px;">
+                    <label style="min-width:90px;color:#aaa;font-size:0.82em;text-align:right;">${label}</label>
+                    <div style="flex:1;">${html}</div>
+                </div>`;
+                const inp = (field, val, type='text', extra='') =>
+                    `<input data-field="${field}" type="${type}" value="${val??''}" ${extra} style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.82em;">`;
+                const chk = (field, val) =>
+                    `<input data-field="${field}" type="checkbox" ${val?'checked':''} style="margin:0;">`;
+                const sel = (field, val, opts) =>
+                    `<select data-field="${field}" style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.82em;">
+                    ${opts.map(o => `<option value="${o[0]}" ${val==o[0]?'selected':''}>${o[1]}</option>`).join('')}</select>`;
+
+                const scrollTypes = [[0,'고정'],[1,'가로 루프'],[2,'세로 루프'],[3,'가로+세로 루프']];
+                const tilesetOpts = (State.database?.tilesets||[]).map((t,i) => t ? [i, `${i}: ${t.name||'(이름없음)'}`] : null).filter(Boolean);
+
+                // 인카운터 리스트 HTML
+                const encList = map.encounterList || [];
+                let encHtml = '<div id="mapEncounterList">';
+                encList.forEach((enc, i) => {
+                    const troopName = State.database?.troops?.[enc.troopId]?.name || '';
+                    encHtml += `<div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;" data-enc-idx="${i}">
+                        <select data-enc-troop="${i}" style="flex:1;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.78em;">
+                        ${(State.database?.troops||[]).map((t,ti) => t ? `<option value="${ti}" ${enc.troopId===ti?'selected':''}>${ti}: ${t.name||''}</option>` : '').join('')}
+                        </select>
+                        <input data-enc-weight="${i}" type="number" value="${enc.weight||1}" min="1" max="9" style="width:36px;padding:2px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.78em;" title="가중치">
+                        <span style="cursor:pointer;color:#e94560;font-size:0.9em;" onclick="UI._removeEncounter(${i})" title="삭제">✕</span>
+                    </div>`;
+                });
+                encHtml += '</div><button type="button" onclick="UI._addEncounter()" style="padding:2px 8px;font-size:0.75em;background:#27ae60;color:#fff;border:none;border-radius:3px;cursor:pointer;margin-top:3px;">+ 추가</button>';
+
+                form.innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;max-height:70vh;overflow-y:auto;padding-right:4px;">
+                    <div>
+                        <div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.88em;">기본 설정</div>
+                        ${row('이름', inp('name', info.name||''))}
+                        ${row('표시명', inp('displayName', map.displayName||''))}
+                        ${row('너비', inp('width', map.width||17, 'number', 'min="1" max="256"'))}
+                        ${row('높이', inp('height', map.height||13, 'number', 'min="1" max="256"'))}
+                        ${row('타일셋', sel('tilesetId', map.tilesetId||1, tilesetOpts))}
+                        ${row('스크롤', sel('scrollType', map.scrollType||0, scrollTypes))}
+                        ${row('대시 금지', chk('disableDashing', map.disableDashing))}
+                        <div style="color:#e94560;font-weight:bold;margin:10px 0 6px;font-size:0.88em;">오디오</div>
+                        ${row('BGM 자동재생', chk('autoplayBgm', map.autoplayBgm))}
+                        ${row('BGM', inp('bgm_name', map.bgm?.name||'') + '<button type="button" class="pickBtn" data-pick-audio="bgm_name" data-audio-type="bgm" style="margin-left:4px;">선택</button>')}
+                        ${row('BGM 볼륨', inp('bgm_volume', map.bgm?.volume??90, 'number', 'min="0" max="100"'))}
+                        ${row('BGS 자동재생', chk('autoplayBgs', map.autoplayBgs))}
+                        ${row('BGS', inp('bgs_name', map.bgs?.name||'') + '<button type="button" class="pickBtn" data-pick-audio="bgs_name" data-audio-type="bgs" style="margin-left:4px;">선택</button>')}
+                        ${row('BGS 볼륨', inp('bgs_volume', map.bgs?.volume??90, 'number', 'min="0" max="100"'))}
+                    </div>
+                    <div>
+                        <div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.88em;">원경 (Parallax)</div>
+                        ${row('원경 이미지', inp('parallaxName', map.parallaxName||''))}
+                        ${row('가로 루프', chk('parallaxLoopX', map.parallaxLoopX))}
+                        ${row('세로 루프', chk('parallaxLoopY', map.parallaxLoopY))}
+                        ${row('가로 스크롤', inp('parallaxSx', map.parallaxSx||0, 'number'))}
+                        ${row('세로 스크롤', inp('parallaxSy', map.parallaxSy||0, 'number'))}
+                        ${row('원경 표시', chk('parallaxShow', map.parallaxShow!==false))}
+                        <div style="color:#e94560;font-weight:bold;margin:10px 0 6px;font-size:0.88em;">전투 배경</div>
+                        ${row('전투배경 지정', chk('specifyBattleback', map.specifyBattleback))}
+                        ${row('배경1', inp('battleback1Name', map.battleback1Name||''))}
+                        ${row('배경2', inp('battleback2Name', map.battleback2Name||''))}
+                        <div style="color:#e94560;font-weight:bold;margin:10px 0 6px;font-size:0.88em;">인카운터</div>
+                        ${row('보수', inp('encounterStep', map.encounterStep||30, 'number', 'min="1" max="999"'))}
+                        <div style="margin-left:98px;">${encHtml}</div>
+                        <div style="color:#e94560;font-weight:bold;margin:10px 0 6px;font-size:0.88em;">메모</div>
+                        <textarea data-field="note" rows="3" style="width:100%;padding:4px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.82em;resize:vertical;">${map.note||''}</textarea>
+                    </div>
+                </div>
+                <div style="margin-top:6px;padding-top:6px;border-top:1px solid #333;">
+                    <span style="color:#666;font-size:0.72em;">MAP${String(State.currentMap).padStart(3,'0')} | ${map.width}x${map.height} | 타일셋 ${map.tilesetId} | 이벤트 ${(map.events||[]).filter(Boolean).length}개</span>
+                </div>`;
+
+                document.getElementById('mapPropertiesModal').classList.add('active');
+            },
+
+            _addEncounter() {
+                const map = State.maps[State.currentMap];
+                if (!map) return;
+                if (!map.encounterList) map.encounterList = [];
+                map.encounterList.push({ regionSet: [], troopId: 1, weight: 1 });
+                UI.mapShowProperties(); // 모달 새로고침
+            },
+
+            _removeEncounter(idx) {
+                const map = State.maps[State.currentMap];
+                if (!map || !map.encounterList) return;
+                map.encounterList.splice(idx, 1);
+                UI.mapShowProperties();
+            },
+
+            closeMapPropertiesModal() {
+                document.getElementById('mapPropertiesModal').classList.remove('active');
+            },
+
+            /** SRPG 전투 모드 변경 시 모달 새로고침 */
+            _srpgModeChanged(sel) {
+                if (!State.currentMap || !State.maps[State.currentMap]) return;
+                const map = State.maps[State.currentMap];
+                // 현재 노트에 모드 태그 즉시 반영 (모달 새로고침 위해)
+                let note = map.note || '';
+                note = note.replace(/<srpgBattleMode:\w+>/i, '');
+                if (sel.value) note = (note.trim() ? note.trim() + '\n' : '') + '<srpgBattleMode:' + sel.value + '>';
+                map.note = note;
+                UI.mapShowProperties();
+            },
+
+            /** SRPG 팀 관계 매트릭스 토글 (적대↔동맹) */
+            _srpgToggleAlliance(teamA, teamB) {
+                if (!State.currentMap || !State.maps[State.currentMap]) return;
+                const map = State.maps[State.currentMap];
+                const key = Math.min(teamA, teamB) + '-' + Math.max(teamA, teamB);
+                let note = map.note || '';
+                const tag = '<srpgAlliance:' + key + '>';
+                if (note.includes(tag)) {
+                    // 동맹 → 적대 (태그 제거)
+                    note = note.replace(tag, '').replace(/\n{3,}/g, '\n\n').trim();
+                } else {
+                    // 적대 → 동맹 (태그 추가)
+                    note = (note.trim() ? note.trim() + '\n' : '') + tag;
+                }
+                map.note = note;
+                // 동맹 목록 캐시 (저장 시 사용)
+                const alliances = [...note.matchAll(/<srpgAlliance:(\d+-\d+)>/gi)].map(m => m[1]);
+                map._srpgAlliances = alliances;
+                UI.mapShowProperties();
+            },
+
+            saveMapProperties() {
+                if (!State.currentMap || !State.maps[State.currentMap]) return;
+                const map = State.maps[State.currentMap];
+                const info = State.mapInfos?.[State.currentMap];
+                const form = document.getElementById('mapPropertiesForm');
+                const v = (f) => form.querySelector(`[data-field="${f}"]`)?.value || '';
+                const n = (f) => parseInt(form.querySelector(`[data-field="${f}"]`)?.value) || 0;
+                const b = (f) => !!form.querySelector(`[data-field="${f}"]`)?.checked;
+
+                if (info) info.name = v('name');
+                map.displayName = v('displayName');
+                map.tilesetId = n('tilesetId');
+                map.scrollType = n('scrollType');
+                map.disableDashing = b('disableDashing');
+
+                // 오디오
+                map.autoplayBgm = b('autoplayBgm');
+                if (!map.bgm) map.bgm = { name: '', pan: 0, pitch: 100, volume: 90 };
+                map.bgm.name = v('bgm_name');
+                map.bgm.volume = n('bgm_volume');
+                map.autoplayBgs = b('autoplayBgs');
+                if (!map.bgs) map.bgs = { name: '', pan: 0, pitch: 100, volume: 90 };
+                map.bgs.name = v('bgs_name');
+                map.bgs.volume = n('bgs_volume');
+
+                // 원경
+                map.parallaxName = v('parallaxName');
+                map.parallaxLoopX = b('parallaxLoopX');
+                map.parallaxLoopY = b('parallaxLoopY');
+                map.parallaxSx = n('parallaxSx');
+                map.parallaxSy = n('parallaxSy');
+                map.parallaxShow = b('parallaxShow');
+
+                // 전투 배경
+                map.specifyBattleback = b('specifyBattleback');
+                map.battleback1Name = v('battleback1Name');
+                map.battleback2Name = v('battleback2Name');
+
+                // 인카운터
+                map.encounterStep = Math.max(1, n('encounterStep'));
+                const encDiv = document.getElementById('mapEncounterList');
+                if (encDiv) {
+                    const encItems = encDiv.querySelectorAll('[data-enc-idx]');
+                    map.encounterList = [];
+                    encItems.forEach((el, i) => {
+                        const troopSel = el.querySelector(`[data-enc-troop="${i}"]`);
+                        const weightInp = el.querySelector(`[data-enc-weight="${i}"]`);
+                        if (troopSel) {
+                            map.encounterList.push({
+                                regionSet: [],
+                                troopId: parseInt(troopSel.value) || 1,
+                                weight: parseInt(weightInp?.value) || 1
+                            });
+                        }
+                    });
+                }
+
+                // ─── SRPG 전투 설정 → 노트태그 반영 ───
+                let noteText = v('note');
+                // 기존 SRPG 태그 제거
+                noteText = noteText.replace(/<srpg(BattleMode|KoPolicy|Ambush|Teams|PlayerTeam|Alliance|Commander|Escort|EscortFollow|EscortGoal|EscortAI|Flag|FlagBase|CapPoint|CapCount|CapTurns|DefenseTurns|DefenseTarget|SpawnWave|EscapeRegion|EscapeCount|EscapeTurnLimit|VictoryEvent|DefeatEvent):[^>]*>/gi, '').replace(/\n{3,}/g, '\n\n').trim();
+                const srpgMode = form.querySelector('[data-srpg="battleMode"]');
+                if (srpgMode && srpgMode.value) {
+                    let tags = [];
+                    tags.push('<srpgBattleMode:' + srpgMode.value + '>');
+                    const koEl = form.querySelector('[data-srpg="koPolicy"]');
+                    if (koEl) tags.push('<srpgKoPolicy:' + koEl.value + '>');
+                    const ambEl = form.querySelector('[data-srpg="ambush"]');
+                    if (ambEl) tags.push('<srpgAmbush:' + ambEl.value + '>');
+                    // 참전 팀
+                    const teamChecks = form.querySelectorAll('[data-srpg-team]');
+                    const activeTeams = [];
+                    teamChecks.forEach(cb => { if (cb.checked) activeTeams.push(cb.dataset.srpgTeam); });
+                    if (activeTeams.length > 0) tags.push('<srpgTeams:' + activeTeams.join(',') + '>');
+                    // 모드별 추가 파라미터
+                    const srpgVal = (n) => { const el = form.querySelector('[data-srpg="'+n+'"]'); return el ? el.value : ''; };
+                    if (srpgMode.value === 'defense') {
+                        const dt = srpgVal('defenseTurns'); if (dt) tags.push('<srpgDefenseTurns:' + dt + '>');
+                    }
+                    if (srpgMode.value === 'escape') {
+                        const ec = srpgVal('escapeCount'); if (ec) tags.push('<srpgEscapeCount:' + ec + '>');
+                        const el = srpgVal('escapeTurnLimit'); if (el) tags.push('<srpgEscapeTurnLimit:' + el + '>');
+                        const er = srpgVal('escapeRegion'); if (er) tags.push('<srpgEscapeRegion:' + er + '>');
+                    }
+                    if (srpgMode.value === 'domination') {
+                        const cc = srpgVal('capCount'); if (cc) tags.push('<srpgCapCount:' + cc + '>');
+                        const ct = srpgVal('capTurns'); if (ct) tags.push('<srpgCapTurns:' + ct + '>');
+                    }
+                    // 동맹 태그 보존 (UI에서 토글한 결과)
+                    if (map._srpgAlliances) {
+                        map._srpgAlliances.forEach(a => tags.push('<srpgAlliance:' + a + '>'));
+                    }
+                    noteText = (noteText ? noteText + '\n' : '') + tags.join('\n');
+                }
+                map.note = noteText;
+
+                // 리사이즈
+                const newW = Math.max(1, Math.min(256, n('width')));
+                const newH = Math.max(1, Math.min(256, n('height')));
+                if (newW !== map.width || newH !== map.height) {
+                    UI._resizeMapData(map, newW, newH);
+                }
+
+                UI.closeMapPropertiesModal();
+                UI.refreshMapList();
+                UI._loadTilesetImages(State.currentMap);
+            },
+
+            _addEvent(x, y) {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                if (!mapData.events) mapData.events = [null];
+                // 새 이벤트 ID: events 배열 길이
+                const newId = mapData.events.length;
+                const ev = {
+                    id: newId,
+                    name: 'EV' + String(newId).padStart(3, '0'),
+                    note: '',
+                    pages: [{
+                        conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false,
+                            selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false,
+                            switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+                        directionFix: false,
+                        image: { tileId: 0, characterName: '', direction: 2, pattern: 1, characterIndex: 0 },
+                        list: [{ code: 0, indent: 0, parameters: [] }],
+                        moveFrequency: 3, moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+                        moveSpeed: 3, moveType: 0, priorityType: 1, stepAnime: false,
+                        through: false, trigger: 0, walkAnime: true
+                    }],
+                    x: x, y: y
+                };
+                mapData.events.push(ev);
+                State._selectedEventIdx = newId;
+                UI.drawMap();
+                UI._showNotice(ev.name + ' 추가됨 (' + x + ',' + y + ')');
+            },
+
+            _editEvent(evIdx) {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData || !mapData.events?.[evIdx]) return;
+                const ev = mapData.events[evIdx];
+                State._selectedEventIdx = evIdx;
+                // 간이 이벤트 편집 모달
+                const name = prompt('이벤트 이름:', ev.name || '');
+                if (name !== null) ev.name = name;
+                const note = prompt('이벤트 메모:', ev.note || '');
+                if (note !== null) ev.note = note;
+                UI.drawMap();
+            },
+
+            _duplicateEvent(evIdx) {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData || !mapData.events?.[evIdx]) return;
+                const src = mapData.events[evIdx];
+                const newId = mapData.events.length;
+                const dup = JSON.parse(JSON.stringify(src));
+                dup.id = newId;
+                dup.name = (src.name || 'EV') + ' (복사)';
+                dup.x = Math.min(src.x + 1, (mapData.width || 17) - 1);
+                mapData.events.push(dup);
+                State._selectedEventIdx = newId;
+                UI.drawMap();
+                UI._showNotice(dup.name + ' 복제됨');
+            },
+
+            _deleteEvent(evIdx) {
+                const mapData = State.maps[State.currentMap];
+                if (!mapData || !mapData.events?.[evIdx]) return;
+                const evName = mapData.events[evIdx].name || 'EV' + evIdx;
+                if (!confirm(evName + '을(를) 삭제하시겠습니까?')) return;
+                mapData.events[evIdx] = null;
+                if (State._selectedEventIdx === evIdx) State._selectedEventIdx = null;
+                UI.drawMap();
+                UI._showNotice(evName + ' 삭제됨');
+            },
+
+            _refreshMapEventList(mapData) {
+                // 이벤트 모드에서 좌측 맵 리스트 영역 아래에 이벤트 목록 표시
+                let evPanel = document.getElementById('mapEventPanel');
+                if (!evPanel) {
+                    evPanel = document.createElement('div');
+                    evPanel.id = 'mapEventPanel';
+                    evPanel.style.cssText = 'border-top:1px solid #333;margin-top:8px;padding-top:8px;font-size:0.82em;';
+                    document.getElementById('mapList').parentElement.appendChild(evPanel);
+                }
+                const events = mapData.events || [];
+                let html = '<div style="color:#e94560;font-weight:bold;margin-bottom:4px;">이벤트 목록</div>';
+                let count = 0;
+                events.forEach((ev, i) => {
+                    if (!ev) return;
+                    count++;
+                    const sel = (State._selectedEventIdx === i) ? 'background:#2a2a5e;' : '';
+                    const _note2 = ev.note || '';
+                    const _tm = _note2.match(/<srpgTeam:(\d+)>/i);
+                    const _um = _note2.match(/<srpgUnit:(actor|enemy)>/i);
+                    let _tid = _tm ? parseInt(_tm[1]) : (_um ? (_um[1]==='actor'?1:2) : 0);
+                    const _tcols = [null,'#0042FF','#FF0303','#1CE6B9','#540081','#FEBA0E','#20C000','#E55BB0','#959697'];
+                    const _dot = _tid > 0 ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+_tcols[_tid]+';margin-right:4px;vertical-align:middle;"></span>' : '';
+                    html += `<div class="treeNode" style="padding:2px 6px;font-size:0.85em;${sel}" 
+                        onclick="State._selectedEventIdx=${i};UI.drawMap();" 
+                        ondblclick="UI._editEvent(${i})">
+                        ${_dot}${ev.name||'EV'+i} (${ev.x},${ev.y})</div>`;
+                });
+                if (count === 0) html += '<div style="color:#666;font-size:0.8em;padding:4px;">이벤트 없음</div>';
+                evPanel.innerHTML = html;
+                evPanel.style.display = (State.mapEditMode === 'event') ? '' : 'none';
+            },
+
+            // ─── SRPG 유닛 배치 팔레트 ───
+            _srpgPlaceUnit: null,
+
+            _srpgSubTab: 'unit', // 'unit' | 'zone' | 'battle'
+
+            _refreshSrpgUnitPalette(mapData) {
+                var pal = document.getElementById('srpgPanelContainer');
+                if (!pal) return;
+                if (!UI._srpgPanelVisible) return;
+
+                var subTab = UI._srpgSubTab || 'unit';
+
+                // ── 서브 탭 바 ──
+                var h = '<div style="display:flex;gap:2px;margin-bottom:8px;">';
+                var stabs = [['unit','유닛 배치'],['zone','구역 설정'],['battle','전투 설정']];
+                stabs.forEach(function(st) {
+                    var isSel = (subTab === st[0]);
+                    h += '<button onclick="UI._srpgSwitchSubTab(\''+st[0]+'\')" style="flex:1;padding:4px 6px;font-size:0.8em;'
+                        + 'background:' + (isSel ? '#e94560' : '#222') + ';color:' + (isSel ? '#fff' : '#888') + ';'
+                        + 'border:1px solid ' + (isSel ? '#ff6b81' : '#444') + ';border-radius:4px;cursor:pointer;font-weight:' + (isSel ? 'bold' : 'normal') + ';">'
+                        + st[1] + '</button>';
+                });
+                h += '</div>';
+
+                if (subTab === 'zone') {
+                    h += UI._renderSrpgZoneTab(mapData);
+                    pal.innerHTML = h;
+                    return;
+                }
+                if (subTab === 'battle') {
+                    h += UI._renderSrpgBattleTab(mapData);
+                    pal.innerHTML = h;
+                    return;
+                }
+
+                // ── 유닛 배치 탭 (기존 코드) ──
+                var actors = State.database?.actors || [];
+                var enemies = State.database?.enemies || [];
+                var TCOL = [null,'#0042FF','#FF0303','#1CE6B9','#540081','#FEBA0E','#20C000','#E55BB0','#959697'];
+
+                var cur = UI._srpgPlaceUnit || {};
+                var selType = cur.type || 'actor';
+                var selTeam = cur.team || (selType === 'actor' ? 1 : 2);
+
+                h += '<div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.95em;">유닛 배치</div>';
+
+                // ── Unit type tabs: 액터 / 몬스터 ──
+                var types = [['actor','액터'],['enemy','몬스터']];
+                h += '<div style="display:flex;gap:3px;margin-bottom:8px;">';
+                types.forEach(function(tp) {
+                    var isSel = (selType === tp[0]);
+                    h += '<button onclick="UI._srpgSetPlaceType(\'' + tp[0] + '\')" style="flex:1;padding:4px 6px;font-size:0.85em;'
+                        + 'background:' + (isSel ? '#2563a0' : '#333') + ';color:' + (isSel ? '#fff' : '#aaa') + ';'
+                        + 'border:1px solid ' + (isSel ? '#4a8fd4' : '#555') + ';border-radius:4px;cursor:pointer;font-weight:' + (isSel ? 'bold' : 'normal') + ';">' + tp[1] + '</button>';
+                });
+                h += '</div>';
+
+                // ── Unit selector dropdown ──
+                h += '<select id="srpgPlaceUnitId" onchange="UI._srpgUpdatePlaceUnit()" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:4px;font-size:0.85em;margin-bottom:8px;">';
+                if (selType === 'actor') {
+                    actors.forEach(function(a) { if (a) h += '<option value="' + a.id + '"' + (cur.id === a.id ? ' selected' : '') + '>' + a.id + ': ' + (a.name || '???') + '</option>'; });
+                } else {
+                    enemies.forEach(function(e) { if (e) h += '<option value="' + e.id + '"' + (cur.id === e.id ? ' selected' : '') + '>' + e.id + ': ' + (e.name || '???') + '</option>'; });
+                }
+                h += '</select>';
+
+                // ── Team selector ──
+                h += '<div style="margin-bottom:8px;"><span style="color:#aaa;font-size:0.85em;">팀 배정: </span>';
+                for (var t = 1; t <= 8; t++) {
+                    var isSel = (selTeam === t);
+                    h += '<span onclick="UI._srpgSetPlaceTeam(' + t + ')" style="display:inline-block;width:20px;height:20px;'
+                        + 'line-height:20px;text-align:center;font-size:0.72em;font-weight:bold;color:#fff;cursor:pointer;'
+                        + 'margin-right:2px;border-radius:3px;border:2px solid ' + (isSel ? '#ffdd57' : 'transparent') + ';'
+                        + 'background:' + TCOL[t] + ';">' + t + '</span>';
+                }
+                h += '</div>';
+
+                // ── DB 정보 미리보기 (읽기 전용) ──
+                var dbEntry = null;
+                if (selType === 'actor') { dbEntry = actors[cur.id || 1]; }
+                else { dbEntry = enemies[cur.id || 1]; }
+
+                if (dbEntry) {
+                    var note = dbEntry.note || '';
+                    var movM = note.match(/<srpgMov:(\d+)>/i);
+                    var rngM = note.match(/<srpgAtkRange:(\d+)>/i);
+                    var fmM = note.match(/<srpgFireMode:(\w+)>/i);
+                    var objM = note.match(/<srpgObject:true>/i);
+                    var movVal = movM ? movM[1] : '-';
+                    var rngVal = rngM ? rngM[1] : '-';
+                    var fmVal = fmM ? fmM[1] : '-';
+                    h += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:0.8em;">';
+                    h += '<div style="color:#888;margin-bottom:3px;">DB 설정 (읽기 전용)</div>';
+                    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;color:#ccc;">';
+                    h += '<span>이동력: <b style="color:#fff;">' + movVal + '</b></span>';
+                    h += '<span>사거리: <b style="color:#fff;">' + rngVal + '</b></span>';
+                    h += '<span>발사: <b style="color:#fff;">' + fmVal + '</b></span>';
+                    if (objM) h += '<span style="color:#f39c12;">사물 유닛</span>';
+                    h += '</div></div>';
+                }
+
+                // ── Place button ──
+                var isActive = !!(UI._srpgPlaceUnit && UI._srpgPlaceUnit._active);
+                h += '<button onclick="UI._srpgTogglePlaceMode()" style="width:100%;padding:6px;font-size:0.9em;font-weight:bold;'
+                    + 'background:' + (isActive ? '#e94560' : '#27ae60') + ';color:#fff;border:none;border-radius:4px;cursor:pointer;margin-bottom:4px;">'
+                    + (isActive ? '배치 모드 해제' : '배치 모드 시작') + '</button>';
+
+                if (isActive) {
+                    h += '<div style="color:#ffd700;font-size:0.78em;text-align:center;margin-bottom:4px;">맵을 클릭하면 유닛이 배치됩니다</div>';
+                }
+
+                // ── Divider + auto-generate ──
+                h += '<div style="border-top:1px solid #333;margin-top:10px;padding-top:10px;">';
+                h += '<button onclick="UI._srpgAutoGenController()" style="width:100%;padding:5px;font-size:0.85em;background:#8e44ad;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-bottom:4px;" title="SRPG 컨트롤러 자동 생성">SRPG 컨트롤러 자동 생성</button>';
+                h += '<button onclick="UI._srpgAutoGenWinLose()" style="width:100%;padding:5px;font-size:0.85em;background:#2c3e50;color:#fff;border:none;border-radius:4px;cursor:pointer;" title="승리/패배 감시 자동 생성">승리/패배 감시 자동 생성</button>';
+                h += '</div>';
+
+                pal.innerHTML = h;
+            },
+
+            _srpgSwitchSubTab(tab) {
+                UI._srpgSubTab = tab;
+                // 구역/전투 탭 전환 시 배치 모드 해제
+                if (tab !== 'unit' && UI._srpgPlaceUnit && UI._srpgPlaceUnit._active) {
+                    UI._srpgPlaceUnit._active = false;
+                    UI._srpgPlaceUnit = null;
+                }
+                // 구역 페인팅 모드 해제
+                if (tab !== 'zone') {
+                    UI._srpgZonePaint = null;
+                }
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+                UI.drawMap(); // 오버레이 갱신
+            },
+
+            _srpgSetPlaceTeam(t) {
+                if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
+                UI._srpgPlaceUnit.team = t;
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _srpgSetPlaceType(tp) {
+                if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
+                var cur = UI._srpgPlaceUnit;
+                cur.type = tp;
+                if (tp === 'actor' && (!cur.team || cur.team >= 2)) cur.team = 1;
+                if (tp === 'enemy' && (!cur.team || cur.team < 2)) cur.team = 2;
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _srpgUpdatePlaceUnit() {
+                if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
+                var sel = document.getElementById('srpgPlaceUnitId');
+                if (sel) UI._srpgPlaceUnit.id = parseInt(sel.value) || 1;
+            },
+
+            _srpgTogglePlaceMode() {
+                if (UI._srpgPlaceUnit && UI._srpgPlaceUnit._active) {
+                    UI._srpgPlaceUnit._active = false;
+                    UI._srpgPlaceUnit = null;
+                } else {
+                    var sel = document.getElementById('srpgPlaceUnitId');
+                    if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
+                    var cur = UI._srpgPlaceUnit;
+                    cur._active = true;
+                    cur.type = cur.type || 'actor';
+                    cur.team = cur.team || (cur.type === 'actor' ? 1 : 2);
+                    if (sel) cur.id = parseInt(sel.value) || 1;
+                }
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _srpgPlaceUnitAt(x, y) {
+                var cur = UI._srpgPlaceUnit;
+                if (!cur || !cur._active) return false;
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return false;
+
+                var existing = (mapData.events || []).find(function(ev) { return ev && ev.x === x && ev.y === y; });
+                if (existing) {
+                    UI._showNotice('(' + x + ',' + y + ')에 이미 이벤트가 있습니다');
+                    return false;
+                }
+
+                var note = '';
+                var evName = '';
+                var charName = '', charIndex = 0;
+
+                if (cur.type === 'actor') {
+                    var actor = (State.database?.actors || [])[cur.id];
+                    evName = actor?.name || ('액터 ' + cur.id);
+                    charName = actor?.characterName || '';
+                    charIndex = actor?.characterIndex || 0;
+                    note = '<srpgUnit:actor>\n<srpgActorId:' + cur.id + '>';
+                    if (cur.team !== 1) note += '\n<srpgTeam:' + cur.team + '>';
+                } else {
+                    var enemy = (State.database?.enemies || [])[cur.id];
+                    evName = enemy?.name || ('몬스터 ' + cur.id);
+                    note = '<srpgUnit:enemy>\n<srpgEnemyId:' + cur.id + '>';
+                    if (cur.team !== 2) note += '\n<srpgTeam:' + cur.team + '>';
+                }
+
+                if (!mapData.events) mapData.events = [null];
+                var newId = mapData.events.length;
+                var ev = {
+                    id: newId, name: evName, note: note,
+                    pages: [{
+                        conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false,
+                            selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false,
+                            switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+                        directionFix: false,
+                        image: { tileId: 0, characterName: charName, direction: 2, pattern: 1, characterIndex: charIndex },
+                        list: [{ code: 0, indent: 0, parameters: [] }],
+                        moveFrequency: 3, moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+                        moveSpeed: 3, moveType: 0, priorityType: 1, stepAnime: false,
+                        through: false, trigger: 0, walkAnime: true
+                    }],
+                    x: x, y: y
+                };
+                mapData.events.push(ev);
+                State._selectedEventIdx = newId;
+                UI.drawMap();
+                UI._showNotice(evName + ' 배치됨 (' + x + ',' + y + ') [팀 ' + (cur.team||0) + ']');
+                return true;
+            },
+
+            // ═══════════════════════════════════════════
+            //  구역 설정 탭 렌더링
+            // ═══════════════════════════════════════════
+            _srpgZonePaint: null, // { type: string, regionId: number, active: bool }
+
+            _renderSrpgZoneTab(mapData) {
+                var ZONE_TYPES = [
+                    { label: '배치 구역 (공용)', rid: 200, color: '#3c78ff', abbr: '배' },
+                    { label: '배치 구역 (팀 1)', rid: 201, color: '#0042FF', abbr: 'T1' },
+                    { label: '배치 구역 (팀 2)', rid: 202, color: '#FF0303', abbr: 'T2' },
+                    { label: '배치 구역 (팀 3)', rid: 203, color: '#1CE6B9', abbr: 'T3' },
+                    { label: '배치 구역 (팀 4)', rid: 204, color: '#540081', abbr: 'T4' },
+                    { label: '점령 거점', rid: 210, color: '#a050ff', abbr: '점' },
+                    { label: '깃발 위치', rid: 211, color: '#ffdc28', abbr: '깃' },
+                    { label: '깃발 베이스', rid: 212, color: '#ffa028', abbr: '베' },
+                    { label: '탈출 구역', rid: 220, color: '#28c850', abbr: '탈' },
+                    { label: '호위 목적지', rid: 230, color: '#ff78b4', abbr: '호' },
+                    { label: '증원 스폰 (팀 2)', rid: 242, color: '#ff4444', abbr: '증2' },
+                    { label: '증원 스폰 (팀 3)', rid: 243, color: '#ff6644', abbr: '증3' },
+                ];
+                UI._ZONE_TYPES = ZONE_TYPES;
+
+                var cur = UI._srpgZonePaint || {};
+                var selRid = cur.regionId || 200;
+                var isActive = !!(cur.active);
+
+                var h = '<div style="color:#28c850;font-weight:bold;margin-bottom:6px;font-size:0.95em;">구역 설정</div>';
+
+                // 구역 종류 드롭다운
+                h += '<select id="srpgZoneType" onchange="UI._srpgSetZoneType(this.value)" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:4px;font-size:0.85em;margin-bottom:8px;">';
+                ZONE_TYPES.forEach(function(zt) {
+                    h += '<option value="' + zt.rid + '"' + (selRid === zt.rid ? ' selected' : '') + '>' + zt.label + ' (R' + zt.rid + ')</option>';
+                });
+                h += '</select>';
+
+                // 선택된 구역 색상 미리보기
+                var selZone = ZONE_TYPES.find(function(z) { return z.rid === selRid; }) || ZONE_TYPES[0];
+                h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">';
+                h += '<div style="width:24px;height:24px;border-radius:4px;background:' + selZone.color + ';opacity:0.7;border:1px solid #fff;"></div>';
+                h += '<span style="color:#ccc;font-size:0.85em;">' + selZone.label + '</span>';
+                h += '</div>';
+
+                // 브러시 모드
+                h += '<div style="display:flex;gap:4px;margin-bottom:8px;">';
+                var brushes = [['pencil','연필'],['rect','사각형'],['erase','지우개']];
+                var curBrush = cur.brush || 'pencil';
+                brushes.forEach(function(b) {
+                    var isSel = (curBrush === b[0]);
+                    h += '<button onclick="UI._srpgSetZoneBrush(\''+b[0]+'\')" style="flex:1;padding:3px;font-size:0.8em;'
+                        + 'background:' + (isSel ? '#2563a0' : '#333') + ';color:' + (isSel ? '#fff' : '#aaa') + ';'
+                        + 'border:1px solid ' + (isSel ? '#4a8fd4' : '#555') + ';border-radius:3px;cursor:pointer;">'
+                        + b[1] + '</button>';
+                });
+                h += '</div>';
+
+                // 페인팅 토글
+                h += '<button onclick="UI._srpgToggleZonePaint()" style="width:100%;padding:6px;font-size:0.9em;font-weight:bold;'
+                    + 'background:' + (isActive ? '#e94560' : '#27ae60') + ';color:#fff;border:none;border-radius:4px;cursor:pointer;margin-bottom:8px;">'
+                    + (isActive ? '구역 페인팅 해제' : '구역 페인팅 시작') + '</button>';
+
+                if (isActive) {
+                    h += '<div style="color:#ffd700;font-size:0.78em;text-align:center;margin-bottom:4px;">맵을 클릭/드래그하면 구역이 칠해집니다</div>';
+                }
+
+                // 구역 통계
+                h += '<div style="border-top:1px solid #333;margin-top:8px;padding-top:8px;">';
+                h += '<div style="color:#888;font-size:0.8em;margin-bottom:4px;">배치된 구역 현황</div>';
+                var stats = UI._countZoneRegions(mapData);
+                if (stats.length === 0) {
+                    h += '<div style="color:#666;font-size:0.78em;">아직 설정된 구역이 없습니다</div>';
+                } else {
+                    stats.forEach(function(s) {
+                        h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;font-size:0.78em;">';
+                        h += '<div style="width:12px;height:12px;border-radius:2px;background:' + s.color + ';opacity:0.7;"></div>';
+                        h += '<span style="color:#ccc;">' + s.label + ': <b style="color:#fff;">' + s.count + '</b>칸</span>';
+                        h += '</div>';
+                    });
+                }
+                h += '</div>';
+
+                return h;
+            },
+
+            _countZoneRegions(mapData) {
+                if (!mapData || !mapData.data) return [];
+                var w = mapData.width, h = mapData.height, size = w * h;
+                var counts = {};
+                for (var i = 0; i < size; i++) {
+                    var rid = (mapData.data[5 * size + i] || 0) >> 8;
+                    if (rid >= 200 && rid <= 248) counts[rid] = (counts[rid] || 0) + 1;
+                }
+                var result = [];
+                var ZONE_TYPES = UI._ZONE_TYPES || [];
+                ZONE_TYPES.forEach(function(zt) {
+                    if (counts[zt.rid]) result.push({ label: zt.label, color: zt.color, count: counts[zt.rid] });
+                });
+                return result;
+            },
+
+            _srpgSetZoneType(rid) {
+                if (!UI._srpgZonePaint) UI._srpgZonePaint = {};
+                UI._srpgZonePaint.regionId = Number(rid);
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _srpgSetZoneBrush(brush) {
+                if (!UI._srpgZonePaint) UI._srpgZonePaint = {};
+                UI._srpgZonePaint.brush = brush;
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _srpgToggleZonePaint() {
+                if (!UI._srpgZonePaint) UI._srpgZonePaint = { regionId: 200, brush: 'pencil', active: false };
+                UI._srpgZonePaint.active = !UI._srpgZonePaint.active;
+                // 유닛 배치 모드 해제
+                if (UI._srpgPlaceUnit && UI._srpgPlaceUnit._active) {
+                    UI._srpgPlaceUnit._active = false;
+                    UI._srpgPlaceUnit = null;
+                }
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            /** 구역 페인팅: 맵 클릭 시 리전 ID 설정 */
+            _srpgPaintZone(tx, ty) {
+                if (!UI._srpgZonePaint || !UI._srpgZonePaint.active) return false;
+                var mapData = State.maps[State.currentMap];
+                if (!mapData || !mapData.data) return false;
+                var w = mapData.width, h = mapData.height;
+                if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
+                var size = w * h;
+                var idx = 5 * size + (ty * w + tx);
+                var rid = UI._srpgZonePaint.regionId || 200;
+                var brush = UI._srpgZonePaint.brush || 'pencil';
+                if (brush === 'erase') rid = 0;
+                // 리전은 상위 8비트에 저장
+                var existing = mapData.data[idx] || 0;
+                mapData.data[idx] = (existing & 0xFF) | (rid << 8);
+                UI.drawMap();
+                return true;
+            },
+
+            /** 구역 페인팅: 사각형 브러시 */
+            _srpgPaintZoneRect(x1, y1, x2, y2) {
+                if (!UI._srpgZonePaint || !UI._srpgZonePaint.active) return;
+                var mapData = State.maps[State.currentMap];
+                if (!mapData || !mapData.data) return;
+                var w = mapData.width, h = mapData.height, size = w * h;
+                var rid = UI._srpgZonePaint.brush === 'erase' ? 0 : (UI._srpgZonePaint.regionId || 200);
+                var sx = Math.min(x1, x2), ex = Math.max(x1, x2);
+                var sy = Math.min(y1, y2), ey = Math.max(y1, y2);
+                for (var ty = sy; ty <= ey; ty++) {
+                    for (var tx = sx; tx <= ex; tx++) {
+                        if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+                        var idx = 5 * size + (ty * w + tx);
+                        var existing = mapData.data[idx] || 0;
+                        mapData.data[idx] = (existing & 0xFF) | (rid << 8);
+                    }
+                }
+                UI.drawMap();
+            },
+
+            // ═══════════════════════════════════════════
+            //  전투 설정 탭 렌더링
+            // ═══════════════════════════════════════════
+            _renderSrpgBattleTab(mapData) {
+                var note = mapData.note || '';
+                var MODES = [
+                    ['annihilation','섬멸전'],['commander','지휘관전'],['escort','호위전'],
+                    ['capture','깃발전'],['domination','점령전'],['defense','방어전'],['escape','도망전']
+                ];
+                var KO_POLICIES = [['recover','체력 회복'],['permadeath','영구 사망'],['remove','제거']];
+                var curMode = (note.match(/<srpgBattleMode:(\w+)>/i) || [,''])[1] || '';
+                var curKo = (note.match(/<srpgKoPolicy:(\w+)>/i) || [,''])[1] || 'recover';
+                var curAmbush = (note.match(/<srpgAmbush:(\w+)>/i) || [,''])[1] || 'none';
+                var curDeploy = !(/<srpgDeployEnabled:false>/i.test(note));
+                var curObj = (note.match(/<srpgObjective:([^>]+)>/i) || [,''])[1] || '';
+
+                var h = '<div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.95em;">전투 설정</div>';
+
+                // 전투 모드
+                h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">전투 모드</span>';
+                h += '<select data-srpg="battleMode" onchange="UI._srpgBattleSettingChanged()" style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-top:2px;">';
+                h += '<option value="">없음</option>';
+                MODES.forEach(function(m) {
+                    h += '<option value="' + m[0] + '"' + (curMode === m[0] ? ' selected' : '') + '>' + m[1] + ' (' + m[0] + ')</option>';
+                });
+                h += '</select></div>';
+
+                // 전투 목표 텍스트
+                h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">전투 목표 (배너 텍스트)</span>';
+                h += '<input data-srpg="objective" value="' + UI._escHtml(curObj) + '" style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-top:2px;" placeholder="예: 적을 전멸하라!"/></div>';
+
+                // 기습
+                h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">기습 설정</span>';
+                h += '<select data-srpg="ambush" style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-top:2px;">';
+                h += '<option value="none"' + (curAmbush === 'none' ? ' selected' : '') + '>기습 없음</option>';
+                for (var t = 1; t <= 4; t++) {
+                    h += '<option value="' + t + '"' + (curAmbush === String(t) ? ' selected' : '') + '>팀 ' + t + ' 기습</option>';
+                }
+                h += '</select></div>';
+
+                // 배치 페이즈
+                h += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:0.8em;cursor:pointer;">';
+                h += '<input type="checkbox" data-srpg="deployEnabled"' + (curDeploy ? ' checked' : '') + ' style="margin-right:4px;"/> 배치 페이즈 활성화';
+                h += '</label></div>';
+
+                // KO 정책
+                h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">KO 정책</span>';
+                h += '<select data-srpg="koPolicy" style="width:100%;padding:3px 6px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-top:2px;">';
+                KO_POLICIES.forEach(function(k) {
+                    h += '<option value="' + k[0] + '"' + (curKo === k[0] ? ' selected' : '') + '>' + k[1] + '</option>';
+                });
+                h += '</select></div>';
+
+                // 모드별 추가 설정
+                if (curMode === 'defense') {
+                    var dt = (note.match(/<srpgDefenseTurns:(\d+)>/i) || [,'10'])[1];
+                    h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">방어 턴 수</span>';
+                    h += '<input type="number" data-srpg="defenseTurns" value="' + dt + '" min="1" style="width:60px;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-left:6px;"/></div>';
+                }
+                if (curMode === 'escape') {
+                    var ec = (note.match(/<srpgEscapeCount:(\d+)>/i) || [,'3'])[1];
+                    var el = (note.match(/<srpgEscapeTurnLimit:(\d+)>/i) || [,'0'])[1];
+                    h += '<div style="margin-bottom:4px;"><span style="color:#aaa;font-size:0.8em;">탈출 인원</span>';
+                    h += '<input type="number" data-srpg="escapeCount" value="' + ec + '" min="1" style="width:60px;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-left:6px;"/></div>';
+                    h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">턴 제한 (0=무제한)</span>';
+                    h += '<input type="number" data-srpg="escapeTurnLimit" value="' + el + '" min="0" style="width:60px;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-left:6px;"/></div>';
+                    h += '<div style="color:#888;font-size:0.75em;margin-bottom:6px;">탈출 구역은 [구역 설정] 탭에서 페인팅하세요</div>';
+                }
+                if (curMode === 'domination') {
+                    var cc = (note.match(/<srpgCapCount:(\d+)>/i) || [,'2'])[1];
+                    var ct = (note.match(/<srpgCapTurns:(\d+)>/i) || [,'3'])[1];
+                    h += '<div style="margin-bottom:4px;"><span style="color:#aaa;font-size:0.8em;">점령 수</span>';
+                    h += '<input type="number" data-srpg="capCount" value="' + cc + '" min="1" style="width:60px;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-left:6px;"/></div>';
+                    h += '<div style="margin-bottom:6px;"><span style="color:#aaa;font-size:0.8em;">필요 턴</span>';
+                    h += '<input type="number" data-srpg="capTurns" value="' + ct + '" min="1" style="width:60px;padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.85em;margin-left:6px;"/></div>';
+                    h += '<div style="color:#888;font-size:0.75em;margin-bottom:6px;">점령 거점은 [구역 설정] 탭에서 페인팅하세요</div>';
+                }
+
+                // ── 증원 웨이브 에디터 ──
+                h += '<div style="border-top:1px solid #333;margin-top:8px;padding-top:8px;">';
+                h += '<div style="color:#aaa;font-size:0.8em;margin-bottom:4px;">증원 웨이브</div>';
+                // 기존 스폰 웨이브 파싱
+                var spawnWaves = [];
+                var spawnRe = /<srpgSpawnWave:(\d+),(\d+),(\d+),(\d+)>/gi;
+                var spawnZoneRe2 = /<srpgSpawnWave:(\d+),(\d+),zone,(\d+)>/gi;
+                var sm;
+                while ((sm = spawnRe.exec(note)) !== null) {
+                    spawnWaves.push({ turn: sm[1], enemyId: sm[2], x: sm[3], y: sm[4], zone: false });
+                }
+                while ((sm = spawnZoneRe2.exec(note)) !== null) {
+                    spawnWaves.push({ turn: sm[1], enemyId: sm[2], zoneTeam: sm[3], zone: true });
+                }
+                var enemies = State.database?.enemies || [];
+                spawnWaves.forEach(function(sw, idx) {
+                    var eName = enemies[Number(sw.enemyId)] ? enemies[Number(sw.enemyId)].name : '???';
+                    var locStr = sw.zone ? '스폰존 팀' + sw.zoneTeam : '(' + sw.x + ',' + sw.y + ')';
+                    h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:0.78em;color:#ccc;">';
+                    h += '<span>턴' + sw.turn + ': ' + eName + ' @ ' + locStr + '</span>';
+                    h += '<button onclick="UI._srpgRemoveSpawnWave(' + idx + ')" style="background:#e94560;color:#fff;border:none;border-radius:3px;padding:1px 6px;cursor:pointer;font-size:0.8em;">×</button>';
+                    h += '</div>';
+                });
+                if (spawnWaves.length === 0) {
+                    h += '<div style="color:#666;font-size:0.75em;">설정된 증원 없음</div>';
+                }
+                h += '<div style="display:flex;gap:3px;margin-top:4px;">';
+                h += '<input type="number" id="srpgSpawnTurn" placeholder="턴" min="1" value="3" style="width:40px;padding:2px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.78em;"/>';
+                h += '<select id="srpgSpawnEnemy" style="flex:1;padding:2px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.78em;">';
+                enemies.forEach(function(e) { if (e) h += '<option value="' + e.id + '">' + e.id + ':' + (e.name || '?') + '</option>'; });
+                h += '</select>';
+                h += '<button onclick="UI._srpgAddSpawnWave()" style="padding:2px 8px;background:#27ae60;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:0.78em;">+</button>';
+                h += '</div>';
+                h += '<div style="color:#888;font-size:0.7em;margin-top:2px;">좌표는 구역설정 탭의 증원 스폰 리전에서 자동 결정됩니다</div>';
+                h += '</div>';
+
+                // 승리/패배 커먼이벤트
+                var ceList = State.database?.commonEvents || [];
+                var vicEv = (note.match(/<srpgVictoryEvent:(\d+)>/i) || [,'0'])[1];
+                var defEv = (note.match(/<srpgDefeatEvent:(\d+)>/i) || [,'0'])[1];
+                h += '<div style="border-top:1px solid #333;margin-top:8px;padding-top:8px;">';
+                h += '<div style="color:#aaa;font-size:0.8em;margin-bottom:4px;">승리/패배 연출</div>';
+                h += '<div style="margin-bottom:4px;"><span style="color:#888;font-size:0.78em;">승리 이벤트: </span>';
+                h += '<select data-srpg="victoryEvent" style="padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.8em;">';
+                h += '<option value="0"' + (vicEv === '0' ? ' selected' : '') + '>없음</option>';
+                ceList.forEach(function(ce) { if (ce) h += '<option value="' + ce.id + '"' + (String(ce.id) === vicEv ? ' selected' : '') + '>' + ce.id + ': ' + (ce.name || '???') + '</option>'; });
+                h += '</select></div>';
+                h += '<div style="margin-bottom:4px;"><span style="color:#888;font-size:0.78em;">패배 이벤트: </span>';
+                h += '<select data-srpg="defeatEvent" style="padding:2px 4px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:3px;font-size:0.8em;">';
+                h += '<option value="0"' + (defEv === '0' ? ' selected' : '') + '>없음</option>';
+                ceList.forEach(function(ce) { if (ce) h += '<option value="' + ce.id + '"' + (String(ce.id) === defEv ? ' selected' : '') + '>' + ce.id + ': ' + (ce.name || '???') + '</option>'; });
+                h += '</select></div>';
+                h += '</div>';
+
+                // 저장 버튼
+                h += '<button onclick="UI._srpgSaveBattleSettings()" style="width:100%;padding:6px;font-size:0.85em;font-weight:bold;background:#2563a0;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-top:8px;">전투 설정 저장</button>';
+
+                // 자동 생성 버튼들
+                h += '<div style="border-top:1px solid #333;margin-top:10px;padding-top:10px;">';
+                h += '<button onclick="UI._srpgAutoGenController()" style="width:100%;padding:5px;font-size:0.85em;background:#8e44ad;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-bottom:4px;">SRPG 컨트롤러 자동 생성</button>';
+                h += '<button onclick="UI._srpgAutoGenWinLose()" style="width:100%;padding:5px;font-size:0.85em;background:#2c3e50;color:#fff;border:none;border-radius:4px;cursor:pointer;">승리/패배 감시 자동 생성</button>';
+                h += '</div>';
+
+                return h;
+            },
+
+            /** 전투 설정 탭 → 노트태그로 저장 */
+            _srpgSaveBattleSettings() {
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                var pal = document.getElementById('srpgPanelContainer');
+                if (!pal) return;
+
+                var v = function(name) {
+                    var el = pal.querySelector('[data-srpg="'+name+'"]');
+                    if (!el) return '';
+                    if (el.type === 'checkbox') return el.checked;
+                    return el.value || '';
+                };
+
+                var note = mapData.note || '';
+                // 기존 SRPG 태그 제거 (기존 _srpgModeChanged 방식과 동일)
+                note = note.replace(/<srpg(BattleMode|KoPolicy|Ambush|DeployEnabled|Objective|Teams|PlayerTeam|Alliance|Commander|Escort|EscortFollow|EscortGoal|EscortAI|Flag|FlagBase|CapPoint|CapCount|CapTurns|DefenseTurns|DefenseTarget|SpawnWave|EscapeRegion|EscapeCount|EscapeTurnLimit|VictoryEvent|DefeatEvent):[^>]*>/gi, '').replace(/\n{3,}/g, '\n\n').trim();
+
+                var mode = v('battleMode');
+                if (mode) {
+                    var tags = [];
+                    tags.push('<srpgBattleMode:' + mode + '>');
+                    var ko = v('koPolicy'); if (ko) tags.push('<srpgKoPolicy:' + ko + '>');
+                    var amb = v('ambush'); if (amb && amb !== 'none') tags.push('<srpgAmbush:' + amb + '>');
+                    var dep = v('deployEnabled');
+                    if (!dep) tags.push('<srpgDeployEnabled:false>');
+                    var obj = v('objective'); if (obj) tags.push('<srpgObjective:' + obj + '>');
+
+                    // 모드별 추가
+                    if (mode === 'defense') {
+                        var dt = v('defenseTurns'); if (dt) tags.push('<srpgDefenseTurns:' + dt + '>');
+                    }
+                    if (mode === 'escape') {
+                        var ec = v('escapeCount'); if (ec) tags.push('<srpgEscapeCount:' + ec + '>');
+                        var el = v('escapeTurnLimit'); if (el && el !== '0') tags.push('<srpgEscapeTurnLimit:' + el + '>');
+                    }
+                    if (mode === 'domination') {
+                        var cc = v('capCount'); if (cc) tags.push('<srpgCapCount:' + cc + '>');
+                        var ct = v('capTurns'); if (ct) tags.push('<srpgCapTurns:' + ct + '>');
+                    }
+
+                    // 승리/패배 이벤트
+                    var vic = v('victoryEvent'); if (vic && vic !== '0') tags.push('<srpgVictoryEvent:' + vic + '>');
+                    var def = v('defeatEvent'); if (def && def !== '0') tags.push('<srpgDefeatEvent:' + def + '>');
+
+                    // 동맹 태그 보존
+                    var allianceRe = /<srpgAlliance:[^>]+>/gi;
+                    var allianceMatch;
+                    var origNote = mapData.note || '';
+                    while ((allianceMatch = allianceRe.exec(origNote)) !== null) {
+                        tags.push(allianceMatch[0]);
+                    }
+
+                    note = (note ? note + '\n' : '') + tags.join('\n');
+                }
+                mapData.note = note.trim();
+                UI._showNotice('전투 설정 저장 완료');
+            },
+
+            /** 증원 웨이브 추가 */
+            _srpgAddSpawnWave() {
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                var turn = document.getElementById('srpgSpawnTurn');
+                var enemy = document.getElementById('srpgSpawnEnemy');
+                if (!turn || !enemy) return;
+                var t = turn.value || '3', eid = enemy.value || '1';
+                // 스폰존 방식으로 추가 (팀2 기본)
+                var tag = '<srpgSpawnWave:' + t + ',' + eid + ',zone,2>';
+                mapData.note = (mapData.note || '').trim() + '\n' + tag;
+                UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            /** 증원 웨이브 제거 */
+            _srpgRemoveSpawnWave(idx) {
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                var note = mapData.note || '';
+                var allRe = /<srpgSpawnWave:[^>]+>/gi;
+                var matches = [];
+                var m;
+                while ((m = allRe.exec(note)) !== null) matches.push(m);
+                if (idx >= 0 && idx < matches.length) {
+                    note = note.replace(matches[idx][0], '').replace(/\n{3,}/g, '\n\n').trim();
+                    mapData.note = note;
+                }
+                UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            /** 전투 모드 변경 시 탭 새로고침 (모드별 추가 필드 표시) */
+            _srpgBattleSettingChanged() {
+                // 먼저 현재 값을 노트에 즉시 반영 (새로고침에 필요)
+                UI._srpgSaveBattleSettings();
+                var mapData = State.maps[State.currentMap];
+                if (mapData) UI._refreshSrpgUnitPalette(mapData);
+            },
+
+            _escHtml(str) {
+                if (!str) return '';
+                return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            },
+
+                        _srpgAutoGenController() {
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                var existing = (mapData.events || []).find(function(ev) { return ev && ((ev.name||'').indexOf('컨트롤러') >= 0 || (ev.name||'').indexOf('SRPG') >= 0); });
+                if (existing) {
+                    UI._showNotice('SRPG 컨트롤러가 이미 존재합니다 (EV' + existing.id + ')');
+                    return;
+                }
+                if (!mapData.events) mapData.events = [null];
+                var newId = mapData.events.length;
+                var ev = {
+                    id: newId, name: 'SRPG 컨트롤러', note: '',
+                    pages: [{
+                        conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false,
+                            selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false,
+                            switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+                        directionFix: false,
+                        image: { tileId: 0, characterName: '', direction: 2, pattern: 1, characterIndex: 0 },
+                        list: [
+                            { code: 356, indent: 0, parameters: ['SrpgManager startBattle'] },
+                            { code: 0, indent: 0, parameters: [] }
+                        ],
+                        moveFrequency: 3, moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+                        moveSpeed: 3, moveType: 0, priorityType: 0, stepAnime: false,
+                        through: true, trigger: 3, walkAnime: false
+                    }],
+                    x: 0, y: 0
+                };
+                mapData.events.push(ev);
+                UI.drawMap();
+                UI._showNotice('SRPG 컨트롤러 이벤트 생성됨 (EV' + newId + ')');
+            },
+
+            _srpgAutoGenWinLose() {
+                var mapData = State.maps[State.currentMap];
+                if (!mapData) return;
+                var existing = (mapData.events || []).find(function(ev) { return ev && (ev.name||'').indexOf('승리') >= 0; });
+                if (existing) {
+                    UI._showNotice('승리/패배 감시 이벤트가 이미 존재합니다');
+                    return;
+                }
+
+                // 1) 승리/패배 커먼이벤트 자동 생성
+                var ce = State.database?.commonEvents;
+                if (!ce) { UI._showNotice('커먼이벤트 데이터 없음'); return; }
+                var vicCeId = 0, defCeId = 0;
+
+                // 기존에 'SRPG 승리' 커먼이벤트가 있는지 확인
+                ce.forEach(function(c) {
+                    if (!c) return;
+                    if (c.name === 'SRPG 승리 연출') vicCeId = c.id;
+                    if (c.name === 'SRPG 패배 연출') defCeId = c.id;
+                });
+
+                // 없으면 새로 생성
+                if (!vicCeId) {
+                    vicCeId = ce.length;
+                    ce.push({
+                        id: vicCeId, name: 'SRPG 승리 연출', switchId: 0, trigger: 0,
+                        list: [
+                            { code: 249, indent: 0, parameters: [{ name: 'Victory1', volume: 90, pitch: 100, pan: 0 }] },
+                            { code: 101, indent: 0, parameters: ['', 0, 0, 2, ''] },
+                            { code: 401, indent: 0, parameters: ['전투에서 승리했습니다!'] },
+                            { code: 223, indent: 0, parameters: [[0,0,0,0], 60, true] },
+                            { code: 0, indent: 0, parameters: [] }
+                        ]
+                    });
+                }
+                if (!defCeId) {
+                    defCeId = ce.length;
+                    ce.push({
+                        id: defCeId, name: 'SRPG 패배 연출', switchId: 0, trigger: 0,
+                        list: [
+                            { code: 249, indent: 0, parameters: [{ name: 'Defeat1', volume: 90, pitch: 100, pan: 0 }] },
+                            { code: 101, indent: 0, parameters: ['', 0, 0, 2, ''] },
+                            { code: 401, indent: 0, parameters: ['전투에서 패배했습니다...'] },
+                            { code: 353, indent: 0, parameters: [] },
+                            { code: 0, indent: 0, parameters: [] }
+                        ]
+                    });
+                }
+
+                // 2) 맵 노트에 승리/패배 이벤트 ID 등록
+                var note = mapData.note || '';
+                note = note.replace(/<srpg(VictoryEvent|DefeatEvent):[^>]*>/gi, '').trim();
+                note += '\n<srpgVictoryEvent:' + vicCeId + '>';
+                note += '\n<srpgDefeatEvent:' + defCeId + '>';
+                mapData.note = note.trim();
+
+                // 3) 안내용 맵 이벤트 (병렬 처리, 코멘트만)
+                if (!mapData.events) mapData.events = [null];
+                var newId = mapData.events.length;
+                var ev = {
+                    id: newId, name: '승리/패배 감시', note: '',
+                    pages: [{
+                        conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false,
+                            selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false,
+                            switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+                        directionFix: false,
+                        image: { tileId: 0, characterName: '', direction: 2, pattern: 1, characterIndex: 0 },
+                        list: [
+                            { code: 108, indent: 0, parameters: ['승리/패배 조건은 BattleModeChecker가 자동 처리합니다.'] },
+                            { code: 408, indent: 0, parameters: ['승리 CE:' + vicCeId + ' / 패배 CE:' + defCeId] },
+                            { code: 408, indent: 0, parameters: ['커스텀 연출이 필요하면 해당 커먼이벤트를 편집하세요.'] },
+                            { code: 0, indent: 0, parameters: [] }
+                        ],
+                        moveFrequency: 3, moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+                        moveSpeed: 3, moveType: 0, priorityType: 0, stepAnime: false,
+                        through: true, trigger: 4, walkAnime: false
+                    }],
+                    x: 0, y: 1
+                };
+                mapData.events.push(ev);
+                UI.drawMap();
+                UI._showNotice('승리/패배 커먼이벤트 생성 (CE' + vicCeId + '/' + defCeId + ') + 노트태그 등록 완료');
+            },
+
+            _resizeMapData(map, newW, newH) {
+                const oldW = map.width, oldH = map.height;
+                const oldData = map.data || [];
+                const layers = Math.floor(oldData.length / (oldW * oldH));
+                const newData = new Array(layers * newW * newH).fill(0);
+                for (let z = 0; z < layers; z++) {
+                    for (let y = 0; y < Math.min(oldH, newH); y++) {
+                        for (let x = 0; x < Math.min(oldW, newW); x++) {
+                            newData[z * newW * newH + y * newW + x] = oldData[z * oldW * oldH + y * oldW + x] || 0;
+                        }
+                    }
+                }
+                map.width = newW;
+                map.height = newH;
+                map.data = newData;
+            },
+
+            // ===================== EVENT METHODS =====================
+            eventAddCommand() {
+                document.getElementById('eventCommandModal').classList.add('active');
+                const content = document.getElementById('eventModalContent');
+                let html = '';
+                for (const [category, codes] of Object.entries(RMMZ_COMMAND_CATEGORIES)) {
+                    html += `<div style="margin-bottom: 15px;">
+                        <div style="color: #e94560; font-weight: bold; margin-bottom: 5px;">${category}</div>`;
+                    codes.forEach(code => {
+                        html += `<div class="treeNode" onclick="UI.eventInsertCommand(${code})" style="margin-left: 10px;">
+                            [${code}] ${RMMZ_COMMANDS[code]}
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+                content.innerHTML = html;
+            },
+
+            eventInsertCommand(code) {
+                const cmd = { code: parseInt(code), parameters: [], indent: 0 };
+                State.eventCommands.push(cmd);
+                UI.closeEventModal();
+                UI.refreshEventList();
+            },
+
+            closeEventModal() {
+                document.getElementById('eventCommandModal').classList.remove('active');
+            },
+
+            eventDeleteCommand() {
+                if (State.currentEvent !== null && State.eventCommands[State.currentEvent]) {
+                    State.eventCommands.splice(State.currentEvent, 1);
+                    State.currentEvent = null;
+                    UI.refreshEventList();
+                }
+            },
+
+            refreshEventList() {
+                const list = document.getElementById('eventCommandList');
+                list.innerHTML = '';
+                State.eventCommands.forEach((cmd, i) => {
+                    const li = document.createElement('li');
+                    const cmdName = RMMZ_COMMANDS[cmd.code] || `Unknown(${cmd.code})`;
+                    li.textContent = `[${cmd.code}] ${cmdName}`;
+                    li.dataset.id = i;
+                    li.onclick = () => UI.eventSelectCommand(i);
+                    if (State.currentEvent === i) li.classList.add('selected');
+                    list.appendChild(li);
+                });
+            },
+
+            eventSelectCommand(id) {
+                State.currentEvent = id;
+                UI.refreshEventList();
+                UI.renderEventForm();
+            },
+
+            renderEventForm() {
+                const container = document.getElementById('eventFormContainer');
+                const cmd = State.eventCommands[State.currentEvent];
+                if (!cmd) {
+                    container.innerHTML = '<div style="color: #aaa;">명령을 선택해주세요.</div>';
+                    return;
+                }
+
+                // Ensure parameters is an array
+                if (!Array.isArray(cmd.parameters)) {
+                    cmd.parameters = [];
+                }
+
+                let html = '<h3 style="color: #e94560; margin-bottom: 15px;">' +
+                    `[${cmd.code}] ${RMMZ_COMMANDS[cmd.code] || 'Unknown'}` + '</h3>';
+
+                // Helper to create form fields from array parameters
+                const createArrayField = (index, label, type, value) => {
+                    const fieldId = `param_${index}`;
+                    let input = '';
+                    if (type === 'checkbox') {
+                        input = `<input type="checkbox" data-index="${index}" ${value ? 'checked' : ''}>`;
+                    } else if (type === 'select') {
+                        const options = type.options || [];
+                        input = `<select data-index="${index}">`;
+                        options.forEach(([val, text]) => {
+                            input += `<option value="${val}" ${val == value ? 'selected' : ''}>${text}</option>`;
+                        });
+                        input += '</select>';
+                    } else if (type === 'textarea') {
+                        input = `<textarea data-index="${index}">${value}</textarea>`;
+                    } else {
+                        input = `<input type="${type}" data-index="${index}" value="${value}">`;
+                    }
+                    return `<div class="formGroup">
+                        <label>${label}</label>
+                        ${input}
+                    </div>`;
+                };
+
+                // Command-specific parameter editors
+                switch (cmd.code) {
+                    // Show Text (101) - params: [faceName, faceIndex, background, positionType, speakerName]
+                    case 101:
+                        html += createArrayField(0, '얼굴 이미지', 'text', cmd.parameters[0] || '');
+                        html += createArrayField(1, '얼굴 인덱스', 'number', cmd.parameters[1] ?? 0);
+                        html += createArrayField(2, '배경', 'number', cmd.parameters[2] ?? 0);
+                        html += createArrayField(3, '위치', 'number', cmd.parameters[3] ?? 2);
+                        html += createArrayField(4, '말하는 사람 이름', 'text', cmd.parameters[4] || '');
+                        break;
+
+                    // Show Text body (401) - params: [text]
+                    case 401:
+                        html += createArrayField(0, '메시지 텍스트', 'textarea', cmd.parameters[0] || '');
+                        break;
+
+                    // Show Choices (102) - params: [choices[], cancelType, defaultType, positionType, background]
+                    case 102:
+                        html += createArrayField(0, '선택지 (JSON 배열)', 'textarea', JSON.stringify(cmd.parameters[0] || []));
+                        html += createArrayField(1, '취소 타입', 'number', cmd.parameters[1] ?? -1);
+                        html += createArrayField(2, '기본값', 'number', cmd.parameters[2] ?? 0);
+                        html += createArrayField(3, '위치', 'number', cmd.parameters[3] ?? 2);
+                        html += createArrayField(4, '배경', 'number', cmd.parameters[4] ?? 0);
+                        break;
+
+                    // Control Switches (121) - params: [startId, endId, value]
+                    case 121:
+                        html += createArrayField(0, '시작 스위치 ID', 'number', cmd.parameters[0] ?? 1);
+                        html += createArrayField(1, '끝 스위치 ID', 'number', cmd.parameters[1] ?? 1);
+                        const switchOptions = [['0', 'ON'], ['1', 'OFF']];
+                        html += `<div class="formGroup"><label>값</label><select data-index="2">
+                            <option value="0" ${cmd.parameters[2] == 0 ? 'selected' : ''}>ON</option>
+                            <option value="1" ${cmd.parameters[2] == 1 ? 'selected' : ''}>OFF</option>
+                        </select></div>`;
+                        break;
+
+                    // Control Variables (122) - params: [startId, endId, operationType, operand, ...]
+                    case 122:
+                        html += createArrayField(0, '시작 변수 ID', 'number', cmd.parameters[0] ?? 1);
+                        html += createArrayField(1, '끝 변수 ID', 'number', cmd.parameters[1] ?? 1);
+                        html += `<div class="formGroup"><label>작업</label><select data-index="2">
+                            <option value="0" ${cmd.parameters[2] == 0 ? 'selected' : ''}>대입</option>
+                            <option value="1" ${cmd.parameters[2] == 1 ? 'selected' : ''}>가산</option>
+                            <option value="2" ${cmd.parameters[2] == 2 ? 'selected' : ''}>감산</option>
+                            <option value="3" ${cmd.parameters[2] == 3 ? 'selected' : ''}>곱셈</option>
+                            <option value="4" ${cmd.parameters[2] == 4 ? 'selected' : ''}>제산</option>
+                            <option value="5" ${cmd.parameters[2] == 5 ? 'selected' : ''}>나머지</option>
+                        </select></div>`;
+                        html += `<div class="formGroup"><label>피연산자 타입</label><select data-index="3">
+                            <option value="0" ${cmd.parameters[3] == 0 ? 'selected' : ''}>상수</option>
+                            <option value="1" ${cmd.parameters[3] == 1 ? 'selected' : ''}>변수</option>
+                            <option value="2" ${cmd.parameters[3] == 2 ? 'selected' : ''}>난수</option>
+                            <option value="3" ${cmd.parameters[3] == 3 ? 'selected' : ''}>스크립트</option>
+                        </select></div>`;
+                        html += createArrayField(4, '값/변수ID/스크립트', 'text', cmd.parameters[4] ?? '');
+                        break;
+
+                    // Conditional Branch (111) - complex, simplified version
+                    case 111:
+                        html += `<div class="formGroup"><label>조건 타입</label><select data-index="0">
+                            <option value="0" ${cmd.parameters[0] == 0 ? 'selected' : ''}>스위치</option>
+                            <option value="1" ${cmd.parameters[0] == 1 ? 'selected' : ''}>변수</option>
+                            <option value="2" ${cmd.parameters[0] == 2 ? 'selected' : ''}>아이템</option>
+                            <option value="3" ${cmd.parameters[0] == 3 ? 'selected' : ''}>배우</option>
+                        </select></div>`;
+                        html += createArrayField(1, '조건 ID', 'number', cmd.parameters[1] ?? 1);
+                        html += createArrayField(2, '조건값', 'text', cmd.parameters[2] ?? '');
+                        break;
+
+                    // Comment (108) - params: [text]
+                    case 108:
+                        html += createArrayField(0, '주석', 'textarea', cmd.parameters[0] || '');
+                        break;
+
+                    // Transfer Player (201) - params: [type, mapId, x, y, direction, fadeType]
+                    case 201:
+                        html += `<div class="formGroup"><label>타입</label><select data-index="0">
+                            <option value="0" ${cmd.parameters[0] == 0 ? 'selected' : ''}>직접 지정</option>
+                            <option value="1" ${cmd.parameters[0] == 1 ? 'selected' : ''}>변수로 지정</option>
+                        </select></div>`;
+                        html += createArrayField(1, '맵 ID', 'number', cmd.parameters[1] ?? 1);
+                        html += createArrayField(2, 'X 좌표', 'number', cmd.parameters[2] ?? 0);
+                        html += createArrayField(3, 'Y 좌표', 'number', cmd.parameters[3] ?? 0);
+                        html += `<div class="formGroup"><label>방향</label><select data-index="4">
+                            <option value="2" ${cmd.parameters[4] == 2 ? 'selected' : ''}>아래</option>
+                            <option value="4" ${cmd.parameters[4] == 4 ? 'selected' : ''}>왼쪽</option>
+                            <option value="6" ${cmd.parameters[4] == 6 ? 'selected' : ''}>오른쪽</option>
+                            <option value="8" ${cmd.parameters[4] == 8 ? 'selected' : ''}>위</option>
+                        </select></div>`;
+                        html += `<div class="formGroup"><label>페이드</label><select data-index="5">
+                            <option value="0" ${cmd.parameters[5] == 0 ? 'selected' : ''}>검정</option>
+                            <option value="1" ${cmd.parameters[5] == 1 ? 'selected' : ''}>하얀색</option>
+                            <option value="2" ${cmd.parameters[5] == 2 ? 'selected' : ''}>없음</option>
+                        </select></div>`;
+                        break;
+
+                    // Fadeout Screen (221) - params: [duration]
+                    case 221:
+                        html += createArrayField(0, '지속시간 (프레임)', 'number', cmd.parameters[0] ?? 30);
+                        break;
+
+                    // Fadein Screen (222) - params: [duration]
+                    case 222:
+                        html += createArrayField(0, '지속시간 (프레임)', 'number', cmd.parameters[0] ?? 30);
+                        break;
+
+                    // Tint Screen (223) - params: [tone[4], duration, waitForCompletion]
+                    case 223:
+                        html += createArrayField(0, '톤 (JSON: [r,g,b,gray])', 'text', JSON.stringify(cmd.parameters[0] || [0, 0, 0, 0]));
+                        html += createArrayField(1, '지속시간 (프레임)', 'number', cmd.parameters[1] ?? 60);
+                        html += createArrayField(2, '완료 대기', 'checkbox', cmd.parameters[2] ?? false);
+                        break;
+
+                    // Wait (230) - params: [duration]
+                    case 230:
+                        html += createArrayField(0, '프레임', 'number', cmd.parameters[0] ?? 60);
+                        break;
+
+                    // Play BGM (241) - params: [{name, volume, pitch, pan}]
+                    case 241:
+                        const bgm = cmd.parameters[0] || {};
+                        html += createArrayField(0, 'BGM 이름', 'text', bgm.name || '');
+                        html += createArrayField(1, '볼륨', 'number', bgm.volume ?? 90);
+                        html += createArrayField(2, '음높이', 'number', bgm.pitch ?? 100);
+                        html += createArrayField(3, '패닝', 'number', bgm.pan ?? 0);
+                        break;
+
+                    // Play SE (250) - params: [{name, volume, pitch, pan}]
+                    case 250:
+                        const se = cmd.parameters[0] || {};
+                        html += createArrayField(0, 'SE 이름', 'text', se.name || '');
+                        html += createArrayField(1, '볼륨', 'number', se.volume ?? 90);
+                        html += createArrayField(2, '음높이', 'number', se.pitch ?? 100);
+                        html += createArrayField(3, '패닝', 'number', se.pan ?? 0);
+                        break;
+
+                    // Battle Processing (301) - params: [troopId/variable, canEscape, canLose]
+                    case 301:
+                        html += `<div class="formGroup"><label>전투 타입</label><select data-index="0">
+                            <option value="0" ${cmd.parameters[0] == 0 ? 'selected' : ''}>직접 지정</option>
+                            <option value="1" ${cmd.parameters[0] == 1 ? 'selected' : ''}>변수로 지정</option>
+                        </select></div>`;
+                        html += createArrayField(1, '군단 ID / 변수 ID', 'number', cmd.parameters[1] ?? 1);
+                        html += createArrayField(2, '도주 가능', 'checkbox', cmd.parameters[2] ?? true);
+                        html += createArrayField(3, '패배시 게임오버', 'checkbox', cmd.parameters[3] ?? true);
+                        break;
+
+                    // Script (355) - params: [code]
+                    case 355:
+                        html += createArrayField(0, '스크립트 코드', 'textarea', cmd.parameters[0] || '');
+                        break;
+
+                    // Plugin Command (356) - params: [pluginName, commandName, args...]
+                    case 356:
+                        html += createArrayField(0, '플러그인 이름', 'text', cmd.parameters[0] || '');
+                        html += createArrayField(1, '명령어 이름', 'text', cmd.parameters[1] || '');
+                        html += createArrayField(2, '인수 (JSON)', 'textarea', JSON.stringify(cmd.parameters.slice(2) || []));
+                        break;
+
+                    default:
+                        html += `<div style="color: #aaa; padding: 10px;">
+                            파라미터 (JSON):
+                        </div>`;
+                        html += createArrayField(0, '파라미터', 'textarea', JSON.stringify(cmd.parameters || []));
+                }
+
+                container.innerHTML = html;
+                container.querySelectorAll('[data-index]').forEach(el => {
+                    el.addEventListener('change', (e) => {
+                        const index = parseInt(e.target.dataset.index);
+                        const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+                        try {
+                            // Try parsing JSON if it looks like JSON
+                            if (value && (value.startsWith('[') || value.startsWith('{'))) {
+                                cmd.parameters[index] = JSON.parse(value);
+                            } else {
+                                cmd.parameters[index] = value;
+                            }
+                        } catch {
+                            cmd.parameters[index] = value;
+                        }
+                    });
+                });
+            },
+
+            eventPreviewNext() {
+                State.eventPreviewIndex = (State.eventPreviewIndex + 1) % Math.max(State.eventCommands.length, 1);
+                UI.updateEventPreview();
+            },
+
+            eventPreviewPrev() {
+                State.eventPreviewIndex = (State.eventPreviewIndex - 1 + Math.max(State.eventCommands.length, 1)) % Math.max(State.eventCommands.length, 1);
+                UI.updateEventPreview();
+            },
+
+            eventPreviewReset() {
+                State.eventPreviewIndex = 0;
+                UI.updateEventPreview();
+            },
+
+            updateEventPreview() {
+                const preview = document.getElementById('eventPreview');
+                const cmd = State.eventCommands[State.eventPreviewIndex];
+                if (!cmd) {
+                    preview.innerHTML = '<div style="text-align: center; color: #aaa;">미리보기</div>';
+                    return;
+                }
+
+                let html = `<strong>[${State.eventPreviewIndex}] [${cmd.code}] `;
+                html += (RMMZ_COMMANDS[cmd.code] || 'Unknown') + '</strong>';
+
+                // Show relevant preview based on command code
+                if (cmd.code === 101) {
+                    html += '<div style="margin-top: 10px; padding: 10px; background: #1a1a2e; border-left: 3px solid #e94560;">얼굴: ' +
+                        (cmd.parameters[0] || '없음') + ' | 인덱스: ' + (cmd.parameters[1] ?? 0) + '</div>';
+                } else if (cmd.code === 401) {
+                    html += '<div style="margin-top: 10px; padding: 10px; background: #1a1a2e; border-left: 3px solid #e94560;">' +
+                        (cmd.parameters[0] || '') + '</div>';
+                } else if (cmd.code === 108) {
+                    html += '<div style="margin-top: 10px; font-style: italic; color: #aaa;">' +
+                        (cmd.parameters[0] || '') + '</div>';
+                } else if (cmd.code === 201) {
+                    html += '<div style="margin-top: 10px; font-size: 0.85em; color: #aaa;">맵: ' +
+                        (cmd.parameters[1] ?? 1) + ' X: ' + (cmd.parameters[2] ?? 0) + ' Y: ' + (cmd.parameters[3] ?? 0) + '</div>';
+                } else if (cmd.code === 241) {
+                    const bgm = cmd.parameters[0] || {};
+                    html += '<div style="margin-top: 10px; font-size: 0.85em; color: #aaa;">BGM: ' +
+                        (bgm.name || '없음') + ' (볼륨: ' + (bgm.volume ?? 90) + ')</div>';
+                } else if (cmd.code === 250) {
+                    const se = cmd.parameters[0] || {};
+                    html += '<div style="margin-top: 10px; font-size: 0.85em; color: #aaa;">SE: ' +
+                        (se.name || '없음') + ' (볼륨: ' + (se.volume ?? 90) + ')</div>';
+                } else {
+                    html += '<div style="margin-top: 10px; font-size: 0.85em; color: #aaa;">' +
+                        JSON.stringify(cmd.parameters, null, 2).substring(0, 200) + '</div>';
+                }
+
+                preview.innerHTML = html;
+            },
+
+            eventExportJSON() {
+                const json = JSON.stringify(State.eventCommands, null, 2);
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'events.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+
+            // ===================== RESOURCES METHODS =====================
+            _resCurrentFolders: null,
+            _resCurrentCategory: null,
+
+            refreshResourcesTree() {
+                const tree = document.getElementById('resourcesTree');
+                tree.innerHTML = '';
+                const selectFolder = (nodeEl, category, folders) => {
+                    tree.querySelectorAll('.treeNode, .treeSubItem').forEach(n => n.classList.remove('selected'));
+                    nodeEl.classList.add('selected');
+                    UI._resCurrentCategory = category;
+                    UI._resCurrentFolders = folders;
+                    UI.resLoadFolder(folders);
+                };
+                for (const [category, folders] of Object.entries(RESOURCE_FOLDERS)) {
+                    const node = document.createElement('div');
+                    node.className = 'treeNode';
+                    node.textContent = category;
+                    node.onclick = () => selectFolder(node, category, folders);
+                    tree.appendChild(node);
+                    // show clickable sub-folders
+                    const sub = document.createElement('div');
+                    sub.style.cssText = 'padding-left:12px; font-size:0.8em; color:#556;';
+                    folders.forEach(f => {
+                        const s = document.createElement('div');
+                        s.className = 'treeSubItem';
+                        s.style.cssText = 'padding:2px 4px; cursor:pointer; border-radius:3px;';
+                        s.textContent = f;
+                        s.onmouseenter = () => s.style.color = '#aab';
+                        s.onmouseleave = () => { if (!s.classList.contains('selected')) s.style.color = '#556'; };
+                        s.onclick = (e) => { e.stopPropagation(); selectFolder(s, f, [f]); };
+                        sub.appendChild(s);
+                    });
+                    tree.appendChild(sub);
+                }
+            },
+
+            async resLoadFolder(folders) {
+                const content = document.getElementById('resourcesContent');
+                const header = document.getElementById('resHeader');
+                content.innerHTML = '<div style="color:#666;">로딩 중...</div>';
+                document.getElementById('resPreviewPanel').style.display = 'none';
+
+                const isServer = !!window.__RMMZ_SERVER;
+                const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                let items = [];
+
+                if (isServer) {
+                    for (const folder of folders) {
+                        try {
+                            // Try /api/list first
+                            let resp = await fetch('/api/list?path=' + encodeURIComponent(folder));
+                            if (resp.ok) {
+                                const files = await resp.json();
+                                files.forEach(f => items.push({ path: folder + '/' + f, name: f }));
+                            } else { throw new Error('api/list not available'); }
+                        } catch(e) {
+                            // Fallback: parse directory listing HTML from static server
+                            try {
+                                const resp2 = await fetch('/' + projPath + '/' + folder + '/');
+                                if (resp2.ok) {
+                                    const html = await resp2.text();
+                                    const matches = [...html.matchAll(/href="([^"]+)"/g)].map(m => decodeURIComponent(m[1]));
+                                    matches.filter(f => f !== '../' && !f.startsWith('?') && /\.(png|jpg|ogg|mp3|m4a|json|txt)$/i.test(f))
+                                        .forEach(f => items.push({ path: folder + '/' + f, name: f }));
+                                }
+                            } catch(e2) {}
+                        }
+                    }
+                } else {
+                    // File mode: use projectFiles
+                    for (const folder of folders) {
+                        for (const [path] of Object.entries(State.projectFiles)) {
+                            if (path.startsWith(folder + '/') && /\.(png|jpg|mp3|ogg|m4a)$/i.test(path)) {
+                                items.push({ path, name: path.split('/').pop() });
+                            }
+                        }
+                    }
+                }
+
+                items.sort((a, b) => a.name.localeCompare(b.name));
+                header.textContent = (UI._resCurrentCategory || '') + ' — ' + items.length + '개 파일';
+                content.innerHTML = '';
+
+                if (items.length === 0) {
+                    content.innerHTML = '<div style="color:#666; grid-column: 1/-1;">파일 없음</div>';
+                    return;
+                }
+
+                for (const item of items) {
+                    const div = document.createElement('div');
+                    div.className = 'gridItem';
+                    div.title = item.name;
+                    div.dataset.path = item.path;
+                    div.style.flexDirection = 'column';
+                    div.style.padding = '4px';
+
+                    const isImage = /\.(png|jpg)$/i.test(item.name);
+                    const isAudio = /\.(ogg|mp3|m4a)$/i.test(item.name);
+
+                    if (isImage) {
+                        const img = document.createElement('img');
+                        img.style.cssText = 'max-width:100%; max-height:80%; object-fit:contain;';
+                        img.loading = 'lazy';
+                        // resolve image src
+                        if (isServer) {
+                            img.src = '/' + projPath + '/' + item.path;
+                        } else if (State.projectFiles[item.path]) {
+                            fileToDataUrl(State.projectFiles[item.path]).then(url => { img.src = url; });
+                        }
+                        div.appendChild(img);
+                    } else if (isAudio) {
+                        const icon = document.createElement('div');
+                        icon.style.cssText = 'font-size:1.5em; color:#e94560;';
+                        icon.textContent = '\u266B';
+                        div.appendChild(icon);
+                    }
+
+                    const label = document.createElement('div');
+                    label.style.cssText = 'font-size:0.7em; color:#aaa; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; width:100%; margin-top:2px;';
+                    label.textContent = item.name.replace(/\.[^.]+$/, '');
+                    div.appendChild(label);
+
+                    div.onclick = () => {
+                        content.querySelectorAll('.gridItem').forEach(g => g.classList.remove('selected'));
+                        div.classList.add('selected');
+                        UI.resShowPreview(item);
+                    };
+                    content.appendChild(div);
+                }
+            },
+
+            resShowPreview(item) {
+                const panel = document.getElementById('resPreviewPanel');
+                const preview = document.getElementById('resPreviewContent');
+                panel.style.display = '';
+
+                const isServer = !!window.__RMMZ_SERVER;
+                const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                const isImage = /\.(png|jpg)$/i.test(item.name);
+                const isAudio = /\.(ogg|mp3|m4a)$/i.test(item.name);
+
+                let html = '<div style="color:#e94560; font-weight:bold; margin-bottom:10px; word-break:break-all;">' + item.name + '</div>';
+                html += '<div style="color:#666; font-size:0.8em; margin-bottom:10px;">' + item.path + '</div>';
+
+                if (isImage) {
+                    const src = isServer ? ('/' + projPath + '/' + item.path) : '';
+                    html += '<img id="resPreviewImg" style="max-width:100%; border:1px solid #16213e; background:#0a0a15;" ';
+                    if (isServer) html += 'src="' + src + '" ';
+                    html += '>';
+                    html += '<div id="resImgInfo" style="color:#aaa; font-size:0.8em; margin-top:8px;"></div>';
+                } else if (isAudio) {
+                    html += '<div style="font-size:3em; margin:20px 0; color:#e94560;">\u266B</div>';
+                    if (isServer) {
+                        html += '<audio controls style="width:100%;" src="/' + projPath + '/' + item.path + '"></audio>';
+                    }
+                }
+
+                preview.innerHTML = html;
+
+                // For file mode images, load from blob
+                if (isImage && !isServer && State.projectFiles[item.path]) {
+                    fileToDataUrl(State.projectFiles[item.path]).then(url => {
+                        const img = document.getElementById('resPreviewImg');
+                        if (img) img.src = url;
+                    });
+                }
+
+                // Show image dimensions
+                if (isImage) {
+                    const img = document.getElementById('resPreviewImg');
+                    if (img) {
+                        img.onload = () => {
+                            const info = document.getElementById('resImgInfo');
+                            if (info) info.textContent = img.naturalWidth + ' x ' + img.naturalHeight + 'px';
+                        };
+                    }
+                }
+            },
+
+            resSearch() {
+                const query = document.getElementById('resSearch').value.toLowerCase();
+                const items = document.querySelectorAll('#resourcesContent .gridItem');
+                items.forEach(item => {
+                    item.style.display = item.title.toLowerCase().includes(query) ? '' : 'none';
+                });
+            },
+
+            // ===================== PLUGIN METHODS =====================
+            _pluginFileCache: {},  // name -> {found, header, params[]}
+
+            pluginAdd() {
+                State.plugins = State.plugins || [];
+                State.plugins.push({ name: '', status: true, description: '', parameters: {} });
+                State.currentPlugin = State.plugins.length - 1;
+                UI.refreshPluginList();
+                UI.renderPluginForm();
+            },
+
+            pluginRemove() {
+                if (State.currentPlugin !== null) {
+                    State.plugins.splice(State.currentPlugin, 1);
+                    State.currentPlugin = null;
+                    UI.refreshPluginList();
+                    document.getElementById('pluginFormContainer').innerHTML = '<div style="color:#aaa;">플러그인을 선택해주세요.</div>';
+                }
+            },
+
+            async pluginScanFolder() {
+                const isServer = !!window.__RMMZ_SERVER;
+                const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                let foundFiles = [];
+
+                if (isServer) {
+                    try {
+                        const resp = await fetch('/api/list?path=js/plugins');
+                        if (resp.ok) {
+                            const files = await resp.json();
+                            foundFiles = files.filter(f => f.endsWith('.js')).map(f => f.replace(/\.js$/, ''));
+                        } else { throw new Error('api not available'); }
+                    } catch(e) {
+                        // Fallback: parse directory listing HTML
+                        try {
+                            const resp2 = await fetch('/' + projPath + '/js/plugins/');
+                            if (resp2.ok) {
+                                const html = await resp2.text();
+                                const matches = [...html.matchAll(/href="([^"]+\.js)"/g)].map(m => decodeURIComponent(m[1]).replace(/\.js$/, ''));
+                                foundFiles = matches.filter(f => f !== '../');
+                            }
+                        } catch(e2) {}
+                    }
+                }
+                // fallback: check projectFiles
+                if (foundFiles.length === 0) {
+                    for (const path of Object.keys(State.projectFiles)) {
+                        if (path.startsWith('js/plugins/') && path.endsWith('.js')) {
+                            foundFiles.push(path.replace('js/plugins/', '').replace('.js', ''));
+                        }
+                    }
+                }
+
+                if (foundFiles.length === 0) {
+                    UI._showNotice('js/plugins 폴더에서 플러그인 파일을 찾을 수 없습니다.');
+                    return;
+                }
+
+                // Add any new plugins not already in the list
+                State.plugins = State.plugins || [];
+                const existing = new Set(State.plugins.map(p => p.name));
+                let added = 0;
+                for (const name of foundFiles) {
+                    if (!existing.has(name)) {
+                        State.plugins.push({ name: name, status: false, description: '', parameters: {} });
+                        added++;
+                    }
+                }
+
+                // Mark found/not-found status
+                const foundSet = new Set(foundFiles);
+                UI._pluginFileCache = {};
+                for (const p of State.plugins) {
+                    UI._pluginFileCache[p.name] = { found: foundSet.has(p.name) };
+                }
+
+                UI.refreshPluginList();
+                UI._showNotice('스캔 완료: ' + foundFiles.length + '개 파일 발견, ' + added + '개 새로 추가됨');
+            },
+
+            _showNotice(msg) {
+                const el = document.createElement('div');
+                el.textContent = msg;
+                el.style.cssText = 'position:fixed; top:50px; left:50%; transform:translateX(-50%); background:#e94560; color:#fff; padding:10px 24px; border-radius:6px; z-index:9999; font-size:0.9em; box-shadow:0 4px 12px rgba(0,0,0,0.3); transition:opacity 0.5s;';
+                document.body.appendChild(el);
+                setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 600); }, 2500);
+            },
+
+            // ===================== PICKER MODAL =====================
+            _pickerState: { type: null, callback: null, selected: null, items: [] },
+
+
+            // ─── Effekseer Animation Preview Engine ───
+            _efkPreview: {
+                context: null,
+                handle: null,
+                effect: null,
+                effectCache: {},
+                gl: null,
+                raf: null,
+                ready: false,
+                initPromise: null,
+
+                async init() {
+                    if (this.ready) return;
+                    if (this.initPromise) return this.initPromise;
+                    this.initPromise = new Promise((resolve, reject) => {
+                        try {
+                            const canvas = document.getElementById('pickerEffCanvas');
+                            if (!canvas || typeof effekseer === 'undefined') {
+                                reject('Effekseer not available');
+                                return;
+                            }
+                            this.gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true })
+                                   || canvas.getContext('webgl',  { premultipliedAlpha: true, alpha: true });
+                            if (!this.gl) { reject('WebGL not available'); return; }
+
+                            const wasmUrl = 'Project1/js/libs/effekseer.wasm';
+                            effekseer.initRuntime(wasmUrl, () => {
+                                this.context = effekseer.createContext();
+                                this.context.init(this.gl, { instanceMaxCount: 2000, squareMaxCount: 8000 });
+                                this.context.setProjectionPerspective(30, canvas.width / canvas.height, 1, 1000);
+                                this.context.setCameraLookAt(0, 0, 30, 0, 0, 0, 0, 1, 0);
+                                this.ready = true;
+                                resolve();
+                            }, () => { reject('Effekseer WASM load failed'); });
+                        } catch(e) { reject(e); }
+                    });
+                    return this.initPromise;
+                },
+
+                loadAndPlay(effectName) {
+                    if (!this.ready || !effectName) return;
+                    this.stop();
+                    const url = 'Project1/effects/' + effectName + '.efkefc';
+
+                    if (this.effectCache[effectName]) {
+                        this._play(this.effectCache[effectName]);
+                        return;
+                    }
+
+                    const eff = this.context.loadEffect(url, 1.0, () => {
+                        this.effectCache[effectName] = eff;
+                        this._play(eff);
+                    }, () => {
+                        console.warn('[EfkPreview] Failed to load:', url);
+                    });
+                },
+
+                _play(effect) {
+                    this.effect = effect;
+                    this.handle = this.context.play(effect, 0, 0, 0);
+                    this.context.setEffectTransformBaseMatrix(this.handle, [
+                        1, 0, 0, 0,
+                        0, 1, 0, 0,
+                        0, 0, 1, 0,
+                        0, 0, 0, 1
+                    ]);
+                    this._startLoop();
+                },
+
+                stop() {
+                    if (this.handle !== null && this.context) {
+                        this.context.stopEffect(this.handle);
+                        this.handle = null;
+                    }
+                    if (this.raf) {
+                        cancelAnimationFrame(this.raf);
+                        this.raf = null;
+                    }
+                    // Clear canvas
+                    if (this.gl) {
+                        this.gl.clearColor(0, 0, 0, 1);
+                        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+                    }
+                },
+
+                _startLoop() {
+                    if (this.raf) cancelAnimationFrame(this.raf);
+                    const ctx = this.context;
+                    const gl = this.gl;
+                    const self = this;
+
+                    let lastTime = performance.now();
+                    function tick(now) {
+                        const dt = (now - lastTime) / 1000;
+                        lastTime = now;
+
+                        gl.clearColor(0, 0, 0, 1);
+                        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                        if (ctx.exists(self.handle)) {
+                            ctx.update(dt * 60);
+                            ctx.setProjectionPerspective(30, gl.canvas.width / gl.canvas.height, 1, 1000);
+                            ctx.setCameraLookAt(0, 0, 30, 0, 0, 0, 0, 1, 0);
+                            ctx.draw();
+                            self.raf = requestAnimationFrame(tick);
+                        } else {
+                            // Effect finished - clear and stop
+                            self.handle = null;
+                            self.raf = null;
+                        }
+                    }
+                    self.raf = requestAnimationFrame(tick);
+                },
+
+                destroy() {
+                    this.stop();
+                    // Release cached effects
+                    if (this.context) {
+                        for (const key in this.effectCache) {
+                            try { this.context.releaseEffect(this.effectCache[key]); } catch(e) {}
+                        }
+                    }
+                    this.effectCache = {};
+                    this.effect = null;
+                }
+            },
+
+            closePicker() {
+                document.getElementById('pickerModal').classList.remove('active');
+                const audio = document.getElementById('pickerAudio');
+                audio.pause(); audio.src = '';
+                // Stop Effekseer preview
+                UI._efkPreview.stop();
+                const animPrev = document.getElementById('pickerAnimPreview');
+                if (animPrev) animPrev.style.display = 'none';
+            },
+
+            _pickerConfirm() {
+                const st = UI._pickerState;
+                if (st.callback && st.selected !== null) {
+                    st.callback(st.selected);
+                }
+                UI.closePicker();
+            },
+
+            _pickerFilter() {
+                const q = document.getElementById('pickerSearch').value.toLowerCase();
+                const rows = document.querySelectorAll('#pickerList .pickerRow');
+                let shown = 0;
+                rows.forEach(r => {
+                    const match = r.dataset.label.toLowerCase().includes(q);
+                    r.style.display = match ? '' : 'none';
+                    if (match) shown++;
+                });
+                document.getElementById('pickerCount').textContent = shown + '개';
+            },
+
+            _pickerSelect(row) {
+                document.querySelectorAll('#pickerList .pickerRow').forEach(r => r.classList.remove('selected'));
+                row.classList.add('selected');
+                UI._pickerState.selected = row.dataset.value;
+                // Audio preview
+                if (UI._pickerState.type === 'audio') {
+                    const src = row.dataset.src;
+                    if (src) {
+                        const audio = document.getElementById('pickerAudio');
+                        audio.src = src;
+                        audio.play().catch(() => {});
+                    }
+                }
+                // Animation Effekseer preview
+                if (UI._pickerState.type === 'animation') {
+                    const animId = parseInt(row.dataset.value);
+                    const nameEl = document.getElementById('pickerAnimName');
+                    if (animId > 0) {
+                        const anims = State.database.animations || State.database.Animations || [];
+                        const anim = anims[animId];
+                        if (anim && anim.effectName) {
+                            if (nameEl) nameEl.textContent = anim.effectName + '.efkefc';
+                            UI._efkPreview.loadAndPlay(anim.effectName);
+                        } else {
+                            if (nameEl) nameEl.textContent = '(이펙트 없음)';
+                            UI._efkPreview.stop();
+                        }
+                    } else {
+                        if (nameEl) nameEl.textContent = animId === -1 ? '통상 공격' : animId === -2 ? '무기 애니메이션' : '';
+                        UI._efkPreview.stop();
+                    }
+                }
+            },
+
+            // Open animation picker: shows list of animations from database
+            openAnimationPicker(currentId, callback) {
+                const modal = document.getElementById('pickerModal');
+                document.getElementById('pickerTitle').textContent = '애니메이션 선택';
+                document.getElementById('pickerSearch').value = '';
+                document.getElementById('pickerPlayer').style.display = 'none';
+                // Show animation preview area
+                const animPrev = document.getElementById('pickerAnimPreview');
+                if (animPrev) animPrev.style.display = '';
+                document.getElementById('pickerAnimName').textContent = '';
+                // Initialize Effekseer lazily
+                UI._efkPreview.init().catch(e => {
+                    console.warn('[EfkPreview] Init failed:', e);
+                    if (animPrev) animPrev.style.display = 'none';
+                });
+                // Play button
+                const playBtn = document.getElementById('pickerAnimPlay');
+                if (playBtn) {
+                    playBtn.onclick = () => {
+                        const selId = parseInt(UI._pickerState.selected);
+                        if (selId > 0) {
+                            const anims = State.database.animations || State.database.Animations || [];
+                            const anim = anims[selId];
+                            if (anim && anim.effectName) UI._efkPreview.loadAndPlay(anim.effectName);
+                        }
+                    };
+                }
+                UI._pickerState = { type: 'animation', callback, selected: String(currentId || 0), items: [] };
+
+                const list = document.getElementById('pickerList');
+                list.innerHTML = '';
+
+                // Build animation list from Animations database
+                const anims = State.database.animations || State.database.Animations || [];
+                const items = [];
+                // ID 0 = None
+                items.push({ id: 0, name: '(없음)' });
+                // Also check for special values: -1 = normal, -2 = weapon
+                items.push({ id: -1, name: '(-1: 통상 공격)' });
+                items.push({ id: -2, name: '(-2: 무기 애니메이션)' });
+                if (Array.isArray(anims)) {
+                    for (let i = 1; i < anims.length; i++) {
+                        if (anims[i]) {
+                            items.push({ id: i, name: i + ': ' + (anims[i].name || '(이름없음)') });
+                        }
+                    }
+                }
+
+                items.forEach(a => {
+                    const row = document.createElement('div');
+                    row.className = 'pickerRow';
+                    row.dataset.value = String(a.id);
+                    row.dataset.label = a.name;
+                    row.innerHTML = `<span style="color:#e94560; min-width:40px; display:inline-block;">#${a.id}</span> ${a.name.replace(/^\d+:\s*/, '')}`;
+                    if (String(a.id) === String(currentId)) row.classList.add('selected');
+                    row.onclick = () => UI._pickerSelect(row);
+                    row.ondblclick = () => { UI._pickerSelect(row); UI._pickerConfirm(); };
+                    list.appendChild(row);
+                });
+
+                document.getElementById('pickerCount').textContent = items.length + '개';
+                modal.classList.add('active');
+                // Scroll to selected
+                const sel = list.querySelector('.pickerRow.selected');
+                if (sel) sel.scrollIntoView({ block: 'center' });
+            },
+
+            // Open audio picker: shows list of audio files from a folder
+            async openAudioPicker(audioType, currentName, callback) {
+                const modal = document.getElementById('pickerModal');
+                const typeLabels = { bgm: 'BGM', bgs: 'BGS', me: 'ME', se: 'SE' };
+                document.getElementById('pickerTitle').textContent = (typeLabels[audioType] || audioType.toUpperCase()) + ' 선택';
+                document.getElementById('pickerSearch').value = '';
+                document.getElementById('pickerPlayer').style.display = '';
+                document.getElementById('pickerAudio').src = '';
+                UI._pickerState = { type: 'audio', callback, selected: currentName || '', items: [] };
+
+                const list = document.getElementById('pickerList');
+                list.innerHTML = '<div style="color:#666;">로딩 중...</div>';
+                modal.classList.add('active');
+
+                // Load audio file list
+                const folder = 'audio/' + audioType;
+                const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                let files = [];
+
+                if (window.__RMMZ_SERVER) {
+                    try {
+                        const resp = await fetch('/api/list?path=' + encodeURIComponent(folder));
+                        if (resp.ok) { files = await resp.json(); }
+                        else { throw new Error('no api'); }
+                    } catch(e) {
+                        try {
+                            const resp2 = await fetch('/' + projPath + '/' + folder + '/');
+                            if (resp2.ok) {
+                                const html = await resp2.text();
+                                files = [...html.matchAll(/href="([^"]+)"/g)]
+                                    .map(m => decodeURIComponent(m[1]))
+                                    .filter(f => f !== '../' && !f.startsWith('?'));
+                            }
+                        } catch(e2) {}
+                    }
+                } else {
+                    for (const [path] of Object.entries(State.projectFiles)) {
+                        if (path.startsWith(folder + '/')) files.push(path.split('/').pop());
+                    }
+                }
+
+                files = files.filter(f => /\.(ogg|mp3|m4a|wav)$/i.test(f)).sort();
+                list.innerHTML = '';
+
+                // (없음) option
+                const noneRow = document.createElement('div');
+                noneRow.className = 'pickerRow';
+                noneRow.dataset.value = '';
+                noneRow.dataset.label = '(없음)';
+                noneRow.dataset.src = '';
+                noneRow.innerHTML = '<span style="color:#888;">(없음)</span>';
+                if (!currentName) noneRow.classList.add('selected');
+                noneRow.onclick = () => UI._pickerSelect(noneRow);
+                noneRow.ondblclick = () => { UI._pickerSelect(noneRow); UI._pickerConfirm(); };
+                list.appendChild(noneRow);
+
+                files.forEach(f => {
+                    const name = f.replace(/\.(ogg|mp3|m4a|wav)$/i, '');
+                    const row = document.createElement('div');
+                    row.className = 'pickerRow';
+                    row.dataset.value = name;
+                    row.dataset.label = name;
+                    // Build audio src
+                    let src = '';
+                    if (window.__RMMZ_SERVER) {
+                        src = '/' + projPath + '/' + folder + '/' + encodeURIComponent(f);
+                    }
+                    row.dataset.src = src;
+                    row.innerHTML = `<span style="color:#e94560; margin-right:8px;">♪</span>${name}`;
+                    if (name === currentName) row.classList.add('selected');
+                    row.onclick = () => UI._pickerSelect(row);
+                    row.ondblclick = () => { UI._pickerSelect(row); UI._pickerConfirm(); };
+                    list.appendChild(row);
+                });
+
+                document.getElementById('pickerCount').textContent = files.length + '개';
+                // Scroll to selected
+                const sel = list.querySelector('.pickerRow.selected');
+                if (sel) sel.scrollIntoView({ block: 'center' });
+            },
+
+            refreshPluginList() {
+                State.plugins = State.plugins || [];
+                const list = document.getElementById('pluginsList');
+                list.innerHTML = '';
+                State.plugins.forEach((plugin, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'pluginItem';
+                    if (State.currentPlugin === i) div.classList.add('selected');
+
+                    const cache = UI._pluginFileCache[plugin.name];
+                    const fileStatus = cache ? (cache.found ? '✓' : '✗') : '';
+                    const fileColor = cache ? (cache.found ? '#2ecc71' : '#e74c3c') : '#555';
+
+                    div.innerHTML = `<div class="pluginInfo">
+                        <div class="name">${plugin.name || '(이름 없음)'} <span style="color:${fileColor}; font-size:0.8em;">${fileStatus}</span></div>
+                        <div class="desc">${plugin.description || ''}</div>
+                    </div>
+                    <div class="toggle ${plugin.status ? 'active' : ''}">
+                        <div class="toggleSlider"></div>
+                    </div>`;
+                    div.onclick = (e) => {
+                        if (!e.target.closest('.toggle')) {
+                            State.currentPlugin = i;
+                            UI.refreshPluginList();
+                            UI.renderPluginForm();
+                        } else {
+                            plugin.status = !plugin.status;
+                            UI.refreshPluginList();
+                        }
+                    };
+                    list.appendChild(div);
+                });
+            },
+
+            async renderPluginForm() {
+                const container = document.getElementById('pluginFormContainer');
+                const plugin = State.plugins?.[State.currentPlugin];
+                if (!plugin) {
+                    container.innerHTML = '<div style="color: #aaa;">플러그인을 선택해주세요.</div>';
+                    return;
+                }
+
+                let headerInfo = null;
+                if (plugin.name) {
+                    headerInfo = await UI._parsePluginHeader(plugin.name);
+                }
+
+                let html = '<div class="formSection"><div class="formSectionHeader">플러그인 정보</div><div class="formSectionContent">';
+                html += createField('name', '이름', 'text', plugin.name || '');
+                html += createField('description', '설명', 'textarea', plugin.description || (headerInfo?.desc || ''));
+                const cache = UI._pluginFileCache[plugin.name];
+                if (cache) {
+                    html += '<div style="color:' + (cache.found ? '#2ecc71' : '#e74c3c') + '; font-size:0.85em; margin-top:5px;">';
+                    html += cache.found ? '✓ js/plugins/' + plugin.name + '.js 파일 확인됨' : '✗ js/plugins/' + plugin.name + '.js 파일 없음';
+                    html += '</div>';
+                }
+                html += '</div></div>';
+
+                // ── Parameters section ──
+                html += '<div class="formSection"><div class="formSectionHeader">파라미터</div><div class="formSectionContent" id="pluginParamsContainer">';
+                const params = plugin.parameters || {};
+
+                if (headerInfo && headerInfo.params.length > 0) {
+                    for (const p of headerInfo.params) {
+                        html += UI._renderPluginParam(p, params, headerInfo, '');
+                    }
+                } else {
+                    // Fallback: raw JSON editor
+                    html += createField('params_json', '파라미터 (JSON)', 'textarea', JSON.stringify(params, null, 2));
+                }
+                html += '</div></div>';
+
+                container.innerHTML = html;
+                UI._attachPluginParamHandlers(container, plugin, headerInfo);
+            },
+
+            // ── Render a single plugin parameter field ──
+            _renderPluginParam(p, params, headerInfo, prefix) {
+                const paramKey = prefix ? prefix + '.' + p.name : p.name;
+                const val = params[p.name] !== undefined ? params[p.name] : (p.default || '');
+                const label = p.text || p.name;
+                const escapedVal = (val + '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                let html = '<div class="formGroup" style="margin-bottom:8px;">';
+                html += '<label style="color:#e94560; font-size:0.85em; font-weight:bold;">' + label + '</label>';
+                if (p.name !== label) html += '<span style="color:#555; font-size:0.7em; margin-left:6px;">(' + p.name + ')</span>';
+                if (p.desc) html += '<div style="color:#777; font-size:0.75em; margin-bottom:3px; line-height:1.3;">' + p.desc + '</div>';
+
+                const typeStr = p.type || 'text';
+
+                // ── struct<Name>[] — Array of structs ──
+                const structArrMatch = typeStr.match(/^struct<(\w+)>\[\]$/);
+                if (structArrMatch) {
+                    const structName = structArrMatch[1];
+                    const structDef = headerInfo.structs?.[structName];
+                    html += UI._renderStructArray(p.name, val, structDef, structName);
+                    html += '</div>';
+                    return html;
+                }
+
+                // ── struct<Name> — Single struct ──
+                const structMatch = typeStr.match(/^struct<(\w+)>$/);
+                if (structMatch) {
+                    const structName = structMatch[1];
+                    const structDef = headerInfo.structs?.[structName];
+                    html += UI._renderStructSingle(p.name, val, structDef, structName);
+                    html += '</div>';
+                    return html;
+                }
+
+                // ── boolean ──
+                if (typeStr === 'boolean') {
+                    const onLabel = p.on || 'ON';
+                    const offLabel = p.off || 'OFF';
+                    html += '<select data-field="param_' + p.name + '" style="width:100%;">';
+                    html += '<option value="true"' + (val === 'true' || val === true ? ' selected' : '') + '>' + onLabel + ' (true)</option>';
+                    html += '<option value="false"' + (val === 'false' || val === false || val === '' ? ' selected' : '') + '>' + offLabel + ' (false)</option>';
+                    html += '</select>';
+                }
+                // ── select (with @option/@value pairs) ──
+                else if (typeStr === 'select') {
+                    html += '<select data-field="param_' + p.name + '" style="width:100%;">';
+                    if (p.options) {
+                        for (let i = 0; i < p.options.length; i++) {
+                            const optLabel = p.options[i];
+                            const optValue = (p.values && p.values[i] !== undefined) ? p.values[i] : optLabel;
+                            html += '<option value="' + optValue.replace(/"/g, '&quot;') + '"' + (val === optValue ? ' selected' : '') + '>' + optLabel + '</option>';
+                        }
+                    }
+                    html += '</select>';
+                }
+                // ── number ──
+                else if (typeStr === 'number') {
+                    let attrs = 'type="number" data-field="param_' + p.name + '" value="' + escapedVal + '" style="width:100%;"';
+                    if (p.min !== undefined) attrs += ' min="' + p.min + '"';
+                    if (p.max !== undefined) attrs += ' max="' + p.max + '"';
+                    if (p.max && String(p.max).includes('.')) attrs += ' step="0.1"';
+                    html += '<input ' + attrs + '>';
+                }
+                // ── note (multiline) ──
+                else if (typeStr === 'note') {
+                    let displayVal = val;
+                    // Note type stores as JSON string — try to unwrap for display
+                    if (typeof displayVal === 'string' && displayVal.startsWith('"')) {
+                        try { displayVal = JSON.parse(displayVal); } catch(e) {}
+                    }
+                    html += '<textarea data-field="param_' + p.name + '" data-type="note" rows="4" style="width:100%; font-family:monospace; font-size:0.8em;">' + (displayVal + '').replace(/</g, '&lt;') + '</textarea>';
+                }
+                // ── file ──
+                else if (typeStr === 'file') {
+                    html += '<div style="display:flex; gap:4px;">';
+                    html += '<input type="text" data-field="param_' + p.name + '" value="' + escapedVal + '" style="flex:1;">';
+                    if (p.dir) html += '<span style="color:#555; font-size:0.7em; align-self:center;">(' + p.dir + '/)</span>';
+                    html += '</div>';
+                }
+                // ── combo (text with predefined options) ──
+                else if (typeStr === 'combo') {
+                    html += '<input type="text" data-field="param_' + p.name + '" value="' + escapedVal + '" list="combo_' + p.name + '" style="width:100%;">';
+                    if (p.options) {
+                        html += '<datalist id="combo_' + p.name + '">';
+                        p.options.forEach(o => { html += '<option value="' + o.replace(/"/g, '&quot;') + '">'; });
+                        html += '</datalist>';
+                    }
+                }
+                // ── variable / switch / actor / class / skill / item / weapon / armor / enemy / troop / state / animation / tileset / common_event ──
+                else if (['variable','switch','actor','class','skill','item','weapon','armor','enemy','troop','state','animation','tileset','common_event'].includes(typeStr)) {
+                    const typeLabels = {variable:'변수',switch:'스위치',actor:'액터',class:'직업',skill:'스킬',item:'아이템',weapon:'무기',armor:'방어구',enemy:'적',troop:'적그룹',state:'상태',animation:'애니메이션',tileset:'타일셋',common_event:'커먼이벤트'};
+                    html += '<div style="display:flex; gap:4px; align-items:center;">';
+                    html += '<input type="number" data-field="param_' + p.name + '" value="' + escapedVal + '" min="0" style="width:80px;">';
+                    html += '<span style="color:#888; font-size:0.75em;">' + (typeLabels[typeStr] || typeStr) + ' ID</span>';
+                    html += '</div>';
+                }
+                // ── text / string / default ──
+                else {
+                    html += '<input type="text" data-field="param_' + p.name + '" value="' + escapedVal + '" style="width:100%;">';
+                }
+
+                // Show default value hint
+                if (p.default !== undefined && p.default !== '') {
+                    html += '<div style="color:#555; font-size:0.65em; margin-top:1px;">기본값: ' + (p.default + '').substring(0, 80) + (p.default.length > 80 ? '...' : '') + '</div>';
+                }
+
+                html += '</div>';
+                return html;
+            },
+
+            // ── Render struct array (add/remove/reorder) ──
+            _renderStructArray(paramName, rawVal, structDef, structName) {
+                let items = [];
+                try {
+                    const parsed = typeof rawVal === 'string' ? JSON.parse(rawVal || '[]') : (rawVal || []);
+                    items = parsed.map(s => typeof s === 'string' ? JSON.parse(s) : s);
+                } catch(e) { items = []; }
+
+                let html = '<div class="structArrayContainer" data-param="' + paramName + '" data-struct="' + structName + '">';
+                html += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">';
+                html += '<span style="color:#888; font-size:0.75em;">struct&lt;' + structName + '&gt;[] — ' + items.length + '개 항목</span>';
+                html += '<button onclick="UI._addStructArrayItem(\'' + paramName + '\', \'' + structName + '\')" style="background:#2ecc71; color:#fff; border:none; border-radius:3px; padding:2px 8px; cursor:pointer; font-size:0.8em;">+ 추가</button>';
+                html += '</div>';
+
+                items.forEach((item, idx) => {
+                    // Build a summary line from the struct fields
+                    let summary = '';
+                    if (structDef) {
+                        const summaryParts = structDef.slice(0, 3).map(sp => {
+                            const v = item[sp.name];
+                            return v !== undefined ? (sp.text || sp.name) + ':' + v : '';
+                        }).filter(Boolean);
+                        summary = summaryParts.join(', ');
+                    } else {
+                        summary = JSON.stringify(item).substring(0, 60);
+                    }
+
+                    html += '<div class="structArrayItem" data-index="' + idx + '" style="display:flex; align-items:center; gap:4px; padding:3px 6px; margin:2px 0; background:rgba(255,255,255,0.03); border:1px solid #333; border-radius:3px;">';
+                    html += '<span style="color:#888; font-size:0.7em; min-width:20px;">#' + idx + '</span>';
+                    html += '<span style="flex:1; font-size:0.8em; color:#ccc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="UI._editStructItem(\'' + paramName + '\', ' + idx + ', \'' + structName + '\')">' + summary + '</span>';
+                    html += '<button onclick="UI._editStructItem(\'' + paramName + '\', ' + idx + ', \'' + structName + '\')" style="background:#3498db; color:#fff; border:none; border-radius:2px; padding:1px 6px; cursor:pointer; font-size:0.75em;" title="편집">✎</button>';
+                    if (idx > 0) html += '<button onclick="UI._moveStructItem(\'' + paramName + '\', ' + idx + ', -1)" style="background:#555; color:#fff; border:none; border-radius:2px; padding:1px 4px; cursor:pointer; font-size:0.75em;" title="위로">▲</button>';
+                    if (idx < items.length - 1) html += '<button onclick="UI._moveStructItem(\'' + paramName + '\', ' + idx + ', 1)" style="background:#555; color:#fff; border:none; border-radius:2px; padding:1px 4px; cursor:pointer; font-size:0.75em;" title="아래로">▼</button>';
+                    html += '<button onclick="UI._removeStructItem(\'' + paramName + '\', ' + idx + ')" style="background:#e74c3c; color:#fff; border:none; border-radius:2px; padding:1px 6px; cursor:pointer; font-size:0.75em;" title="삭제">✕</button>';
+                    html += '</div>';
+                });
+
+                html += '</div>';
+                return html;
+            },
+
+            // ── Render single struct (inline or expandable) ──
+            _renderStructSingle(paramName, rawVal, structDef, structName) {
+                let obj = {};
+                try {
+                    obj = typeof rawVal === 'string' ? JSON.parse(rawVal || '{}') : (rawVal || {});
+                } catch(e) { obj = {}; }
+
+                let html = '<div style="display:flex; gap:4px; align-items:center;">';
+                const summary = structDef ? structDef.slice(0, 3).map(sp => {
+                    const v = obj[sp.name];
+                    return v !== undefined ? v : '';
+                }).join(', ') : JSON.stringify(obj).substring(0, 60);
+                html += '<span style="flex:1; color:#ccc; font-size:0.8em;">' + summary + '</span>';
+                html += '<button onclick="UI._editStructSingle(\'' + paramName + '\', \'' + structName + '\')" style="background:#3498db; color:#fff; border:none; border-radius:2px; padding:2px 8px; cursor:pointer; font-size:0.8em;">편집</button>';
+                html += '</div>';
+                return html;
+            },
+
+            // ── Struct array manipulation ──
+            _getStructArrayItems(paramName) {
+                const plugin = State.plugins?.[State.currentPlugin];
+                if (!plugin?.parameters) return [];
+                const raw = plugin.parameters[paramName] || '[]';
+                try {
+                    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    return parsed.map(s => typeof s === 'string' ? JSON.parse(s) : s);
+                } catch(e) { return []; }
+            },
+
+            _saveStructArray(paramName, items) {
+                const plugin = State.plugins?.[State.currentPlugin];
+                if (!plugin) return;
+                if (!plugin.parameters) plugin.parameters = {};
+                // RMMZ stores struct arrays as array of JSON strings
+                plugin.parameters[paramName] = JSON.stringify(items.map(item => JSON.stringify(item)));
+                UI.renderPluginForm();
+            },
+
+            _addStructArrayItem(paramName, structName) {
+                const items = UI._getStructArrayItems(paramName);
+                // Create default item from struct definition
+                const headerInfo = UI._lastHeaderInfo;
+                const structDef = headerInfo?.structs?.[structName];
+                const newItem = {};
+                if (structDef) {
+                    structDef.forEach(sp => { newItem[sp.name] = sp.default || ''; });
+                }
+                items.push(newItem);
+                UI._saveStructArray(paramName, items);
+            },
+
+            _removeStructItem(paramName, idx) {
+                const items = UI._getStructArrayItems(paramName);
+                items.splice(idx, 1);
+                UI._saveStructArray(paramName, items);
+            },
+
+            _moveStructItem(paramName, idx, dir) {
+                const items = UI._getStructArrayItems(paramName);
+                const newIdx = idx + dir;
+                if (newIdx < 0 || newIdx >= items.length) return;
+                [items[idx], items[newIdx]] = [items[newIdx], items[idx]];
+                UI._saveStructArray(paramName, items);
+            },
+
+            // ── Edit struct item in modal ──
+            _editStructItem(paramName, idx, structName) {
+                const items = UI._getStructArrayItems(paramName);
+                const item = items[idx] || {};
+                UI._openStructEditModal(item, structName, (updated) => {
+                    items[idx] = updated;
+                    UI._saveStructArray(paramName, items);
+                });
+            },
+
+            _editStructSingle(paramName, structName) {
+                const plugin = State.plugins?.[State.currentPlugin];
+                if (!plugin?.parameters) return;
+                let obj = {};
+                try {
+                    const raw = plugin.parameters[paramName] || '{}';
+                    obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                } catch(e) { obj = {}; }
+
+                UI._openStructEditModal(obj, structName, (updated) => {
+                    plugin.parameters[paramName] = JSON.stringify(updated);
+                    UI.renderPluginForm();
+                });
+            },
+
+            _openStructEditModal(item, structName, onSave) {
+                const headerInfo = UI._lastHeaderInfo;
+                const structDef = headerInfo?.structs?.[structName];
+                if (!structDef) return;
+
+                // Remove existing modal if any
+                let existing = document.getElementById('structEditModal');
+                if (existing) existing.remove();
+
+                const modal = document.createElement('div');
+                modal.id = 'structEditModal';
+                modal.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:10000; display:flex; justify-content:center; align-items:center;';
+
+                let formHtml = '<div style="background:#1e1e2e; border:1px solid #555; border-radius:8px; padding:16px; width:450px; max-height:80vh; overflow-y:auto;">';
+                formHtml += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">';
+                formHtml += '<span style="color:#e94560; font-weight:bold; font-size:1em;">' + structName + ' 편집</span>';
+                formHtml += '<button id="structModalClose" style="background:none; border:none; color:#888; font-size:1.2em; cursor:pointer;">✕</button>';
+                formHtml += '</div>';
+
+                for (const sp of structDef) {
+                    const val = item[sp.name] !== undefined ? item[sp.name] : (sp.default || '');
+                    const label = sp.text || sp.name;
+                    const escapedVal = (val + '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+                    formHtml += '<div style="margin-bottom:8px;">';
+                    formHtml += '<label style="color:#ccc; font-size:0.8em; font-weight:bold;">' + label + '</label>';
+                    if (sp.name !== label) formHtml += '<span style="color:#555; font-size:0.65em; margin-left:4px;">(' + sp.name + ')</span>';
+                    if (sp.desc) formHtml += '<div style="color:#666; font-size:0.7em; margin-bottom:2px;">' + sp.desc + '</div>';
+
+                    const spType = sp.type || 'text';
+                    if (spType === 'boolean') {
+                        const onL = sp.on || 'ON';
+                        const offL = sp.off || 'OFF';
+                        formHtml += '<select data-sp="' + sp.name + '" style="width:100%;">';
+                        formHtml += '<option value="true"' + (val === 'true' || val === true ? ' selected' : '') + '>' + onL + '</option>';
+                        formHtml += '<option value="false"' + (val === 'false' || val === false || val === '' ? ' selected' : '') + '>' + offL + '</option>';
+                        formHtml += '</select>';
+                    } else if (spType === 'select') {
+                        formHtml += '<select data-sp="' + sp.name + '" style="width:100%;">';
+                        if (sp.options) {
+                            for (let i = 0; i < sp.options.length; i++) {
+                                const optLabel = sp.options[i];
+                                const optValue = (sp.values && sp.values[i] !== undefined) ? sp.values[i] : optLabel;
+                                formHtml += '<option value="' + optValue.replace(/"/g, '&quot;') + '"' + (val === optValue ? ' selected' : '') + '>' + optLabel + '</option>';
+                            }
+                        }
+                        formHtml += '</select>';
+                    } else if (spType === 'number') {
+                        let attrs = 'type="number" data-sp="' + sp.name + '" value="' + escapedVal + '" style="width:100%;"';
+                        if (sp.min !== undefined) attrs += ' min="' + sp.min + '"';
+                        if (sp.max !== undefined) attrs += ' max="' + sp.max + '"';
+                        formHtml += '<input ' + attrs + '>';
+                    } else if (spType === 'note') {
+                        formHtml += '<textarea data-sp="' + sp.name + '" rows="3" style="width:100%; font-family:monospace; font-size:0.8em;">' + (val + '').replace(/</g, '&lt;') + '</textarea>';
+                    } else {
+                        formHtml += '<input type="text" data-sp="' + sp.name + '" value="' + escapedVal + '" style="width:100%;">';
+                    }
+                    if (sp.default !== undefined && sp.default !== '') {
+                        formHtml += '<div style="color:#444; font-size:0.6em;">기본값: ' + sp.default + '</div>';
+                    }
+                    formHtml += '</div>';
+                }
+
+                formHtml += '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">';
+                formHtml += '<button id="structModalCancel" style="background:#555; color:#ccc; border:none; border-radius:4px; padding:6px 16px; cursor:pointer;">취소</button>';
+                formHtml += '<button id="structModalSave" style="background:#2ecc71; color:#fff; border:none; border-radius:4px; padding:6px 16px; cursor:pointer; font-weight:bold;">저장</button>';
+                formHtml += '</div></div>';
+
+                modal.innerHTML = formHtml;
+                document.body.appendChild(modal);
+
+                const closeModal = () => modal.remove();
+                modal.querySelector('#structModalClose').onclick = closeModal;
+                modal.querySelector('#structModalCancel').onclick = closeModal;
+                modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+                modal.querySelector('#structModalSave').onclick = () => {
+                    const updated = {};
+                    modal.querySelectorAll('[data-sp]').forEach(el => {
+                        updated[el.dataset.sp] = el.value;
+                    });
+                    onSave(updated);
+                    closeModal();
+                };
+            },
+
+            _lastHeaderInfo: null,
+
+            // ── Attach change handlers to plugin parameter fields ──
+            _attachPluginParamHandlers(container, plugin, headerInfo) {
+                UI._lastHeaderInfo = headerInfo;
+
+                container.querySelectorAll('[data-field]').forEach(el => {
+                    el.addEventListener('change', (e) => {
+                        const field = e.target.dataset.field;
+                        const value = e.target.value;
+                        if (field === 'name') {
+                            plugin.name = value;
+                            UI.refreshPluginList();
+                        } else if (field === 'description') {
+                            plugin.description = value;
+                        } else if (field === 'params_json') {
+                            try { plugin.parameters = JSON.parse(value); } catch(x) {}
+                        } else if (field.startsWith('param_')) {
+                            if (!plugin.parameters) plugin.parameters = {};
+                            const pName = field.substring(6);
+                            const pType = e.target.dataset.type;
+                            if (pType === 'note') {
+                                // Note type: wrap in JSON string
+                                plugin.parameters[pName] = JSON.stringify(value);
+                            } else {
+                                plugin.parameters[pName] = value;
+                            }
+                        }
+                    });
+                });
+            },
+
+            async _parsePluginHeader(name) {
+                const text = await UI._readProjectFileText('js/plugins/' + name + '.js');
+                if (!text) return null;
+
+                const result = { desc: '', params: [], structs: {}, commands: [] };
+
+                // ── Parse struct definitions: /*~struct~Name: ... */
+                const structRe = /\/\*~struct~(\w+):([\s\S]*?)\*\//g;
+                let sm;
+                while ((sm = structRe.exec(text)) !== null) {
+                    const sName = sm[1];
+                    const sBody = sm[2];
+                    const sParams = [];
+                    let cur = null;
+                    for (const line of sBody.split('\n')) {
+                        const t = line.replace(/^\s*\*?\s*/, '');
+                        if (t.startsWith('@param ') || t.startsWith('@param\t')) {
+                            const m = t.match(/@param\s+(.+)/);
+                            if (m) { cur = { name: m[1].trim(), text: '', desc: '', type: 'text', default: '' }; sParams.push(cur); }
+                        } else if (cur) {
+                            if (t.startsWith('@text ')) cur.text = t.replace('@text ', '').trim();
+                            else if (t.startsWith('@type ')) cur.type = t.replace('@type ', '').trim();
+                            else if (t.startsWith('@default ')) cur.default = t.replace('@default ', '').trim();
+                            else if (t.startsWith('@desc ')) cur.desc = t.replace('@desc ', '').trim();
+                            else if (t.startsWith('@min ')) cur.min = t.replace('@min ', '').trim();
+                            else if (t.startsWith('@max ')) cur.max = t.replace('@max ', '').trim();
+                            else if (t.startsWith('@on ')) cur.on = t.replace('@on ', '').trim();
+                            else if (t.startsWith('@off ')) cur.off = t.replace('@off ', '').trim();
+                            else if (t.startsWith('@option ')) {
+                                if (!cur.options) cur.options = [];
+                                cur.options.push(t.replace('@option ', '').trim());
+                            } else if (t.startsWith('@value ')) {
+                                if (!cur.values) cur.values = [];
+                                cur.values.push(t.replace('@value ', '').trim());
+                            } else if (t.startsWith('@dir ')) cur.dir = t.replace('@dir ', '').trim();
+                            else if (t.startsWith('@require ')) cur.require = t.replace('@require ', '').trim();
+                            else if (t.startsWith('@parent ')) cur.parent = t.replace('@parent ', '').trim();
+                        }
+                    }
+                    result.structs[sName] = sParams;
+                }
+
+                // ── Parse main header block: /*: ... */
+                const mainMatch = text.match(/\/\*:([\s\S]*?)\*\//);
+                if (!mainMatch) return result;
+                const mainBody = mainMatch[1];
+                const lines = mainBody.split('\n');
+                let cur = null;
+                let inHelp = false;
+
+                for (const line of lines) {
+                    const t = line.replace(/^\s*\*?\s*/, '');
+                    if (t.startsWith('@help')) { inHelp = true; continue; }
+                    if (inHelp) {
+                        // Check if we encounter a @param after @help (some plugins do this)
+                        if (t.startsWith('@param ') || t.startsWith('@param\t')) {
+                            inHelp = false;
+                        } else {
+                            continue;
+                        }
+                    }
+                    if (t.startsWith('@plugindesc ')) {
+                        result.desc = t.replace('@plugindesc ', '').trim();
+                    } else if (t.startsWith('@param ') || t.startsWith('@param\t')) {
+                        const m = t.match(/@param\s+(.+)/);
+                        if (m) {
+                            cur = { name: m[1].trim(), text: '', desc: '', type: 'text', default: '' };
+                            result.params.push(cur);
+                        }
+                    } else if (t.startsWith('@command ')) {
+                        cur = null; // skip command blocks
+                        result.commands.push(t.replace('@command ', '').trim());
+                    } else if (cur) {
+                        if (t.startsWith('@text ')) cur.text = t.replace('@text ', '').trim();
+                        else if (t.startsWith('@type ')) cur.type = t.replace('@type ', '').trim();
+                        else if (t.startsWith('@default ')) {
+                            // @default can be multi-line for arrays — join with newlines
+                            const dv = t.replace('@default ', '').trim();
+                            cur.default = dv;
+                        } else if (t.startsWith('@desc ')) cur.desc = t.replace('@desc ', '').trim();
+                        else if (t.startsWith('@min ')) cur.min = t.replace('@min ', '').trim();
+                        else if (t.startsWith('@max ')) cur.max = t.replace('@max ', '').trim();
+                        else if (t.startsWith('@on ')) cur.on = t.replace('@on ', '').trim();
+                        else if (t.startsWith('@off ')) cur.off = t.replace('@off ', '').trim();
+                        else if (t.startsWith('@option ')) {
+                            if (!cur.options) cur.options = [];
+                            cur.options.push(t.replace('@option ', '').trim());
+                        } else if (t.startsWith('@value ')) {
+                            if (!cur.values) cur.values = [];
+                            cur.values.push(t.replace('@value ', '').trim());
+                        } else if (t.startsWith('@dir ')) cur.dir = t.replace('@dir ', '').trim();
+                        else if (t.startsWith('@require ')) cur.require = t.replace('@require ', '').trim();
+                        else if (t.startsWith('@parent ')) cur.parent = t.replace('@parent ', '').trim();
+                    }
+                }
+                return result;
+            },
+
+            // ===================== PREVIEW METHODS =====================
+            _previewMessageHandler: null,
+            _previewLoopId: null,
+            _previewKeyHandler: null,
+            _previewAudioEnabled: false,
+
+            _findProjectFile(relativePath) {
+                if (State.projectFiles[relativePath]) return State.projectFiles[relativePath];
+                for (const [key, file] of Object.entries(State.projectFiles)) {
+                    if (key.endsWith('/' + relativePath)) return file;
+                }
+                return null;
+            },
+
+            _showGitHubLogin(errorMsg) {
+                const panel = document.getElementById('githubLoginPanel');
+                if (panel) {
+                    panel.style.display = 'block';
+                    // 저장된 설정 복원
+                    GitHubAdapter.loadConfig().then(cfg => {
+                        if (cfg) {
+                            const repoEl = document.getElementById('ghRepo');
+                            const branchEl = document.getElementById('ghBranch');
+                            const tokenEl = document.getElementById('ghToken');
+                            if (repoEl && cfg.owner && cfg.repo) repoEl.value = cfg.owner + '/' + cfg.repo;
+                            if (branchEl && cfg.branch) branchEl.value = cfg.branch;
+                            if (tokenEl && cfg.token) tokenEl.value = cfg.token;
+                        }
+                    });
+                }
+                if (errorMsg) {
+                    const errEl = document.getElementById('ghError');
+                    if (errEl) { errEl.textContent = errorMsg; errEl.style.display = 'block'; }
+                }
+            },
+
+            async _connectGitHub() {
+                const repoVal = document.getElementById('ghRepo')?.value?.trim();
+                const branch = document.getElementById('ghBranch')?.value?.trim() || 'main';
+                const token = document.getElementById('ghToken')?.value?.trim();
+                const remember = document.getElementById('ghRemember')?.checked;
+                const errEl = document.getElementById('ghError');
+                const statusEl = document.getElementById('progressText');
+
+                if (!repoVal || !repoVal.includes('/')) {
+                    if (errEl) { errEl.textContent = 'owner/repo 형식으로 입력하세요.'; errEl.style.display = 'block'; }
+                    return;
+                }
+                if (!token) {
+                    if (errEl) { errEl.textContent = 'Personal Access Token을 입력하세요.'; errEl.style.display = 'block'; }
+                    return;
+                }
+
+                const [owner, repo] = repoVal.split('/', 2);
+                if (errEl) errEl.style.display = 'none';
+                statusEl.textContent = 'GitHub 연결 중...';
+
+                try {
+                    GitHubAdapter.init(owner, repo, token, branch);
+
+                    // 연결 테스트 (트리 가져오기)
+                    statusEl.textContent = '파일 트리 로드 중...';
+                    await GitHubAdapter.fetchTree();
+
+                    // 설정 저장
+                    if (remember) {
+                        await GitHubAdapter.saveConfig();
+                    }
+
+                    // 프로젝트 로드
+                    statusEl.textContent = '프로젝트 데이터 로드 중...';
+                    const data = await GitHubAdapter.loadProject();
+
+                    window.__RMMZ_GITHUB = true;
+                    window.__RMMZ_SERVER = false;
+                    State.projectPath = owner + '/' + repo;
+                    State.projectName = data.database?.System?.gameTitle || repo;
+
+                    API.loadProject(data);
+                    UI._updateProjectBadge();
+
+                    const dbCount = Object.keys(data.database || {}).length;
+                    const mapCount = Object.keys(data.maps || {}).length;
+                    statusEl.textContent = 'GitHub: DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
+                    setTimeout(() => { statusEl.textContent = ''; }, 4000);
+                } catch (e) {
+                    console.error('[GitHub] Connect failed:', e);
+                    if (errEl) {
+                        let msg = e.message || '연결 실패';
+                        if (msg.includes('401')) msg = '토큰이 유효하지 않습니다.';
+                        else if (msg.includes('404')) msg = '저장소를 찾을 수 없습니다.';
+                        else if (msg.includes('403')) msg = '접근 권한이 없습니다. 토큰 scope를 확인하세요.';
+                        errEl.textContent = msg;
+                        errEl.style.display = 'block';
+                    }
+                    statusEl.textContent = 'GitHub 연결 실패';
+                }
+            },
+
+            _disconnectGitHub() {
+                GitHubAdapter.clearConfig();
+                window.__RMMZ_GITHUB = false;
+                location.reload();
+            },
+
+            async _uploadFile(relativePath, file) {
+                // GitHub 모드: base64로 업로드
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    const base64 = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const r = reader.result;
+                            const idx = r.indexOf(',');
+                            resolve(idx >= 0 ? r.substring(idx + 1) : r);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(file);
+                    });
+                    await GitHubAdapter.writeFileBinary(relativePath, base64, '[RMMZStudio] Upload ' + relativePath);
+                    return true;
+                }
+                // 서버 모드: FormData POST
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('path', relativePath);
+                await fetch('/api/upload', { method: 'POST', body: formData });
+                return true;
+            },
+
+            async _listFiles(folder) {
+                // GitHub 모드
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    const items = await GitHubAdapter.listDir(GitHubAdapter._projPath(folder));
+                    return items.map(i => i.name);
+                }
+                // 서버 모드
+                if (window.__RMMZ_SERVER) {
+                    try {
+                        const resp = await fetch('/api/list?path=' + encodeURIComponent(folder));
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            return data.files || data || [];
+                        }
+                    } catch(e) {}
+                    // fallback: 디렉토리 직접 접근
+                    try {
+                        const projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                        const resp2 = await fetch('/' + projPath + '/' + folder + '/');
+                        if (resp2.ok) {
+                            const text = await resp2.text();
+                            const matches = [...text.matchAll(/href="([^"]+\.\w+)"/g)];
+                            return matches.map(m => decodeURIComponent(m[1]));
+                        }
+                    } catch(e) {}
+                }
+                // 로컬 모드: projectFiles에서 필터
+                if (State.projectFiles) {
+                    const prefix = folder.endsWith('/') ? folder : folder + '/';
+                    return Object.keys(State.projectFiles)
+                        .filter(k => k.startsWith(prefix) || k.startsWith(folder + '/'))
+                        .map(k => k.split('/').pop());
+                }
+                return [];
+            },
+
+            async _readProjectFileText(relativePath) {
+                // GitHub 모드
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    return await GitHubAdapter.readFile(GitHubAdapter._projPath(relativePath));
+                }
+                // 서버 모드에서는 항상 서버에서 최신 파일을 가져옴 (로컬 캐시 무시)
+                if (window.__RMMZ_SERVER && window.__RMMZ_PROJECT_PATH) {
+                    try {
+                        const resp = await fetch('/' + window.__RMMZ_PROJECT_PATH + '/' + relativePath + '?_=' + Date.now(), { cache: 'no-store' });
+                        if (resp.ok) return await resp.text();
+                    } catch(e) { console.warn('Fetch failed:', relativePath, e); }
+                }
+                // 로컬 모드: File 객체 사용
+                const file = UI._findProjectFile(relativePath);
+                if (file) return await file.text();
+                return null;
+            },
+
+            async _readProjectFileDataUrl(relativePath) {
+                // GitHub 모드
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    return await GitHubAdapter.readFileDataUrl(GitHubAdapter._projPath(relativePath));
+                }
+                // Try local File objects first
+                const file = UI._findProjectFile(relativePath);
+                if (file) return await fileToDataUrl(file);
+                // Fall back to HTTP fetch (server mode) — cache-bust
+                if (window.__RMMZ_SERVER && window.__RMMZ_PROJECT_PATH) {
+                    try {
+                        const resp = await fetch('/' + window.__RMMZ_PROJECT_PATH + '/' + relativePath + '?_=' + Date.now(), { cache: 'no-store' });
+                        if (resp.ok) {
+                            const blob = await resp.blob();
+                            return await new Promise((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onload = () => resolve(reader.result);
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+                        }
+                    } catch(e) { console.warn('Fetch failed:', relativePath, e); }
+                }
+                return null;
+            },
+
+            async _readProjectFileBase64(relativePath) {
+                // GitHub 모드
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    return await GitHubAdapter.readFileBase64(GitHubAdapter._projPath(relativePath));
+                }
+                const file = UI._findProjectFile(relativePath);
+                if (file) {
+                    return await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            // Strip "data:...;base64," prefix
+                            var r = reader.result;
+                            var idx = r.indexOf(',');
+                            resolve(idx >= 0 ? r.substring(idx + 1) : r);
+                        };
+                        reader.onerror = reject;
+                        reader.readAsDataURL(file);
+                    });
+                }
+                if (window.__RMMZ_SERVER && window.__RMMZ_PROJECT_PATH) {
+                    try {
+                        const resp = await fetch('/' + window.__RMMZ_PROJECT_PATH + '/' + relativePath + '?_=' + Date.now(), { cache: 'no-store' });
+                        if (resp.ok) {
+                            const blob = await resp.blob();
+                            return await new Promise((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    var r = reader.result;
+                                    var idx = r.indexOf(',');
+                                    resolve(idx >= 0 ? r.substring(idx + 1) : r);
+                                };
+                                reader.onerror = reject;
+                                reader.readAsDataURL(blob);
+                            });
+                        }
+                    } catch(e) {}
+                }
+                return null;
+            },
+
+            previewInit() {
+                const mapSelect = document.getElementById('previewMapSelect');
+                mapSelect.innerHTML = '<option value="">맵 선택...</option>';
+                if (State.mapInfos) {
+                    State.mapInfos.forEach((info, id) => {
+                        if (!info) return;
+                        const opt = document.createElement('option');
+                        opt.value = id;
+                        opt.textContent = id + ': ' + info.name;
+                        mapSelect.appendChild(opt);
+                    });
+                }
+                // Pre-select current map if editing one
+                if (State.currentMap) {
+                    mapSelect.value = State.currentMap;
+                }
+                // Populate face list for message test
+                const faceSelect = document.getElementById('previewMsgFace');
+                faceSelect.innerHTML = '<option value="">얼굴 없음</option>';
+                for (const path of Object.keys(State.projectFiles)) {
+                    if (path.includes('img/faces/') && /\.png$/i.test(path)) {
+                        const name = path.split('/').pop().replace('.png', '');
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        faceSelect.appendChild(opt);
+                    }
+                }
+                document.getElementById('previewStatus').textContent = '준비 완료';
+            },
+
+            async previewPlay(mode) {
+                mode = mode || 'map';
+                const statusEl = document.getElementById('previewStatus');
+                let mapId = 0, startX = 8, startY = 6, mapData = null;
+
+                if (mode === 'map') {
+                    mapId = parseInt(document.getElementById('previewMapSelect').value);
+                    if (!mapId) { statusEl.textContent = '맵을 선택하세요'; return; }
+                    startX = parseInt(document.getElementById('previewStartX').value) || 8;
+                    startY = parseInt(document.getElementById('previewStartY').value) || 6;
+                }
+
+                statusEl.textContent = '엔진 로딩 중...';
+
+                try {
+                    // 1. Read core scripts (libs + engine)
+                    const corePaths = [
+                        'js/libs/pixi.js',
+                        'js/libs/pako.min.js',
+                        'js/libs/localforage.min.js',
+                        'js/libs/effekseer.min.js',
+                        'js/libs/vorbisdecoder.js',
+                        'js/rmmz_core.js',
+                        'js/rmmz_managers.js',
+                        'js/rmmz_objects.js',
+                        'js/rmmz_scenes.js',
+                        'js/rmmz_sprites.js',
+                        'js/rmmz_windows.js'
+                    ];
+                    const coreTexts = [];
+                    for (const p of corePaths) {
+                        const text = await UI._readProjectFileText(p);
+                        if (!text) {
+                            if (p.includes('effekseer') || p.includes('vorbis')) {
+                                console.warn('Preview: skipping optional lib', p);
+                                continue;
+                            }
+                            statusEl.textContent = '오류: ' + p + ' 없음'; return;
+                        }
+                        coreTexts.push({ path: p, text: text });
+                    }
+
+                    // 2. Read enabled plugin scripts
+                    const pluginTexts = [];
+                    const plugins = State.plugins || [];
+                    for (const pl of plugins) {
+                        if (!pl.status || !pl.name) continue;
+                        const text = await UI._readProjectFileText('js/plugins/' + pl.name + '.js');
+                        if (text) pluginTexts.push({ name: pl.name, text: text, parameters: pl.params || {} });
+                    }
+
+                    // 3. Collect database data
+                    const dbData = {};
+                    const dbMap = {
+                        actors:'Actors', classes:'Classes', skills:'Skills', items:'Items',
+                        weapons:'Weapons', armors:'Armors', enemies:'Enemies', troops:'Troops',
+                        states:'States', animations:'Animations', commonevents:'CommonEvents',
+                        system:'System', tilesets:'Tilesets'
+                    };
+                    for (const [key, fname] of Object.entries(dbMap)) {
+                        if (State.database[key]) {
+                            dbData[key] = State.database[key];
+                        } else {
+                            const t = await UI._readProjectFileText('data/' + fname + '.json');
+                            if (t) dbData[key] = JSON.parse(t);
+                        }
+                    }
+                    dbData.mapinfos = State.mapInfos || null;
+
+                    // 4. Load target map data (map mode only)
+                    if (mode === 'map') {
+                        mapData = State.maps[mapId];
+                        if (!mapData) {
+                            const t = await UI._readProjectFileText('data/Map' + String(mapId).padStart(3,'0') + '.json');
+                            if (t) mapData = JSON.parse(t);
+                        }
+                        if (!mapData) { statusEl.textContent = '오류: Map' + mapId + ' 없음'; return; }
+                    }
+
+                    statusEl.textContent = '프리뷰 빌드 중...';
+
+                    // 5. Build preview HTML
+                    const html = UI._buildPreviewHtml(coreTexts, pluginTexts, dbData, mapData, mapId, startX, startY, UI._previewAudioEnabled, mode);
+
+                    // 6. Set up message handler
+                    if (UI._previewMessageHandler) {
+                        window.removeEventListener('message', UI._previewMessageHandler);
+                    }
+                    UI._previewMessageHandler = function(e) { UI._handlePreviewMessage(e); };
+                    window.addEventListener('message', UI._previewMessageHandler);
+
+                    // 7. Load blob into iframe
+                    const iframe = document.getElementById('previewIframe');
+                    const blob = new Blob([html], { type: 'text/html' });
+                    if (UI._previewBlobUrl) URL.revokeObjectURL(UI._previewBlobUrl);
+                    UI._previewBlobUrl = URL.createObjectURL(blob);
+                    iframe.src = UI._previewBlobUrl;
+                    statusEl.textContent = (mode === 'full' ? '전체 게임' : '맵 프리뷰') + ' 시작 중...';
+
+                    // Parent-driven game loop
+                    if (UI._previewLoopId) clearInterval(UI._previewLoopId);
+                    UI._previewLoopId = setInterval(function() {
+                        var cw = iframe.contentWindow;
+                        if (cw) { try { cw.postMessage({type:'pvTick'}, '*'); } catch(e){} }
+                    }, 1000 / 60);
+
+                    // Forward keyboard events to iframe
+                    if (UI._previewKeyHandler) {
+                        document.removeEventListener('keydown', UI._previewKeyHandler, true);
+                        document.removeEventListener('keyup', UI._previewKeyHandler, true);
+                    }
+                    UI._previewKeyHandler = function(e) {
+                        if (State.currentMode !== 'preview') return;
+                        var tag = (e.target.tagName || '').toLowerCase();
+                        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+                        var cw = iframe.contentWindow;
+                        if (!cw) return;
+                        cw.postMessage({
+                            type: 'pvKey',
+                            eventType: e.type,
+                            keyCode: e.keyCode,
+                            key: e.key,
+                            code: e.code,
+                            ctrlKey: e.ctrlKey,
+                            shiftKey: e.shiftKey,
+                            altKey: e.altKey,
+                            metaKey: e.metaKey,
+                            repeat: e.repeat
+                        }, '*');
+                        var gc = e.keyCode;
+                        if ([8,9,13,27,32,33,34,37,38,39,40].indexOf(gc) >= 0) {
+                            e.preventDefault();
+                        }
+                    };
+                    document.addEventListener('keydown', UI._previewKeyHandler, true);
+                    document.addEventListener('keyup', UI._previewKeyHandler, true);
+
+                } catch (err) {
+                    console.error('Preview build error:', err);
+                    statusEl.textContent = '오류: ' + err.message;
+                }
+            },
+
+            _buildPreviewHtml(coreScripts, pluginScripts, dbData, mapData, mapId, startX, startY, audioEnabled, mode) {
+                mode = mode || 'map';
+                var h = '';
+                h += '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="UTF-8">\n';
+                h += '<style>body{margin:0;overflow:hidden;background:#000;}canvas{display:block;}';
+                h += '#errorBox{position:fixed;top:0;left:0;right:0;background:rgba(200,0,0,0.9);color:#fff;padding:8px 12px;font:12px monospace;z-index:9999;display:none;max-height:150px;overflow:auto;}</style>\n';
+                h += '</head>\n<body>\n<div id="errorBox"></div>\n';
+
+                // Error handler
+                h += '<script>\nwindow.onerror=function(m,u,l,c,e){var b=document.getElementById("errorBox");b.style.display="block";b.innerHTML+=m+" (L"+l+")<br>";console.error(m,e);};\n';
+
+                // Inject data
+                h += 'var __PV_MODE__="' + mode + '";\n';
+                h += 'var __PV_DB__={};\n';
+                for (const [key, val] of Object.entries(dbData)) {
+                    if (val) h += '__PV_DB__.' + key + '=' + JSON.stringify(val) + ';\n';
+                }
+                if (mode === 'map') {
+                    h += 'var __PV_MAP__=' + JSON.stringify(mapData) + ';\n';
+                    h += 'var __PV_MAP_ID__=' + mapId + ';\n';
+                    h += 'var __PV_START_X__=' + startX + ';\n';
+                    h += 'var __PV_START_Y__=' + startY + ';\n';
+                } else {
+                    h += 'var __PV_MAP__=null;\nvar __PV_MAP_ID__=0;\nvar __PV_START_X__=0;\nvar __PV_START_Y__=0;\n';
+                }
+                h += 'var __PV_AUDIO__=' + (audioEnabled ? 'true' : 'false') + ';\n';
+
+                // Plugin list for RMMZ plugin system
+                var pluginsArr = pluginScripts.map(function(p) {
+                    return { name: p.name, status: true, description: '', parameters: p.parameters };
+                });
+                h += 'var $plugins=' + JSON.stringify(pluginsArr) + ';\n';
+
+                // Pre-core stubs: Worker, effekseer (must run BEFORE core scripts)
+                h += 'var _OrigWorker=window.Worker;window.Worker=function(u){try{return new _OrigWorker(u);}catch(e){var f=function(){};return{postMessage:f,terminate:f,addEventListener:f,removeEventListener:f,onmessage:null,onerror:null};}};\n';
+                h += 'if(typeof effekseer==="undefined")window.effekseer={createContext:function(){return{init:function(){},setRestorationOfStatesFlag:function(){}}}};\n';
+                h += '<\/script>\n';
+
+                // Core scripts - escape closing tags in source
+                var closeTagRe = new RegExp('<' + '/script', 'gi');
+                for (var i = 0; i < coreScripts.length; i++) {
+                    var s = coreScripts[i];
+                    h += '<script>\n/* ' + s.path + ' */\n' + s.text.replace(closeTagRe, '<\\/script') + '\n<\/script>\n';
+                }
+
+                // Plugin scripts
+                for (var j = 0; j < pluginScripts.length; j++) {
+                    var ps = pluginScripts[j];
+                    h += '<script>\n/* Plugin: ' + ps.name + ' */\n' + ps.text.replace(closeTagRe, '<\\/script') + '\n<\/script>\n';
+                }
+
+                // Override & boot script
+                h += '<script>\n' + UI._getPreviewBootScript() + '\n<\/script>\n';
+                h += '</body>\n</html>';
+                return h;
+            },
+
+            _getPreviewBootScript() {
+                return [
+                    '// ===== PREVIEW BOOT OVERRIDES =====',
+                    '',
+                    '// --- Image bridge via postMessage ---',
+                    'var _pvImgId = 0, _pvImgReqs = {};',
+                    '',
+                    '(function(){',
+                    '  Bitmap.prototype._startLoading = function(){',
+                    '    var url = this._url;',
+                    '    if(!url){ this._onError(); return; }',
+                    '    this._image = new Image();',
+                    '    this._image.onload = this._onLoad.bind(this);',
+                    '    this._image.onerror = this._onError.bind(this);',
+                    '    this._destroyCanvas();',
+                    '    this._loadingState = "loading";',
+                    '    var rid = "i"+(++_pvImgId);',
+                    '    _pvImgReqs[rid] = this;',
+                    '    window.parent.postMessage({type:"reqImg",id:rid,url:url},"*");',
+                    '  };',
+                    '})();',
+                    '',
+                    'window.addEventListener("message",function(e){',
+                    '  var d = e.data;',
+                    '  if(d.type==="imgData"){',
+                    '    var bmp = _pvImgReqs[d.id];',
+                    '    if(bmp){',
+                    '      delete _pvImgReqs[d.id];',
+                    '      if(d.dataUrl){',
+                    '        bmp._image.src = d.dataUrl;',
+                    '      } else { bmp._onError(); }',
+                    '    }',
+                    '  } else if(d.type==="pvTick"){',
+                    '    if(typeof Graphics!=="undefined"&&Graphics._onTick) try{Graphics._onTick(1);}catch(x){}',
+                    '  } else if(d.type==="pvKey"){',
+                    '    if(typeof Input!=="undefined" && Input.keyMapper){',
+                    '      var btn = Input.keyMapper[d.keyCode];',
+                    '      if(btn){',
+                    '        if(d.eventType==="keydown"){ Input._currentState[btn]=true; }',
+                    '        else if(d.eventType==="keyup"){ Input._currentState[btn]=false; }',
+                    '      }',
+                    '    }',
+                    '  } else if(d.type==="audioData"){',
+                    '    if(window._pvAudReqs){',
+                    '      var wa = window._pvAudReqs[d.id];',
+                    '      if(wa){',
+                    '        delete window._pvAudReqs[d.id];',
+                    '        if(d.base64){',
+                    '          try{',
+                    '            var bin = atob(d.base64);',
+                    '            var arr = new Uint8Array(bin.length);',
+                    '            for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);',
+                    '            wa._data = arr;',
+                    '            wa._isLoaded = true;',
+                    '            wa._updateBuffer();',
+                    '          }catch(x){ wa._isError=true; }',
+                    '        } else { wa._isError=true; }',
+                    '      }',
+                    '    }',
+                    '  } else if(d.type==="pvCmd"){',
+                    '    _handlePvCmd(d);',
+                    '  } else if(d.type==="mapDataResp"){',
+                    '    if(d.data){',
+                    '      $dataMap = d.data;',
+                    '      if($dataMap.events && typeof DataManager!=="undefined"){',
+                    '        DataManager.extractArrayMetadata($dataMap.events);',
+                    '      }',
+                    '    }',
+                    '  }',
+                    '});',
+                    '',
+                    '// --- Override DataManager ---',
+                    '(function(){',
+                    '  DataManager._databaseFiles = [];',
+                    '  DataManager.loadDatabase = function(){',
+                    '    $dataActors = __PV_DB__.actors || null;',
+                    '    $dataClasses = __PV_DB__.classes || null;',
+                    '    $dataSkills = __PV_DB__.skills || null;',
+                    '    $dataItems = __PV_DB__.items || null;',
+                    '    $dataWeapons = __PV_DB__.weapons || null;',
+                    '    $dataArmors = __PV_DB__.armors || null;',
+                    '    $dataEnemies = __PV_DB__.enemies || null;',
+                    '    $dataTroops = __PV_DB__.troops || null;',
+                    '    $dataStates = __PV_DB__.states || null;',
+                    '    $dataAnimations = __PV_DB__.animations || null;',
+                    '    $dataCommonEvents = __PV_DB__.commonevents || null;',
+                    '    $dataSystem = __PV_DB__.system || null;',
+                    '    $dataTilesets = __PV_DB__.tilesets || null;',
+                    '    $dataMapInfos = __PV_DB__.mapinfos || null;',
+                    '    if(__PV_MODE__==="map") $dataMap = __PV_MAP__;',
+                    '  };',
+                    '  DataManager.isDatabaseLoaded = function(){ return !!$dataSystem; };',
+                    '  // Map loading: async via postMessage bridge',
+                    '  DataManager.loadMapData = function(mapId){',
+                    '    if(__PV_MODE__==="map" && mapId === __PV_MAP_ID__){',
+                    '      $dataMap = __PV_MAP__;',
+                    '    } else if(mapId > 0){',
+                    '      $dataMap = null;',
+                    '      window.parent.postMessage({type:"reqMap",mapId:mapId},"*");',
+                    '    } else {',
+                    '      $dataMap = {};',
+                    '    }',
+                    '  };',
+                    '  DataManager.isMapLoaded = function(){ return !!$dataMap; };',
+                    '})();',
+                    '',
+                    '// --- Override font loading (blob URL cannot resolve relative font paths) ---',
+                    '(function(){',
+                    '  Scene_Boot.prototype.loadGameFonts = function(){};',
+                    '  Graphics.loadFont = function(){};',
+                    '  if(typeof FontManager !== "undefined"){ FontManager.load = function(){ return Promise.resolve(); }; FontManager._states = {}; FontManager.isReady = function(){ return true; }; }',
+                    '})();',
+                    '',
+                    '// --- Override Scene_Boot based on mode ---',
+                    '(function(){',
+                    '  if(__PV_MODE__==="map"){',
+                    '    // Map mode: skip title, go directly to selected map',
+                    '    Scene_Boot.prototype.start = function(){',
+                    '      Scene_Base.prototype.start.call(this);',
+                    '      this.resizeScreen();',
+                    '      this.updateDocumentTitle();',
+                    '      DataManager.setupNewGame();',
+                    '      $gamePlayer.reserveTransfer(__PV_MAP_ID__, __PV_START_X__, __PV_START_Y__, 2, 0);',
+                    '      $gamePlayer.setTransparent(false);',
+                    '      SceneManager.goto(Scene_Map);',
+                    '      window.parent.postMessage({type:"pvReady"},"*");',
+                    '    };',
+                    '  } else {',
+                    '    // Full mode: use original boot flow (Splash → Title → Game)',
+                    '    var _origStart = Scene_Boot.prototype.start;',
+                    '    Scene_Boot.prototype.start = function(){',
+                    '      // Patch: isBattleTest/isEventTest/isTitleSkip should all be false',
+                    '      DataManager.isBattleTest = function(){ return false; };',
+                    '      DataManager.isEventTest = function(){ return false; };',
+                    '      DataManager.isTitleSkip = function(){ return false; };',
+                    '      _origStart.call(this);',
+                    '      // Enable playtest mode for debug features (F9 etc.)',
+                    '      if(typeof $gameTemp !== "undefined") $gameTemp._isPlaytest = true;',
+                    '      window.parent.postMessage({type:"pvReady"},"*");',
+                    '    };',
+                    '    // Fix adjustWindow for iframe (not NW.js)',
+                    '    Scene_Boot.prototype.adjustWindow = function(){};',
+                    '  }',
+                    '})();',
+                    '',
+                    '// --- Fix StorageManager for preview (no IndexedDB needed) ---',
+                    '(function(){',
+                    '  StorageManager.saveObject = function(saveName, obj){',
+                    '    if(!window.__pvSaves) window.__pvSaves = {};',
+                    '    window.__pvSaves[saveName] = JSON.stringify(obj);',
+                    '    return Promise.resolve();',
+                    '  };',
+                    '  StorageManager.loadObject = function(saveName){',
+                    '    if(window.__pvSaves && window.__pvSaves[saveName]){',
+                    '      return Promise.resolve(JSON.parse(window.__pvSaves[saveName]));',
+                    '    }',
+                    '    return Promise.resolve({});',
+                    '  };',
+                    '  StorageManager.updateForageKeys = function(){ return Promise.resolve(); };',
+                    '  StorageManager.forageKeysUpdated = function(){ return true; };',
+                    '  StorageManager.forageTestPassed = function(){ return true; };',
+                    '})();',
+                    '',
+                    '// --- Audio handling (conditional on __PV_AUDIO__ flag) ---',
+                    '(function(){',
+                    '  var noop = function(){};',
+                    '  if(!__PV_AUDIO__){',
+                    '    AudioManager.playBgm = noop; AudioManager.playBgs = noop;',
+                    '    AudioManager.playMe = noop; AudioManager.playSe = noop;',
+                    '    AudioManager.stopAll = noop; AudioManager.stopBgm = noop;',
+                    '    AudioManager.stopBgs = noop; AudioManager.stopMe = noop;',
+                    '    AudioManager.loadStaticSe = noop;',
+                    '    AudioManager.createBuffer = function(){ return { name:"", play:noop, stop:noop, destroy:noop, isPlaying:function(){return false;}, addLoadListener:noop, volume:0, pitch:1, pan:0 }; };',
+                    '    AudioManager._staticBuffers = [];',
+                    '    if(typeof SoundManager !== "undefined") SoundManager.preloadImportantSounds = noop;',
+                    '    if(typeof WebAudio !== "undefined"){ WebAudio.prototype._startLoading = noop; WebAudio.prototype.play = noop; }',
+                    '  } else {',
+                    '    var _pvAudId = 0, _pvAudReqs = {};',
+                    '    window._pvAudReqs = _pvAudReqs;',
+                    '    window._pvAudNextId = function(){ return "a"+(++_pvAudId); };',
+                    '    if(typeof WebAudio !== "undefined"){',
+                    '      WebAudio.prototype._startXhrLoading = function(url){',
+                    '        var self = this;',
+                    '        var rid = window._pvAudNextId();',
+                    '        _pvAudReqs[rid] = self;',
+                    '        window.parent.postMessage({type:"reqAudio",id:rid,url:url},"*");',
+                    '      };',
+                    '      WebAudio.prototype._startFetching = function(url){',
+                    '        this._startXhrLoading(url);',
+                    '      };',
+                    '    }',
+                    '  }',
+                    '})();',
+                    '',
+                    '// --- Utils patch for preview environment ---',
+                    '(function(){',
+                    '  Utils.isNwjs = function(){ return false; };',
+                    '  Utils.isOptionValid = function(name){',
+                    '    if(name === "test" && __PV_MODE__==="full") return true;',
+                    '    return false;',
+                    '  };',
+                    '})();',
+                    '',
+                    '// --- Handle commands from parent ---',
+                    'function _handlePvCmd(d){',
+                    '  if(d.cmd==="msg" && typeof $gameMessage !== "undefined"){',
+                    '    if(!$gameMessage.isBusy()){',
+                    '      if(d.face) $gameMessage.setFaceImage(d.face, d.faceIdx||0);',
+                    '      $gameMessage.setBackground(d.bg||0);',
+                    '      $gameMessage.setPositionType(d.pos!==undefined?d.pos:2);',
+                    '      var lines = (d.text||"").split("\\n");',
+                    '      for(var i=0;i<lines.length;i++) $gameMessage.add(lines[i]);',
+                    '    }',
+                    '  } else if(d.cmd==="teleport" && typeof $gamePlayer !== "undefined"){',
+                    '    $gamePlayer.reserveTransfer(d.mapId, d.x, d.y, 2, 0);',
+                    '  }',
+                    '}',
+                    '',
+                    '// --- Boot ---',
+                    'SceneManager.run(Scene_Boot);'
+                ].join('\n');
+            },
+
+            async _handlePreviewMessage(e) {
+                var d = e.data;
+                if (d.type === 'reqImg') {
+                    // Normalize image path
+                    var url = d.url.replace(/\\/g, '/');
+                    // Remove blob:, protocol, or host prefix
+                    url = url.replace(/^blob:[^\/]*\/[^\/]*\//, '');
+                    url = url.replace(/^https?:\/\/[^\/]+\//, '');
+                    url = url.replace(/^\.?\/?/, '');
+                    var iframe = document.getElementById('previewIframe');
+                    // Try to get as data URL
+                    var dataUrl = await UI._readProjectFileDataUrl(url);
+                    if (iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({ type: 'imgData', id: d.id, dataUrl: dataUrl }, '*');
+                    }
+                } else if (d.type === 'reqAudio') {
+                    // Audio bridge: read audio file and send as base64
+                    var url = d.url.replace(/\\/g, '/');
+                    url = url.replace(/^blob:[^\/]*\/[^\/]*\//, '');
+                    url = url.replace(/^https?:\/\/[^\/]+\//, '');
+                    url = url.replace(/^\.?\/?/, '');
+                    var base64 = await UI._readProjectFileBase64(url);
+                    var iframe = document.getElementById('previewIframe');
+                    if (iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({ type: 'audioData', id: d.id, base64: base64 }, '*');
+                    }
+                } else if (d.type === 'reqMap') {
+                    var mapId = d.mapId;
+                    var mapData = State.maps[mapId];
+                    if (!mapData) {
+                        var t = await UI._readProjectFileText('data/Map' + String(mapId).padStart(3,'0') + '.json');
+                        if (t) mapData = JSON.parse(t);
+                    }
+                    var iframe = document.getElementById('previewIframe');
+                    if (iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({ type: 'mapDataResp', mapId: mapId, data: mapData }, '*');
+                    }
+                } else if (d.type === 'pvReady') {
+                    document.getElementById('previewStatus').textContent = '프리뷰 실행 중';
+                }
+            },
+
+            previewStop() {
+                if (UI._previewLoopId) {
+                    clearInterval(UI._previewLoopId);
+                    UI._previewLoopId = null;
+                }
+                if (UI._previewKeyHandler) {
+                    document.removeEventListener('keydown', UI._previewKeyHandler, true);
+                    document.removeEventListener('keyup', UI._previewKeyHandler, true);
+                    UI._previewKeyHandler = null;
+                }
+                var iframe = document.getElementById('previewIframe');
+                iframe.src = 'about:blank';
+                if (UI._previewMessageHandler) {
+                    window.removeEventListener('message', UI._previewMessageHandler);
+                    UI._previewMessageHandler = null;
+                }
+                if (UI._previewBlobUrl) {
+                    URL.revokeObjectURL(UI._previewBlobUrl);
+                    UI._previewBlobUrl = null;
+                }
+                document.getElementById('previewStatus').textContent = '중지됨';
+                document.getElementById('previewMsgPanel').style.display = 'none';
+            },
+
+            previewToggleMsgPanel() {
+                var panel = document.getElementById('previewMsgPanel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            },
+
+            previewToggleAudio() {
+                UI._previewAudioEnabled = !UI._previewAudioEnabled;
+                var btn = document.getElementById('previewAudioToggle');
+                if (UI._previewAudioEnabled) {
+                    btn.textContent = '오디오 ON';
+                    btn.style.background = '#2ecc71';
+                    btn.style.color = '#fff';
+                } else {
+                    btn.textContent = '오디오 OFF';
+                    btn.style.background = '#555';
+                    btn.style.color = '#ccc';
+                }
+            },
+
+            previewSendMessage() {
+                var text = document.getElementById('previewMsgText').value;
+                if (!text) return;
+                var face = document.getElementById('previewMsgFace').value;
+                var faceIdx = parseInt(document.getElementById('previewMsgFaceIdx').value) || 0;
+                var iframe = document.getElementById('previewIframe');
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.postMessage({
+                        type: 'pvCmd',
+                        cmd: 'msg',
+                        text: text,
+                        face: face || '',
+                        faceIdx: faceIdx
+                    }, '*');
+                }
+                document.getElementById('previewMsgText').value = '';
+            },
+        };
+
+        function createField(name, label, type, value, options = []) {
+            let input = '';
+            if (type === 'checkbox') {
+                input = `<input type="checkbox" data-field="${name}" ${value ? 'checked' : ''}>`;
+            } else if (type === 'select') {
+                input = `<select data-field="${name}">`;
+                options.forEach(([val, text]) => {
+                    input += `<option value="${val}" ${val == value ? 'selected' : ''}>${text}</option>`;
+                });
+                input += '</select>';
+            } else if (type === 'textarea') {
+                input = `<textarea data-field="${name}">${value}</textarea>`;
+            } else {
+                input = `<input type="${type}" data-field="${name}" value="${value}">`;
+            }
+            return `<div class="formGroup">
+                <label>${label}</label>
+                ${input}
+            </div>`;
+        }
+
+        // Helper: animation ID field with pick button
+        function createAnimField(name, label, value) {
+            return `<div class="formGroup">
+                <label>${label}</label>
+                <div style="display:flex; align-items:center; gap:4px;">
+                    <input type="number" data-field="${name}" value="${value || 0}" style="flex:1;">
+                    <button type="button" class="pickBtn" data-pick-anim="${name}">선택...</button>
+                </div>
+            </div>`;
+        }
+
+        // Helper: audio field with pick button (for bgm/bgs/me/se name fields)
+        function createAudioField(name, label, value, audioType) {
+            return `<div class="formGroup">
+                <label>${label}</label>
+                <div style="display:flex; align-items:center; gap:4px;">
+                    <input type="text" data-field="${name}" value="${value || ''}" style="flex:1;">
+                    <button type="button" class="pickBtn" data-pick-audio="${name}" data-audio-type="${audioType}">선택...</button>
+                </div>
+            </div>`;
+        }
+
+        // Helper: audio JSON field with pick button (for system bgm/me fields stored as JSON)
+        function createAudioJsonField(name, label, jsonValue, audioType) {
+            const parsed = (typeof jsonValue === 'string') ? JSON.parse(jsonValue || '{}') : (jsonValue || {});
+            const audioName = parsed.name || '';
+            const vol = parsed.volume ?? 90;
+            const pitch = parsed.pitch ?? 100;
+            const pan = parsed.pan ?? 0;
+            return `<div class="formGroup">
+                <label>${label}</label>
+                <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+                    <input type="text" data-field="${name}_audioName" value="${audioName}" style="flex:1; min-width:100px;" placeholder="파일명" readonly>
+                    <button type="button" class="pickBtn" data-pick-audiojson="${name}" data-audio-type="${audioType}">선택...</button>
+                    <span style="color:#666; font-size:0.75em; margin-left:8px;">Vol</span>
+                    <input type="number" data-field="${name}_vol" value="${vol}" style="width:50px;" min="0" max="100">
+                    <span style="color:#666; font-size:0.75em;">Pit</span>
+                    <input type="number" data-field="${name}_pitch" value="${pitch}" style="width:50px;" min="50" max="150">
+                    <span style="color:#666; font-size:0.75em;">Pan</span>
+                    <input type="number" data-field="${name}_pan" value="${pan}" style="width:50px;" min="-100" max="100">
+                </div>
+            </div>`;
+        }
+
+        // ===================== SECTION: API =====================
+
+        window.API = {
+            loadProject(data) {
+                // Programmatic project loading - normalize database keys
+                const rawDB = data.database || {};
+                State.database = {};
+                // Map from capitalized file names to internal camelCase keys
+                const keyMap = {};
+                DB_TYPES.forEach(t => keyMap[t.toLowerCase()] = t);
+                for (const [k, v] of Object.entries(rawDB)) {
+                    // Try exact match first, then lowercase lookup
+                    if (DB_TYPES.includes(k)) {
+                        State.database[k] = v;
+                    } else {
+                        const mapped = keyMap[k.toLowerCase()];
+                        if (mapped) State.database[mapped] = v;
+                        else State.database[k] = v; // fallback
+                    }
+                }
+                State.mapInfos = data.mapInfos || {};
+                State.maps = data.maps || {};
+                State.plugins = data.plugins || [];
+                // Set project name from System.gameTitle
+                if (!State.projectName) {
+                    State.projectName = State.database?.system?.gameTitle || State.database?.System?.gameTitle || '';
+                }
+                document.getElementById('loadingScreen').style.display = 'none';
+                document.getElementById('editor').style.display = 'flex';
+                UI.refreshDB();
+                UI._updateProjectBadge();
+            },
+
+            switchMode(mode) {
+                UI.switchMode(mode);
+            },
+
+            // Database API
+            db: {
+                switchTab(key) {
+                    // Accept various formats: 'actors', 'Actors', 'Actors.json', 'commonEvents', 'CommonEvents'
+                    const stripped = key.replace('.json', '');
+                    const match = DB_TYPES.find(t => t.toLowerCase() === stripped.toLowerCase());
+                    UI.switchDBTab(match || stripped);
+                },
+                select(id) {
+                    UI.dbSelectItem(id);
+                },
+                getItem(tab, id) {
+                    return State.database[tab]?.[id];
+                },
+                setField(field, val) {
+                    if (State.currentDBItem !== null) {
+                        const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                        if (item) item[field] = val;
+                    }
+                },
+                updateItem(tab, id, props) {
+                    const item = State.database[tab]?.[id];
+                    if (item) Object.assign(item, props);
+                },
+                addItem(tab, props) {
+                    State.database[tab] = State.database[tab] || [];
+                    State.database[tab].push(props);
+                },
+                deleteItem(tab, id) {
+                    State.database[tab]?.splice(id, 1);
+                },
+                getData(tab) {
+                    return State.database[tab] || [];
+                },
+                exportTab(tab) {
+                    return JSON.stringify(State.database[tab] || []);
+                },
+                exportAll() {
+                    return JSON.stringify(State.database);
+                },
+                // Export with RMMZ-compatible capitalized file names
+                exportForRMMZ() {
+                    const KEY_MAP = {
+                        actors: 'Actors', classes: 'Classes', skills: 'Skills',
+                        items: 'Items', weapons: 'Weapons', armors: 'Armors',
+                        enemies: 'Enemies', troops: 'Troops', states: 'States',
+                        commonEvents: 'CommonEvents', system: 'System', tilesets: 'Tilesets'
+                    };
+                    const result = {};
+                    for (const [k, v] of Object.entries(State.database)) {
+                        const rmmzKey = KEY_MAP[k] || k;
+                        result[rmmzKey] = v;
+                    }
+                    return result;
+                },
+            },
+
+            // Map API
+            map: {
+                loadMap(mapId) {
+                    UI.mapLoadMap(mapId);
+                },
+                getTile(x, y, z) {
+                    const map = State.maps[State.currentMap];
+                    if (!map) return 0;
+                    const index = z * map.width * map.height + y * map.width + x;
+                    return map.data[index] || 0;
+                },
+                setTile(x, y, z, tileId) {
+                    const map = State.maps[State.currentMap];
+                    if (!map) return;
+                    const index = z * map.width * map.height + y * map.width + x;
+                    map.data[index] = tileId;
+                    UI.drawMap();
+                },
+                setTiles(changes) {
+                    const map = State.maps[State.currentMap];
+                    if (!map) return;
+                    changes.forEach(change => {
+                        const index = change.z * map.width * map.height + change.y * map.width + change.x;
+                        map.data[index] = change.tileId;
+                    });
+                    UI.drawMap();
+                },
+                getMapData() {
+                    return State.maps[State.currentMap];
+                },
+                setMapProperty(key, val) {
+                    if (State.maps[State.currentMap]) {
+                        State.maps[State.currentMap][key] = val;
+                    }
+                },
+                addEvent(x, y, eventData) {
+                    if (State.maps[State.currentMap]) {
+                        State.maps[State.currentMap].events = State.maps[State.currentMap].events || [];
+                        State.maps[State.currentMap].events.push(eventData);
+                    }
+                },
+                getEvent(eventId) {
+                    if (State.maps[State.currentMap]) {
+                        return State.maps[State.currentMap].events?.[eventId];
+                    }
+                },
+                updateEvent(eventId, data) {
+                    if (State.maps[State.currentMap] && State.maps[State.currentMap].events?.[eventId]) {
+                        Object.assign(State.maps[State.currentMap].events[eventId], data);
+                    }
+                },
+                removeEvent(eventId) {
+                    if (State.maps[State.currentMap]) {
+                        State.maps[State.currentMap].events?.splice(eventId, 1);
+                    }
+                },
+                getMapList() {
+                    return State.mapInfos;
+                },
+                exportMap() {
+                    return JSON.stringify(State.maps[State.currentMap]);
+                },
+                zoom(level) {
+                    UI.mapZoom(level);
+                },
+                scrollTo(x, y) {
+                    // Placeholder
+                },
+            },
+
+            // Event API - RMMZ Standard Format
+            event: {
+                // Add a single command with RMMZ format: {code, indent, parameters}
+                addCommand(code, parameters = [], indent = 0) {
+                    State.eventCommands.push({ code: parseInt(code), parameters, indent });
+                    UI.refreshEventList();
+                },
+
+                // Batch add commands in RMMZ format
+                batchAddCommands(list) {
+                    // Normalize format: convert old string-based format to numeric codes if needed
+                    State.eventCommands = list.map(cmd => {
+                        if (cmd.code !== undefined) {
+                            // Already in RMMZ format
+                            return {
+                                code: cmd.code,
+                                parameters: Array.isArray(cmd.parameters) ? cmd.parameters : [],
+                                indent: cmd.indent ?? 0
+                            };
+                        }
+                        return cmd;
+                    });
+                    UI.refreshEventList();
+                },
+
+                getCommands() {
+                    return State.eventCommands;
+                },
+
+                clearCommands() {
+                    State.eventCommands = [];
+                    UI.refreshEventList();
+                },
+
+                // Export in RMMZ-compatible JSON format
+                exportJSON() {
+                    return JSON.stringify(State.eventCommands, null, 2);
+                },
+
+                // Import RMMZ event command list
+                importCommands(list) {
+                    State.eventCommands = list;
+                    UI.refreshEventList();
+                },
+
+                // Import from RMMZ event file format (supports both code and legacy formats)
+                importFromRMMZ(eventList) {
+                    const normalized = eventList.map(cmd => {
+                        if (typeof cmd.code === 'number') {
+                            return cmd;
+                        }
+                        // Legacy conversion if needed
+                        return cmd;
+                    });
+                    State.eventCommands = normalized;
+                    UI.refreshEventList();
+                },
+
+                setEventMeta(opts) {
+                    // Placeholder for meta info like event ID, name, etc.
+                },
+
+                previewNext() {
+                    UI.eventPreviewNext();
+                },
+
+                previewPrev() {
+                    UI.eventPreviewPrev();
+                },
+
+                previewReset() {
+                    UI.eventPreviewReset();
+                },
+            },
+
+            // Resources API
+            res: {
+                listFolder(path) {
+                    const files = [];
+                    for (const p of Object.keys(State.projectFiles)) {
+                        if (p.startsWith(path)) files.push(p);
+                    }
+                    return files;
+                },
+                getImage(path) {
+                    return State.projectFiles[path];
+                },
+            },
+
+            // Plugins API
+            plug: {
+                getList() {
+                    return State.plugins || [];
+                },
+                setEnabled(name, bool) {
+                    const plugin = (State.plugins || []).find(p => p.name === name);
+                    if (plugin) plugin.status = bool;
+                },
+                getParams(name) {
+                    const plugin = (State.plugins || []).find(p => p.name === name);
+                    return plugin?.params || {};
+                },
+                setParams(name, params) {
+                    const plugin = (State.plugins || []).find(p => p.name === name);
+                    if (plugin) plugin.params = params;
+                },
+                exportPlugins() {
+                    const plugins = State.plugins || [];
+                    let code = '//=============================================================================\n';
+                    code += '// Plugins\n';
+                    code += '//=============================================================================\n\n';
+                    plugins.forEach(p => {
+                        code += `PluginManager.setup("${p.name}");\n`;
+                    });
+                    return code;
+                },
+            },
+
+            // General
+            status() {
+                return {
+                    currentMode: State.currentMode,
+                    currentMap: State.currentMap,
+                    currentDBTab: State.currentDBTab,
+                };
+            },
+
+            exportAll() {
+                return {
+                    database: State.database,
+                    mapInfos: State.mapInfos,
+                    maps: State.maps,
+                    plugins: State.plugins,
+                };
+            },
+
+            getProjectInfo() {
+                return {
+                    hasMaps: Object.keys(State.maps).length > 0,
+                    hasDatabase: Object.keys(State.database).length > 0,
+                };
+            },
+
+            // === Save to Project ===
+            async saveToProject() {
+                const statusEl = document.getElementById('saveStatus');
+                const btn = document.getElementById('btnSaveProject');
+                statusEl.textContent = '저장 중...';
+                btn.disabled = true;
+                btn.style.opacity = '0.6';
+
+                const exportData = {
+                    database: API.db.exportForRMMZ(),
+                    maps: State.maps,
+                    mapInfos: State.mapInfos,
+                    plugins: State.plugins
+                };
+
+                // GitHub mode: commit to repo
+                if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                    try {
+                        const result = await GitHubAdapter.saveProject(exportData, (msg) => {
+                            statusEl.textContent = msg;
+                        });
+                        statusEl.textContent = result.saved + '개 파일 GitHub 커밋 완료';
+                        statusEl.style.color = '#2ecc71';
+                        // SHA 캐시 갱신을 위해 트리 재로드
+                        GitHubAdapter.fetchTree().catch(() => {});
+                    } catch (e) {
+                        statusEl.textContent = 'GitHub 저장 실패: ' + e.message;
+                        statusEl.style.color = '#e74c3c';
+                        console.error('[GitHub] Save error:', e);
+                    }
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    return;
+                }
+
+                // Server mode: POST directly
+                if (window.__RMMZ_SERVER) {
+                    try {
+                        // 저장 전 데이터 무결성 사전 검사
+                        const jsonStr = JSON.stringify(exportData);
+                        const tilesets = exportData.database?.Tilesets;
+                        if (tilesets) {
+                            console.log('[Save] Tilesets 엔트리:', tilesets.length,
+                                '전체 JSON:', (jsonStr.length/1024).toFixed(1) + 'KB');
+                        }
+                        const resp = await fetch('/api/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: jsonStr
+                        });
+                        const result = await resp.json();
+                        if (result.success) {
+                            // 저장 크기 검증 정보 표시
+                            const sizeInfo = result.sizes || {};
+                            const tsSize = sizeInfo['Tilesets.json'];
+                            const totalKB = Object.values(sizeInfo).reduce((a,b) => a+b, 0) / 1024;
+                            statusEl.textContent = result.saved.length + '개 파일 저장 완료 (' + totalKB.toFixed(1) + 'KB)';
+                            statusEl.style.color = '#2ecc71';
+                            console.log('[Save] 저장 완료:', result.saved, 'sizes:', sizeInfo);
+                        } else {
+                            statusEl.textContent = '저장 실패: ' + result.error;
+                            statusEl.style.color = '#e74c3c';
+                            console.error('[Save] 저장 실패:', result.error);
+                        }
+                    } catch (e) {
+                        statusEl.textContent = '서버 오류: ' + e.message;
+                        statusEl.style.color = '#e74c3c';
+                    }
+                } else {
+                    // File mode: download as JSON
+                    try {
+                        const json = JSON.stringify(exportData);
+                        const blob = new Blob([json], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = '_temp_db_export.json';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        statusEl.textContent = '다운로드 완료 (' + (json.length/1024).toFixed(1) + 'KB)';
+                        statusEl.style.color = '#f39c12';
+                    } catch (e) {
+                        statusEl.textContent = '저장 실패: ' + e.message;
+                        statusEl.style.color = '#e74c3c';
+                    }
+                }
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                setTimeout(() => {
+                    statusEl.textContent = '';
+                    statusEl.style.color = '#aaa';
+                }, 5000);
+            },
+
+            // === Chunked Export API (for automation) ===
+            exportPrepare() {
+                const exportData = {
+                    database: API.db.exportForRMMZ(),
+                    maps: State.maps,
+                    mapInfos: State.mapInfos,
+                    plugins: State.plugins
+                };
+                window._rmmzExportStr = JSON.stringify(exportData);
+                return { totalLength: window._rmmzExportStr.length };
+            },
+
+            exportChunk(start, length) {
+                if (!window._rmmzExportStr) return '';
+                return window._rmmzExportStr.substring(start, start + (length || 600));
+            },
+
+            exportCleanup() {
+                delete window._rmmzExportStr;
+                return 'cleaned';
+            },
+
+            // Per-type export (smaller chunks)
+            exportDBType(typeName) {
+                const data = State.database[typeName];
+                if (!data) return null;
+                return JSON.stringify(data);
+            },
+
+            exportMapData(mapId) {
+                return JSON.stringify(State.maps[mapId] || null);
+            },
+
+            exportMapInfos() {
+                return JSON.stringify(State.mapInfos);
+            },
+
+            getDBTypeNames() {
+                return Object.keys(State.database);
+            },
+
+            getMapIds() {
+                return Object.keys(State.maps).map(Number);
+            },
+        };
+
+        // Initialize
+        document.getElementById('projectInput').addEventListener('change', loadProjectFolder);
+
+        // Suppress default browser context menu globally (custom menus will handle it)
+        document.addEventListener('contextmenu', (e) => {
+            // Allow default context menu on text inputs and textareas for copy/paste
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            e.preventDefault();
+        });
+
+        // Auto-load: try server first, then fall back to _temp_db_load.js
+        window.addEventListener('DOMContentLoaded', async () => {
+            const statusEl = document.getElementById('saveStatus');
+            const isServer = location.protocol === 'http:' || location.protocol === 'https:';
+
+            // ── GitHub 모드 체크 ──
+            const ghMode = new URLSearchParams(location.search).get('mode') === 'github';
+            if (ghMode || window.__RMMZ_GITHUB) {
+                try {
+                    statusEl.textContent = 'GitHub 설정 로드 중...';
+                    const cfg = await GitHubAdapter.loadConfig();
+                    if (cfg && cfg.token && cfg.owner && cfg.repo) {
+                        GitHubAdapter.init(cfg.owner, cfg.repo, cfg.token, cfg.branch);
+                        statusEl.textContent = 'GitHub에서 프로젝트 로드 중...';
+                        const data = await GitHubAdapter.loadProject();
+                        window.__RMMZ_GITHUB = true;
+                        window.__RMMZ_SERVER = false;
+                        State.projectPath = cfg.owner + '/' + cfg.repo;
+                        State.projectName = data.database?.System?.gameTitle || cfg.repo;
+                        API.loadProject(data);
+                        UI._updateProjectBadge();
+                        const dbCount = Object.keys(data.database || {}).length;
+                        const mapCount = Object.keys(data.maps || {}).length;
+                        statusEl.textContent = 'GitHub: DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
+                        setTimeout(() => { statusEl.textContent = ''; }, 4000);
+                    } else {
+                        // 설정 없으면 GitHub 로그인 화면 표시
+                        UI._showGitHubLogin();
+                    }
+                } catch (e) {
+                    console.error('[GitHub] Load failed:', e);
+                    statusEl.textContent = 'GitHub 로드 실패: ' + e.message;
+                    statusEl.style.color = '#e74c3c';
+                    UI._showGitHubLogin(e.message);
+                }
+            } else if (isServer && !location.protocol.startsWith('file')) {
+                // Server mode: load via API
+                try {
+                    statusEl.textContent = '서버에서 로드 중...';
+                    const resp = await fetch('/api/load');
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const data = await resp.json();
+                    API.loadProject(data);
+                    window.__RMMZ_SERVER = true;
+                    State.projectPath = 'server';
+                    State.projectName = State.database?.system?.gameTitle || 'Server Project';
+                    UI._updateProjectBadge();
+                    const dbCount = Object.keys(data.database || {}).length;
+                    const mapCount = Object.keys(data.maps || {}).length;
+                    statusEl.textContent = 'DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
+                    console.log('[RMMZ Studio] Loaded from server');
+
+                    // ─── 하트비트: 서버에 5초마다 생존 신호 ───
+                    // 브라우저 탭을 닫으면 하트비트가 멈추고 서버가 자동 종료됨
+                    setInterval(() => {
+                        fetch('/api/heartbeat').catch(() => {});
+                    }, 5000);
+                    // 탭 닫힐 때 즉시 알림 (sendBeacon은 페이지 종료 시에도 전송)
+                    window.addEventListener('beforeunload', () => {
+                        // 서버에 "종료 예정" 알림 — 없어도 타임아웃으로 종료됨
+                        if (navigator.sendBeacon) {
+                            navigator.sendBeacon('/api/heartbeat');
+                        }
+                    });
+
+                    // Pre-load first map tileset images
+                    const firstMapId = Object.keys(data.maps || {})[0];
+                    if (firstMapId) UI._loadTilesetImages(parseInt(firstMapId));
+                    setTimeout(() => { statusEl.textContent = ''; }, 4000);
+                } catch (e) {
+                    statusEl.textContent = '서버 연결 실패: ' + e.message;
+                    console.error('[RMMZ Studio] Server load failed:', e);
+                }
+            } else if (window.__RMMZ_DB && Object.keys(window.__RMMZ_DB).length > 0) {
+                // File mode: load from _temp_db_load.js
+                State.projectPath = '_temp_db_load.js';
+                API.loadProject({
+                    database: window.__RMMZ_DB,
+                    mapInfos: window.__RMMZ_MAPINFOS || [],
+                    maps: window.__RMMZ_MAPS || {},
+                    plugins: window.__RMMZ_PLUGINS || []
+                });
+                State.projectName = State.database?.system?.gameTitle || 'Project1';
+                UI._updateProjectBadge();
+                const dbCount = Object.keys(window.__RMMZ_DB).length;
+                const mapCount = Object.keys(window.__RMMZ_MAPS || {}).length;
+                statusEl.textContent = 'DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
+                // Pre-load first map tileset images
+                const firstMapId = Object.keys(window.__RMMZ_MAPS || {})[0];
+                if (firstMapId) UI._loadTilesetImages(parseInt(firstMapId));
+                setTimeout(() => { statusEl.textContent = ''; }, 4000);
+            }
+
+            // DB list panel resizer
+            (function() {
+                var resizer = document.getElementById('dbResizer');
+                var panel = document.querySelector('.dbListPanel');
+                if (!resizer || !panel) return;
+                var startX, startW;
+                resizer.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    startX = e.clientX;
+                    startW = panel.offsetWidth;
+                    resizer.classList.add('active');
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
+                function onMove(e) {
+                    var w = startW + (e.clientX - startX);
+                    if (w < 100) w = 100;
+                    if (w > 500) w = 500;
+                    panel.style.width = w + 'px';
+                    panel.style.minWidth = w + 'px';
+                }
+                function onUp() {
+                    resizer.classList.remove('active');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                }
+            })();
+
+            // DB form panel right-edge resizer
+            (function() {
+                var resizer = document.getElementById('dbFormResizer');
+                if (!resizer) return;
+                var panel = resizer.parentElement; // .centerPanel
+                var startX, startW;
+                resizer.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    startX = e.clientX;
+                    startW = panel.offsetWidth;
+                    resizer.classList.add('active');
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
+                function onMove(e) {
+                    var w = startW + (e.clientX - startX);
+                    if (w < 320) w = 320;
+                    panel.style.flex = 'none';
+                    panel.style.width = w + 'px';
+                }
+                function onUp() {
+                    resizer.classList.remove('active');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                }
+            })();
+
+            // ── Pick button event delegation ──
+            document.addEventListener('click', function(e) {
+                const btn = e.target.closest('[data-pick-anim]');
+                if (btn) {
+                    const fieldName = btn.dataset.pickAnim;
+                    const input = document.querySelector(`[data-field="${fieldName}"]`);
+                    const currentVal = input ? parseInt(input.value) || 0 : 0;
+                    UI.openAnimationPicker(currentVal, function(newId) {
+                        if (input) {
+                            input.value = newId;
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    });
+                    return;
+                }
+
+                const audioBtn = e.target.closest('[data-pick-audio]');
+                if (audioBtn) {
+                    const fieldName = audioBtn.dataset.pickAudio;
+                    const audioType = audioBtn.dataset.audioType || 'bgm';
+                    const input = document.querySelector(`[data-field="${fieldName}"]`);
+                    const currentVal = input ? input.value : '';
+                    UI.openAudioPicker(audioType, currentVal, function(newName) {
+                        if (input) {
+                            input.value = newName;
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    });
+                    return;
+                }
+
+                const ajBtn = e.target.closest('[data-pick-audiojson]');
+                if (ajBtn) {
+                    const fieldName = ajBtn.dataset.pickAudiojson;
+                    const audioType = ajBtn.dataset.audioType || 'bgm';
+                    const nameInput = document.querySelector(`[data-field="${fieldName}_audioName"]`);
+                    const currentVal = nameInput ? nameInput.value : '';
+                    UI.openAudioPicker(audioType, currentVal, function(newName) {
+                        if (nameInput) {
+                            nameInput.value = newName;
+                            nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    });
+                    return;
+                }
+            });
+        });
+
+
+    // ===================== WTYPE 상수 =====================
+    const WTYPE = {0:'없음',1:'단검',2:'검',3:'도끼',4:'창',5:'활',6:'철퇴',7:'지팡이',8:'활',9:'격투',10:'총',11:'클로',12:'글러브'};
+
+    // ===================== SRPG RANGE EDITOR (SRE) =====================
+    const SRE = {
+      CELL: 14, REACH_SIZE: 21, AREA_SIZE: 7, PREVIEW_CELL: 5,
+      CLR_BG:'#181a2a', CLR_GRID:'#2a2d4a', CLR_UNIT:'#44cc88', CLR_TARGET:'#ee3355',
+      CLR_REACH:'#3388ff', CLR_AREA:'#ff8833', CLR_EMPTY:'#222540', CLR_READONLY:'#333',
+      ADJ4: [{dx:0,dy:1},{dx:0,dy:-1},{dx:1,dy:0},{dx:-1,dy:0}],
+      _activeEditors: [],
+
+      _getItem() {
+        const type = State.currentDBTab;
+        const data = State.database[type];
+        if (!data || State.currentDBItem === null) return null;
+        return data[State.currentDBItem] || null;
+      },
+
+      parseTileList(str) {
+        if (!str || !str.trim()) return null;
+        return str.split('|').map(p => { const [dx,dy]=p.split(',').map(Number); return {dx,dy}; }).filter(t=>!isNaN(t.dx)&&!isNaN(t.dy));
+      },
+      serializeTileList(tiles) {
+        if (!tiles || !tiles.length) return '';
+        return tiles.map(t=>`${t.dx},${t.dy}`).join('|');
+      },
+      noteTagValue(note, tag) {
+        const m = note.match(new RegExp(`<${tag}:([^>]+)>`,'i'));
+        return m ? m[1].trim() : null;
+      },
+      noteTagBool(note, tag) {
+        return new RegExp(`<${tag}(\\s*>|:true\\s*>)`,'i').test(note);
+      },
+      parseNoteRange(note) {
+        const reach = this.parseTileList(this.noteTagValue(note,'srpgReach'));
+        const area = this.parseTileList(this.noteTagValue(note,'srpgArea'));
+        const rotate = this.noteTagBool(note,'srpgRotate');
+        const selfTarget = this.noteTagBool(note,'srpgSelfTarget');
+        return { reach, area, rotate, selfTarget };
+      },
+      buildNoteTags(reach, area, rotate, selfTarget) {
+        let tags = '';
+        if (reach && reach.length) tags += `<srpgReach:${this.serializeTileList(reach)}>\n`;
+        if (area && area.length) tags += `<srpgArea:${this.serializeTileList(area)}>\n`;
+        if (rotate) tags += '<srpgRotate>\n';
+        if (selfTarget) tags += '<srpgSelfTarget>\n';
+        return tags;
+      },
+      stripSrpgTags(note) {
+        return (note||'').replace(/<srpg(Reach|Area|Rotate|SelfTarget)(:[^>]*)?\>\s*/gi,'').trim();
+      },
+      updateNote(note, reach, area, rotate, selfTarget) {
+        let clean = this.stripSrpgTags(note);
+        const tags = this.buildNoteTags(reach, area, rotate, selfTarget);
+        if (tags) clean = (clean ? clean+'\n' : '') + tags;
+        return clean.trim();
+      },
+      rotateTile(t, dir) {
+        switch(dir){case 8:return{dx:t.dx,dy:t.dy};case 6:return{dx:-t.dy,dy:t.dx};case 2:return{dx:-t.dx,dy:-t.dy};case 4:return{dx:t.dy,dy:-t.dx};default:return{dx:t.dx,dy:t.dy};}
+      },
+      drawGrid(canvas, size, tiles, centerColor, tileColor, readonly) {
+        const ctx=canvas.getContext('2d'); const C=this.CELL; const half=Math.floor(size/2);
+        canvas.width=size*C; canvas.height=size*C;
+        const tileSet=new Set(tiles.map(t=>`${t.dx},${t.dy}`));
+        for(let gy=0;gy<size;gy++) for(let gx=0;gx<size;gx++){
+          const dx=gx-half,dy=gy-half,x=gx*C,y=gy*C;
+          const dist=Math.abs(dx)+Math.abs(dy); ctx.fillStyle=(dist>10)?'#111218':this.CLR_EMPTY; ctx.fillRect(x,y,C,C);
+          if(dx===0&&dy===0){ctx.fillStyle=centerColor;ctx.fillRect(x,y,C,C);}
+          else if(tileSet.has(`${dx},${dy}`)){ctx.fillStyle=readonly?this.CLR_READONLY:tileColor;ctx.fillRect(x,y,C,C);}
+          ctx.strokeStyle=this.CLR_GRID;ctx.lineWidth=0.5;ctx.strokeRect(x+0.5,y+0.5,C-1,C-1);
+        }
+      },
+      drawPreview(canvas, reachTiles, areaTiles, dir) {
+        const C=this.PREVIEW_CELL; const size=21; const half=Math.floor(size/2);
+        canvas.width=size*C; canvas.height=size*C;
+        const ctx=canvas.getContext('2d');
+        const rotReach=(reachTiles||[]).map(t=>this.rotateTile(t,dir));
+        const rotArea=(areaTiles||[]).map(t=>this.rotateTile(t,dir));
+        const reachSet=new Set(rotReach.map(t=>`${t.dx},${t.dy}`));
+        const areaSet=new Set(rotArea.map(t=>`${t.dx},${t.dy}`));
+        for(let gy=0;gy<size;gy++) for(let gx=0;gx<size;gx++){
+          const dx=gx-half,dy=gy-half,x=gx*C,y=gy*C;
+          ctx.fillStyle=this.CLR_BG; ctx.fillRect(x,y,C,C);
+          if(dx===0&&dy===0) ctx.fillStyle=this.CLR_UNIT;
+          else if(reachSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_REACH;
+          else if(areaSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_AREA;
+          ctx.fillRect(x+0.5,y+0.5,C-1,C-1);
+        }
+      },
+      makeDiamond(r){const t=[];for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++)if(Math.abs(dx)+Math.abs(dy)<=r&&!(dx===0&&dy===0))t.push({dx,dy});return t;},
+      makeCross(r){const t=[];for(let i=1;i<=r;i++){t.push({dx:i,dy:0},{dx:-i,dy:0},{dx:0,dy:i},{dx:0,dy:-i});}return t;},
+      makeLine(len){const t=[];for(let i=1;i<=len;i++)t.push({dx:0,dy:-i});return t;},
+      makeRing(minR,maxR){const t=[];for(let dx=-maxR;dx<=maxR;dx++)for(let dy=-maxR;dy<=maxR;dy++){const d=Math.abs(dx)+Math.abs(dy);if(d>=minR&&d<=maxR&&!(dx===0&&dy===0))t.push({dx,dy});}return t;},
+
+      _getWtypeDefault(wtypeId) {
+        const ADJ4=this.ADJ4;
+        const ADJ8=[...ADJ4,{dx:1,dy:1},{dx:1,dy:-1},{dx:-1,dy:1},{dx:-1,dy:-1}];
+        const defaults={
+          1:{reach:ADJ4},2:{reach:ADJ4},3:{reach:ADJ4},4:{reach:ADJ4},
+          5:{reach:ADJ8},6:{reach:[...ADJ4,{dx:0,dy:-2}]},
+          7:{reach:this.makeRing(2,4)},8:{reach:this.makeRing(2,3)},9:{reach:this.makeRing(2,5)},
+          10:{reach:ADJ4},11:{reach:ADJ4},12:{reach:[...ADJ4,{dx:0,dy:-2}]}
+        };
+        return defaults[wtypeId]||{reach:ADJ4};
+      },
+
+      createEditor(containerId, type) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = '';
+        const item = this._getItem();
+        if (!item) return;
+        const note = item.note || '';
+        const parsed = this.parseNoteRange(note);
+
+        let isOverride = false, wtypeDefault = null;
+        if (type === 'weapon') {
+          const wt = item.wtypeId || 0;
+          wtypeDefault = this._getWtypeDefault(wt);
+          isOverride = !!(parsed.reach || parsed.area);
+        }
+        const readonly = (type === 'weapon' && !isOverride);
+
+        let reachTiles = parsed.reach || (type==='weapon'&&wtypeDefault?wtypeDefault.reach:null) || [...this.ADJ4];
+        let areaTiles = parsed.area || [{dx:0,dy:0}];
+        let rotate = parsed.rotate;
+        let selfTarget = parsed.selfTarget;
+
+        const editor = { containerId, type, reachTiles, areaTiles, rotate, selfTarget, readonly };
+        this._activeEditors.push(editor);
+
+        const wrap = document.createElement('div');
+        wrap.className = 'srpg-range-editor' + (readonly ? ' sre-readonly' : '');
+
+        // Weapon override toggle
+        if (type === 'weapon') {
+          const ovDiv = document.createElement('div');
+          ovDiv.className = 'sre-override';
+          const wtName = WTYPE[item.wtypeId] || '?';
+          if (isOverride) {
+            ovDiv.innerHTML = `<span>\uac1c\ubcc4 \uc624\ubc84\ub77c\uc774\ub4dc \ud65c\uc131 (\uc720\ud615: ${wtName})</span>`;
+            const btnReset = document.createElement('button');
+            btnReset.textContent = '\uc720\ud615 \uae30\ubcf8\uac12\uc73c\ub85c \ub418\ub3cc\ub9ac\uae30';
+            btnReset.onclick = () => { item.note = this.stripSrpgTags(item.note); this.createEditor(containerId, type); };
+            ovDiv.appendChild(btnReset);
+          } else {
+            ovDiv.innerHTML = `<span>\ud604\uc7ac \uc801\uc6a9: \uc720\ud615 \uae30\ubcf8\uac12 (${wtName})</span>`;
+            const btnOv = document.createElement('button');
+            btnOv.textContent = '\uac1c\ubcc4 \uc624\ubc84\ub77c\uc774\ub4dc \ud65c\uc131\ud654';
+            btnOv.onclick = () => {
+              const defReach = wtypeDefault ? wtypeDefault.reach : this.ADJ4;
+              item.note = this.updateNote(item.note, defReach, null, false, false);
+              this.createEditor(containerId, type);
+            };
+            ovDiv.appendChild(btnOv);
+          }
+          wrap.appendChild(ovDiv);
+        }
+
+        // Header
+        const hdr = document.createElement('div');
+        hdr.className = 'sre-header';
+        hdr.innerHTML = '<h3>SRPG \ubc94\uc704 \uc124\uc815</h3>';
+        const modeSelect = document.createElement('select');
+        modeSelect.innerHTML = '<option value="targeted">\ud0c4\ucc29\ud615 (\ud0c0\uc77c \uc9c0\uc815)</option><option value="radial">\ubc29\uc0ac\ud615 (\ubc29\ud5a5 \uc120\ud0dd)</option>';
+        modeSelect.value = rotate ? 'radial' : 'targeted';
+        modeSelect.disabled = readonly;
+        modeSelect.onchange = () => { rotate=modeSelect.value==='radial'; editor.rotate=rotate; syncToNote(); updatePreviews(); };
+        hdr.appendChild(modeSelect);
+        const selfLbl = document.createElement('label');
+        const selfChk = document.createElement('input');
+        selfChk.type='checkbox'; selfChk.checked=selfTarget; selfChk.disabled=readonly;
+        selfChk.onchange = () => { selfTarget=selfChk.checked; editor.selfTarget=selfTarget; syncToNote(); };
+        selfLbl.appendChild(selfChk); selfLbl.appendChild(document.createTextNode('\uc790\uae30 \uc790\uc2e0 \ub300\uc0c1'));
+        hdr.appendChild(selfLbl);
+        wrap.appendChild(hdr);
+
+        // Grids
+        const gridsDiv = document.createElement('div');
+        gridsDiv.className = 'sre-grids';
+        const reachWrap = document.createElement('div');
+        reachWrap.className = 'sre-grid-wrap';
+        reachWrap.innerHTML = '<h4>Reach (\ub3c4\ub2ec \ubc94\uc704)</h4>';
+        const reachCanvas = document.createElement('canvas');
+        reachWrap.appendChild(reachCanvas); gridsDiv.appendChild(reachWrap);
+        const areaWrap = document.createElement('div');
+        areaWrap.className = 'sre-grid-wrap';
+        areaWrap.innerHTML = '<h4>Area (\ud6a8\uacfc \ubc94\uc704)</h4>';
+        const areaCanvas = document.createElement('canvas');
+        areaWrap.appendChild(areaCanvas); gridsDiv.appendChild(areaWrap);
+        wrap.appendChild(gridsDiv);
+
+        // Legend
+        const legend = document.createElement('div');
+        legend.className = 'sre-legend';
+        legend.innerHTML = `<span><span class="dot" style="background:${this.CLR_UNIT}"></span>\uc0ac\uc6a9 \uc8fc\uccb4</span><span><span class="dot" style="background:${this.CLR_TARGET}"></span>\ud0c4\ucc29\uc810</span><span><span class="dot" style="background:${this.CLR_REACH}"></span>\ub3c4\ub2ec \uac00\ub2a5</span><span><span class="dot" style="background:${this.CLR_AREA}"></span>\ud6a8\uacfc \ubc94\uc704</span>`;
+        wrap.appendChild(legend);
+
+        // Preset tools
+        if (!readonly) {
+          const tools = document.createElement('div');
+          tools.className = 'sre-tools';
+          const presets = [
+            ['\uc778\uc8114', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
+            ['\ub2e4\uc774\uc544 2', ()=>{reachTiles=this.makeDiamond(2);editor.reachTiles=reachTiles;}],
+            ['\ub2e4\uc774\uc544 3', ()=>{reachTiles=this.makeDiamond(3);editor.reachTiles=reachTiles;}],
+            ['\uc2ed\uc790 2', ()=>{reachTiles=this.makeCross(2);editor.reachTiles=reachTiles;}],
+            ['\uc9c1\uc120 3', ()=>{reachTiles=this.makeLine(3);editor.reachTiles=reachTiles;}],
+            ['\ub9c1 2~4', ()=>{reachTiles=this.makeRing(2,4);editor.reachTiles=reachTiles;}],
+            ['Reach \ud074\ub9ac\uc5b4', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
+            ['Area \ud074\ub9ac\uc5b4', ()=>{areaTiles=[{dx:0,dy:0}];editor.areaTiles=areaTiles;}],
+          ];
+          for (const [label,fn] of presets) {
+            const btn=document.createElement('button');
+            btn.textContent=label; btn.onclick=()=>{fn();syncToNote();redraw();};
+            tools.appendChild(btn);
+          }
+          const symBtn=document.createElement('button');
+          symBtn.textContent='4\ubc29\ud5a5 \ub300\uce6d';
+          symBtn.onclick=()=>{
+            const s=new Set(reachTiles.map(t=>`${t.dx},${t.dy}`));
+            for(const t of[...reachTiles]){s.add(`${-t.dx},${t.dy}`);s.add(`${t.dx},${-t.dy}`);s.add(`${-t.dx},${-t.dy}`);}
+            reachTiles=[...s].map(k=>{const[dx,dy]=k.split(',').map(Number);return{dx,dy};}).filter(t=>!(t.dx===0&&t.dy===0));
+            editor.reachTiles=reachTiles; syncToNote(); redraw();
+          };
+       
+          tools.appendChild(symBtn);
+          wrap.appendChild(tools);
+        }
+
+        // Direction previews
+        const previewRow = document.createElement('div');
+        previewRow.className = 'sre-preview-row';
+        previewRow.style.display = rotate ? 'flex' : 'none';
+        const previewCanvases = {};
+        for (const [dir,label] of [[8,'\u2191'],[6,'\u2192'],[2,'\u2193'],[4,'\u2190']]) {
+          const pw=document.createElement('div'); pw.className='sre-preview-wrap';
+          pw.innerHTML=`<span>${label}</span>`;
+          const pc=document.createElement('canvas'); pw.appendChild(pc);
+          previewRow.appendChild(pw); previewCanvases[dir]=pc;
+        }
+        wrap.appendChild(previewRow);
+
+        // Note preview
+        const notePreview = document.createElement('div');
+        notePreview.className = 'sre-note';
+        wrap.appendChild(notePreview);
+        container.appendChild(wrap);
+
+        // Draw & sync functions
+        const redraw = () => {
+          this.drawGrid(reachCanvas, this.REACH_SIZE, reachTiles, this.CLR_UNIT, this.CLR_REACH, readonly);
+          this.drawGrid(areaCanvas, this.AREA_SIZE, areaTiles.filter(t=>!(t.dx===0&&t.dy===0)), this.CLR_TARGET, this.CLR_AREA, readonly);
+          updatePreviews();
+          notePreview.textContent = this.buildNoteTags(reachTiles, areaTiles.length>1?areaTiles:null, rotate, selfTarget).trim() || '(\uae30\ubcf8\uac12)';
+        };
+        const updatePreviews = () => {
+          previewRow.style.display = rotate ? 'flex' : 'none';
+          if (rotate) { for (const dir of [8,6,2,4]) this.drawPreview(previewCanvases[dir], reachTiles, areaTiles, dir); }
+        };
+        const syncToNote = () => {
+          if (readonly) return;
+          const currentItem = this._getItem();
+          if (!currentItem) return;
+          const hasCustomReach = reachTiles.length > 0;
+          const hasCustomArea = areaTiles.length > 1 || (areaTiles.length===1 && !(areaTiles[0].dx===0&&areaTiles[0].dy===0));
+          currentItem.note = this.updateNote(currentItem.note, hasCustomReach?reachTiles:null, hasCustomArea?areaTiles:null, rotate, selfTarget);
+          // Sync note textarea
+          const noteTA = document.querySelector('#dbFormContainer textarea[data-field="note"]');
+          if (noteTA) noteTA.value = currentItem.note;
+          // Refresh phase panel if exists
+          if (State.currentDBTab === 'skills' && typeof SrpgPhaseUI !== 'undefined') SrpgPhaseUI.create('srpg-phase-skill');
+          if (State.currentDBTab === 'weapons' && typeof SrpgPhaseUI !== 'undefined') SrpgPhaseUI.create('srpg-phase-weapon');
+          redraw();
+        };
+
+        // Mouse events
+        if (!readonly) {
+          this._setupCanvasEvents(reachCanvas, this.REACH_SIZE, reachTiles, editor, 'reachTiles', syncToNote, redraw);
+          this._setupCanvasEvents(areaCanvas, this.AREA_SIZE, areaTiles, editor, 'areaTiles', syncToNote, redraw);
+        }
+        redraw();
+        return editor;
+      },
+
+      _setupCanvasEvents(canvas, size, tiles, editor, tilesKey, syncFn, redrawFn) {
+        const half=Math.floor(size/2); const C=this.CELL;
+        let painting=false, erasing=false;
+        const getCellFromEvent=(e)=>{const r=canvas.getBoundingClientRect();return{dx:Math.floor((e.clientX-r.left)/C)-half,dy:Math.floor((e.clientY-r.top)/C)-half};};
+        const toggleCell=(dx,dy,forceRemove)=>{
+          if(dx===0&&dy===0)return;
+          if(Math.abs(dx)+Math.abs(dy)>10)return; // 최대 사거리 10칸
+          const idx=tiles.findIndex(t=>t.dx===dx&&t.dy===dy);
+          if(forceRemove||(idx>=0&&!painting)){if(idx>=0)tiles.splice(idx,1);}
+          else if(idx<0){tiles.push({dx,dy});}
+          editor[tilesKey]=tiles;
+        };
+        canvas.addEventListener('mousedown',(e)=>{
+          e.preventDefault(); const c=getCellFromEvent(e);
+          if(c.dx===0&&c.dy===0)return;
+          erasing=e.button===2; painting=!erasing;
+          if(erasing){toggleCell(c.dx,c.dy,true);}
+          else{const exists=tiles.some(t=>t.dx===c.dx&&t.dy===c.dy);if(exists){painting=false;erasing=true;toggleCell(c.dx,c.dy,true);}else{toggleCell(c.dx,c.dy,false);}}
+          syncFn();
+        });
+        canvas.addEventListener('mousemove',(e)=>{
+          if(!painting&&!erasing)return; const c=getCellFromEvent(e);
+          if(c.dx===0&&c.dy===0)return;
+          if(erasing){toggleCell(c.dx,c.dy,true);}else{if(!tiles.some(t=>t.dx===c.dx&&t.dy===c.dy))toggleCell(c.dx,c.dy,false);}
+          syncFn();
+        });
+        canvas.addEventListener('mouseup',()=>{painting=false;erasing=false;});
+        canvas.addEventListener('mouseleave',()=>{painting=false;erasing=false;});
+        canvas.addEventListener('contextmenu',(e)=>e.preventDefault());
+      }
+    };
+
+    // ===================== SRPG PHASE UI =====================
+    const SrpgPhaseUI = {
+      CAT_COLORS: {
+        movement:'#4fc3f7', offense:'#ef5350',
+        placement:'#ab47bc', reaction:'#ffa726'
+      },
+      ATOM_CATS: {
+        dash:'movement',push:'movement',pull:'movement',escape:'movement',
+        leap:'movement',swap:'movement','throw':'movement',
+        hit:'offense',proj:'offense',chain:'offense',multi:'offense',dot:'offense',
+        summon:'placement',terrain:'placement',trap:'placement',
+        counter:'reaction',interrupt:'reaction',reflect:'reaction',trigger:'reaction'
+      },
+      _popup: null,
+      _currentContainer: null,
+
+      _getItem() {
+        const type = State.currentDBTab;
+        const data = State.database[type];
+        if (!data || State.currentDBItem === null) return null;
+        return data[State.currentDBItem] || null;
+      },
+
+      create(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = '';
+
+        const P = window.SrpgPhaseParser;
+        if (!P) {
+          container.innerHTML = '<div style="color:#888;font-style:italic">srpgPhaseParser.js 로드 안됨</div>';
+          return;
+        }
+
+        const item = this._getItem();
+        if (!item) return;
+        const note = item.note || '';
+
+        const phases = P.parsePhases(note);
+        const reach = P.parseReach(note);
+        const area = P.parseArea(note);
+        const opts = P.parseOptions(note);
+        const legacy = P.parseLegacyProj(note);
+
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'background:#1a1a2e;border:1px solid #16213e;border-radius:6px;padding:10px;margin-top:4px;';
+
+        // Header + button
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+        hdr.innerHTML = '<span style="font-weight:bold;color:#e0e0e0;">Phase \ud30c\uc774\ud504\ub77c\uc778</span>';
+        const btn = document.createElement('button');
+        btn.style.cssText = 'background:#4fc3f7;color:#000;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-weight:bold;font-size:0.85em;';
+        btn.textContent = '\ud83d\udd27 \uc2a4\ud0ac \uc124\uacc4';
+        btn.onclick = () => this.openPopup(containerId);
+        hdr.appendChild(btn);
+        wrap.appendChild(hdr);
+
+        // Phase chain badges
+        const chain = document.createElement('div');
+        chain.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:6px;';
+        if (!phases.length) {
+          chain.innerHTML = '<span style="color:#888;font-style:italic">(Phase \uc5c6\uc74c \u2014 \ubc94\uc704\ub9cc \uc124\uc815\ub428)</span>';
+        } else {
+          phases.forEach((p, i) => {
+            if (i > 0) {
+              const arrow = document.createElement('span');
+              arrow.style.cssText = 'color:#888;font-size:1.1em;';
+              arrow.textContent = '\u2192';
+              chain.appendChild(arrow);
+            }
+            const badge = document.createElement('span');
+            const cat = this.ATOM_CATS[p.type] || 'offense';
+            badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.8em;font-weight:bold;color:#fff;background:' + (this.CAT_COLORS[cat] || '#666') + ';';
+            let lbl = (P.ATOM_LABELS ? (P.ATOM_LABELS[p.type] || p.type) : p.type);
+            if (p['if']) lbl += ' \u26a1';
+            if (p.repeat && p.repeat > 1) lbl += ' \u00d7' + p.repeat;
+            badge.textContent = lbl;
+            badge.title = JSON.stringify(p, null, 1);
+            chain.appendChild(badge);
+          });
+        }
+        wrap.appendChild(chain);
+
+        // Summary
+        const summ = document.createElement('div');
+        summ.style.cssText = 'color:#aaa;font-size:0.85em;';
+        const parts = [];
+        if (phases.length) parts.push(P.summarizePhases(phases));
+        if (reach.mode === 'range') parts.push('\uc0ac\uac70\ub9ac:' + reach.rangeN);
+        else if (reach.coords.length) parts.push('\uc0ac\uac70\ub9ac:\ucee4\uc2a4\ud140(' + reach.coords.length + '\uce78)');
+        if (area.length) parts.push('\ubc94\uc704:' + area.length + '\uce78');
+        if (legacy) parts.push('\ud22c\uc0ac\uccb4:' + (legacy.srpgProjectile || 'yes'));
+        summ.textContent = parts.join(' | ') || '(\uc124\uc815 \uc5c6\uc74c)';
+        wrap.appendChild(summ);
+
+        // Options
+        if (opts.rotate || opts.selfTarget) {
+          const optDiv = document.createElement('div');
+          optDiv.style.cssText = 'color:#ccc;font-size:0.8em;margin-top:4px;';
+          const optParts = [];
+          if (opts.rotate) optParts.push('\ud68c\uc804');
+          if (opts.selfTarget) optParts.push('\uc790\uac00\ub300\uc0c1');
+          optDiv.textContent = '\u2699 ' + optParts.join(', ');
+          wrap.appendChild(optDiv);
+        }
+
+        container.appendChild(wrap);
+      },
+
+      openPopup(containerId) {
+        this._currentContainer = containerId;
+        const item = this._getItem();
+        if (!item) return;
+
+        const url = 'Project1/tools/skill_editor.html';
+        const w = 1200, h = 850;
+        const left = Math.max(0, Math.round((screen.width - w) / 2));
+        const top = Math.max(0, Math.round((screen.height - h) / 2));
+
+        this._popup = window.open(url, 'srpg_skill_editor',
+          'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+          ',menubar=no,toolbar=no,status=no,resizable=yes');
+
+        if (this._popup) {
+          const note = item.note || '';
+          const name = item.name || '';
+          const self = this;
+          const send = () => {
+            try {
+              self._popup.postMessage({ type: 'srpgSkillLoad', note, name }, '*');
+            } catch(e) {}
+          };
+          this._popup.addEventListener('load', () => setTimeout(send, 300));
+          setTimeout(send, 1500);
+        }
+      },
+      handleMessage(e) {
+        if (!e.data || e.data.type !== 'srpgSkillSave') return;
+
+        const item = this._getItem();
+        if (!item) return;
+
+        item.note = e.data.note || '';
+
+        // Sync note textarea
+        const noteTA = document.querySelector('#dbFormContainer textarea[data-field="note"]');
+        if (noteTA) noteTA.value = item.note;
+
+        // Refresh Phase panel
+        if (this._currentContainer) {
+          this.create(this._currentContainer);
+        }
+
+        // Refresh SRE editors (note changed from popup)
+        SRE._activeEditors = [];
+        if (State.currentDBTab === 'skills') SRE.createEditor('sre-skill-editor', 'skill');
+        else if (State.currentDBTab === 'weapons') SRE.createEditor('sre-weapon-editor', 'weapon');
+
+        console.log('[SrpgPhaseUI] Phase data applied');
+      }
+    };
+
+    window.addEventListener('message', (e) => SrpgPhaseUI.handleMessage(e));
+
+    // Monkey-patch renderDBForm to auto-create SRE + Phase panels
+    const _origRenderDBForm = UI.renderDBForm.bind(UI);
+    UI.renderDBForm = function() {
+      _origRenderDBForm();
+      const tab = State.currentDBTab;
+      SRE._activeEditors = [];
+      if (tab === 'skills') {
+        setTimeout(() => {
+          SRE.createEditor('sre-skill-editor', 'skill');
+          SrpgPhaseUI.create('srpg-phase-skill');
+        }, 0);
+      } else if (tab === 'weapons') {
+        setTimeout(() => {
+          SRE.createEditor('sre-weapon-editor', 'weapon');
+          SrpgPhaseUI.create('srpg-phase-weapon');
+        }, 0);
+      } else if (tab === 'items') {
+        setTimeout(() => {
+          SRE.createEditor('sre-item-editor', 'item');
+        }, 0);
+
+      }
+    };
+
+    
+    // ─── AI 지지 배정 UI 핸들러 ───
+    window._toggleJiBranch = function(chip, jiName, color) {
+        const isActive = chip.style.color === 'rgb(255, 255, 255)';
+        if (isActive) {
+            chip.style.background = 'transparent';
+            chip.style.color = '#ccc';
+            chip.style.border = '1px solid #555';
+        } else {
+            chip.style.background = color;
+            chip.style.color = '#fff';
+            chip.style.borderColor = color;
+        }
+        const chips = document.querySelectorAll('#ji-branch-chips .ji-chip');
+        const selected = [];
+        chips.forEach(function(c) {
+            if (c.style.color === 'rgb(255, 255, 255)') selected.push(c.dataset.ji);
+        });
+        const preview = document.getElementById('ji-notetag-preview');
+        if (preview) {
+            preview.textContent = selected.length > 0
+                ? '<srpgJi:' + selected.join(',') + '>'
+                : '(없음)';
+        }
+    };
+
+    window._applyJiBranch = function() {
+        const chips = document.querySelectorAll('#ji-branch-chips .ji-chip');
+        const selected = [];
+        chips.forEach(function(c) {
+            if (c.style.color === 'rgb(255, 255, 255)') selected.push(c.dataset.ji);
+        });
+        const noteEl = document.querySelector('textarea[data-field="note"]');
+        if (!noteEl) { alert('노트 필드를 찾을 수 없습니다.'); return; }
+        var note = noteEl.value || '';
+        note = note.replace(/<srpgJi:[^>]*>/gi, '').trim();
+        if (selected.length > 0) {
+            note += (note ? '\n' : '') + '<srpgJi:' + selected.join(',') + '>';
+        }
+        noteEl.value = note;
+        noteEl.dispatchEvent(new Event('input', { bubbles: true }));
+    };

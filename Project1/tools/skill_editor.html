@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRPG 스킬 에디터</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #1a1a2e; --panel: #16213e; --border: #2a2a4a;
+  --text: #e8e4d9; --dim: #6a6a7a; --accent: #d4a843;
+  --wood: #4a7c59; --fire: #c44536; --earth: #b5893a; --metal: #7a8b99; --water: #3a7bd5;
+  --move-color: #3a7c59; --atk-color: #c44536; --place-color: #b5893a; --react-color: #4488cc;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Noto Sans KR',sans-serif; background:var(--bg); color:var(--text); font-size:12px; overflow-x:hidden; }
+button { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px; font-family:inherit; }
+button:hover { background:#1e2a4a; }
+button.active { background:var(--accent); color:#111; border-color:var(--accent); font-weight:500; }
+input, select { background:#0d1117; color:var(--text); border:1px solid var(--border); padding:3px 6px; border-radius:3px; font-size:11px; font-family:inherit; }
+textarea { background:#0d1117; color:var(--text); border:1px solid var(--border); padding:6px; border-radius:3px; font-size:11px; font-family:'Consolas',monospace; resize:vertical; width:100%; }
+
+#header { padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+#header input { width:160px; font-size:13px; font-weight:500; }
+.tog-group { display:flex; gap:2px; }
+.tog-group button { min-width:56px; font-size:10px; padding:4px 6px; }
+
+#main { display:flex; height:calc(100vh - 40px - 140px - 90px); min-height:300px; }
+#grid-panel { width:340px; min-width:280px; border-right:1px solid var(--border); padding:8px; display:flex; flex-direction:column; }
+#phase-panel { flex:1; padding:8px; display:flex; flex-direction:column; overflow-y:auto; }
+
+.tab-row { display:flex; gap:2px; margin-bottom:6px; }
+.tab-btn { flex:1; text-align:center; padding:4px; font-size:10px; }
+.tab-btn.active { background:var(--accent); color:#111; }
+
+#grid-canvas { display:block; margin:0 auto; background:#0f1525; border:1px solid var(--border); border-radius:4px; cursor:crosshair; }
+.grid-controls { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; align-items:center; }
+.grid-controls button { font-size:10px; padding:2px 6px; }
+.grid-controls select { font-size:10px; padding:1px 4px; }
+.grid-options { margin-top:4px; display:flex; gap:8px; font-size:10px; color:var(--dim); }
+.grid-options label { cursor:pointer; display:flex; align-items:center; gap:3px; }
+
+.phase-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
+.phase-block { background:#0d1117; border:1px solid var(--border); border-radius:4px; padding:6px 8px; cursor:pointer; display:flex; align-items:center; gap:6px; position:relative; border-left:3px solid var(--border); }
+.phase-block.selected { border-color:var(--accent); background:#1a2040; }
+.phase-block .icon { font-size:14px; flex-shrink:0; width:20px; text-align:center; }
+.phase-block .info { flex:1; min-width:0; }
+.phase-block .type-name { font-weight:500; font-size:11px; }
+.phase-block .summary { font-size:9px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.phase-block .badges { display:flex; gap:3px; margin-top:2px; }
+.phase-block .badge { font-size:8px; padding:1px 4px; border-radius:2px; background:#2a2a4a; color:var(--dim); }
+.phase-block .badge.cond { background:#3a2a1a; color:var(--accent); }
+.phase-block .del-btn { position:absolute; top:2px; right:4px; background:none; border:none; color:#555; font-size:10px; cursor:pointer; padding:2px; }
+.phase-block .del-btn:hover { color:#c44; }
+.add-phase-area { margin-top:6px; position:relative; }
+.add-dropdown { position:absolute; bottom:100%; left:0; right:0; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:4px; z-index:100; display:none; max-height:240px; overflow-y:auto; }
+.add-dropdown.show { display:block; }
+.add-cat-label { font-size:9px; color:var(--accent); padding:3px 4px 1px; font-weight:700; }
+.add-item { padding:3px 8px; cursor:pointer; border-radius:3px; font-size:10px; display:flex; align-items:center; gap:4px; }
+.add-item:hover { background:#1e2a4a; }
+
+#param-panel { height:140px; min-height:100px; border-top:1px solid var(--border); padding:8px 12px; overflow-y:auto; background:var(--panel); }
+.param-title { font-size:11px; font-weight:700; color:var(--accent); margin-bottom:6px; }
+.param-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:4px 12px; }
+.param-row { display:flex; align-items:center; gap:6px; font-size:10px; }
+.param-row label { color:var(--dim); min-width:60px; text-align:right; flex-shrink:0; }
+.param-row .opts { display:flex; gap:2px; flex-wrap:wrap; }
+.param-row .opts button { font-size:9px; padding:2px 6px; }
+.param-row input[type=range] { width:100px; }
+.param-row input[type=number] { width:50px; }
+.param-empty { color:var(--dim); font-size:10px; padding:20px; text-align:center; }
+
+#footer { padding:6px 12px; border-top:1px solid var(--border); background:var(--panel); display:flex; gap:8px; align-items:stretch; }
+#note-area { flex:1; }
+#note-area textarea { height:60px; font-size:10px; }
+.note-header { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+.note-header span { font-size:10px; color:var(--dim); }
+.footer-btns { display:flex; flex-direction:column; gap:3px; flex-shrink:0; }
+.footer-btns button { min-width:90px; font-size:11px; }
+.btn-accent { background:var(--accent); color:#111; border-color:var(--accent); font-weight:500; }
+.btn-accent:hover { background:#e0b84f; }
+
+.sim-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999; }
+.sim-box { background:var(--panel);border:1px solid #333;border-radius:10px;padding:20px 24px;width:480px;max-height:90vh;overflow-y:auto;position:relative; }
+.sim-close { position:absolute;top:8px;right:12px;background:none;border:none;color:#888;font-size:18px;cursor:pointer; }
+.sim-close:hover { color:#fff; }
+.sim-title { text-align:center;font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px; }
+.sim-sub { text-align:center;font-size:10px;color:var(--dim);margin-bottom:10px; }
+#sim-canvas { display:block;margin:0 auto;background:#0f1525;border:1px solid var(--border);border-radius:4px;cursor:crosshair; }
+.sim-log { margin-top:6px;padding:4px 6px;background:#0d1117;border-radius:3px;font-size:9px;color:var(--dim);max-height:70px;overflow-y:auto;min-height:20px; }
+.sim-ctrls { display:flex;gap:4px;justify-content:center;margin-top:8px; }
+
+.toast { position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--accent);color:#111;padding:6px 16px;border-radius:4px;font-size:11px;z-index:10000;opacity:0;transition:opacity .3s; }
+.toast.show { opacity:1; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <input type="text" id="skill-name" placeholder="스킬 이름" value="새 스킬">
+  <div class="tog-group" id="cat-group">
+    <button class="active" onclick="setCat(this,'melee')">물리근접</button>
+    <button onclick="setCat(this,'ranged')">물리원격</button>
+    <button onclick="setCat(this,'magic')">마법공격</button>
+    <button onclick="setCat(this,'support')">마법보조</button>
+  </div>
+  <div class="tog-group" id="el-group">
+    <button class="active" style="border-color:var(--wood)" onclick="setEl(this,'wood')">목(木)</button>
+    <button style="border-color:var(--fire)" onclick="setEl(this,'fire')">화(火)</button>
+    <button style="border-color:var(--earth)" onclick="setEl(this,'earth')">토(土)</button>
+    <button style="border-color:var(--metal)" onclick="setEl(this,'metal')">금(金)</button>
+    <button style="border-color:var(--water)" onclick="setEl(this,'water')">수(水)</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="grid-panel">
+    <div class="tab-row">
+      <button class="tab-btn active" onclick="switchTab('reach',this)">사거리</button>
+      <button class="tab-btn" onclick="switchTab('area',this)">효과범위</button>
+    </div>
+    <canvas id="grid-canvas"></canvas>
+    <div class="grid-controls">
+      <button onclick="autoGen('diamond')">다이아</button>
+      <button onclick="autoGen('cross')">십자</button>
+      <button onclick="autoGen('line')">직선</button>
+      <select id="auto-n"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+      <button onclick="clearGrid()">초기화</button>
+      <span style="margin-left:auto;color:var(--dim);font-size:9px;">그리드:</span>
+      <select id="grid-size" onchange="changeGridSize()"><option>5</option><option>7</option><option selected>9</option><option>11</option></select>
+    </div>
+    <div class="grid-options" id="area-options" style="display:none;">
+      <label><input type="checkbox" id="opt-rotate" onchange="onOptChange()"> srpgRotate</label>
+      <label><input type="checkbox" id="opt-self" onchange="onOptChange()"> srpgSelfTarget</label>
+    </div>
+  </div>
+
+  <div id="phase-panel">
+    <div class="phase-list" id="phase-list"></div>
+    <div class="add-phase-area">
+      <div class="add-dropdown" id="add-dropdown"></div>
+      <button style="width:100%" onclick="toggleAdd()">+ Phase 추가</button>
+    </div>
+  </div>
+</div>
+
+<div id="param-panel">
+  <div class="param-empty" id="param-empty">Phase를 선택하면 파라미터가 표시됩니다</div>
+  <div id="param-content" style="display:none;"></div>
+</div>
+
+<div id="footer">
+  <div id="note-area">
+    <div class="note-header"><span>노트태그 출력</span><button onclick="copyTags()">복사</button></div>
+    <textarea id="note-out" readonly></textarea>
+  </div>
+  <div class="footer-btns">
+    <button onclick="openSim()">&#9654; 시뮬레이션</button>
+    <button onclick="scrollToNote()">노트태그 보기</button>
+    <button class="btn-accent" onclick="doSave()">저장</button>
+    <button onclick="doCancel()">취소</button>
+  </div>
+</div>
+
+<div id="sim-modal" style="display:none;"></div>
+<div id="toast" class="toast"></div>
+
+<script>
+// ═══ INLINED PARSER ═══
+/**
+ * srpgPhaseParser.js — SRPG 스킬 Phase 노트태그 파서/직렬화 모듈
+ *
+ * 레이어 C: HTML 팝업 에디터(B)와 RMMZ 에디터 플러그인(A), 게임 런타임 세 곳에서 공유.
+ * UMD 래퍼로 브라우저 전역(window.SrpgPhaseParser) / Node require 양쪽 사용 가능.
+ *
+ * 주요 API:
+ *   parsePhases(noteText)         → [{type, ...params}]
+ *   serializePhases(phaseArray)   → "<srpgPhase:...>\n..."
+ *   parseReach(noteText)          → [{dx, dy}, ...]
+ *   parseArea(noteText)           → [{dx, dy}, ...]
+ *   serializeReach(coords)        → "<srpgReach:...>"
+ *   serializeArea(coords)         → "<srpgArea:...>"
+ *   parseOptions(noteText)        → {rotate:bool, selfTarget:bool}
+ *   parseLegacyProj(noteText)     → {projType, image, ...}
+ *   mergeIntoNote(origNote, {phases, reach, area, options}) → merged text
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.SrpgPhaseParser = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // ── helpers ──────────────────────────────────────────────
+  function tryNum(v) {
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+    return v;
+  }
+
+  function splitOnce(str, sep) {
+    const i = str.indexOf(sep);
+    return i < 0 ? [str, ''] : [str.slice(0, i), str.slice(i + 1)];
+  }
+
+  // ── Phase 파싱 ──────────────────────────────────────────
+
+  const PHASE_RE = /<srpgPhase:([^>]+)>/gi;
+
+  /**
+   * 노트 텍스트에서 <srpgPhase:...> 태그를 모두 추출하여 JSON 배열로 반환.
+   * @param {string} noteText
+   * @returns {Array<Object>}
+   */
+  function parsePhases(noteText) {
+    if (!noteText) return [];
+    const phases = [];
+    let m;
+    PHASE_RE.lastIndex = 0;
+    while ((m = PHASE_RE.exec(noteText)) !== null) {
+      const tokens = m[1].split('|');
+      const phase = { type: tokens[0] };
+      for (let i = 1; i < tokens.length; i++) {
+        const [key, val] = splitOnce(tokens[i], ':');
+        if (!key) continue;
+        if (val === '') {
+          phase[key] = true; // flag-only, e.g. "heal" → heal:true
+        } else if (val.indexOf(',') >= 0 && !/^\d+\.\d+$/.test(val)) {
+          // comma-separated → array (but not decimal like "0.8")
+          phase[key] = val.split(',').map(v => tryNum(v.trim()));
+        } else {
+          phase[key] = tryNum(val);
+        }
+      }
+      phases.push(phase);
+    }
+    return phases;
+  }
+
+  /**
+   * Phase JSON 배열을 노트태그 텍스트로 직렬화.
+   * @param {Array<Object>} phases
+   * @returns {string}
+   */
+  function serializePhases(phases) {
+    if (!phases || !phases.length) return '';
+    return phases.map(function (p) {
+      const parts = [p.type];
+      Object.keys(p).forEach(function (k) {
+        if (k === 'type') return;
+        var v = p[k];
+        if (v === true) { parts.push(k); return; }
+        if (v === false) return; // skip false flags
+        if (Array.isArray(v)) { parts.push(k + ':' + v.join(',')); return; }
+        parts.push(k + ':' + v);
+      });
+      return '<srpgPhase:' + parts.join('|') + '>';
+    }).join('\n');
+  }
+
+  // ── Reach / Area 파싱 ───────────────────────────────────
+
+  const REACH_RE = /<srpgReach:([^>]+)>/i;
+  const RANGE_RE = /<srpgRange:(\d+)>/i;
+  const AREA_RE = /<srpgArea:([^>]+)>/i;
+
+  /**
+   * 좌표 문자열 "dx,dy|dx,dy|..." → [{dx,dy}, ...]
+   */
+  function parseCoordStr(str) {
+    return str.split('|').map(function (pair) {
+      var parts = pair.split(',').map(Number);
+      return { dx: parts[0] || 0, dy: parts[1] || 0 };
+    });
+  }
+
+  /**
+   * 좌표 배열 → "dx,dy|dx,dy|..."
+   */
+  function serializeCoords(coords) {
+    return coords.map(function (c) { return c.dx + ',' + c.dy; }).join('|');
+  }
+
+  /**
+   * 반지름 N의 맨해튼 다이아몬드 좌표 생성 (0,0 제외 — 시전자 위치).
+   * 사거리이므로 원점은 포함하지 않음.
+   */
+  function diamondCoords(radius) {
+    var coords = [];
+    for (var dx = -radius; dx <= radius; dx++) {
+      for (var dy = -radius; dy <= radius; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (Math.abs(dx) + Math.abs(dy) <= radius) {
+          coords.push({ dx: dx, dy: dy });
+        }
+      }
+    }
+    return coords;
+  }
+
+  /**
+   * 노트에서 사거리 정보를 추출.
+   * srpgReach → 커스텀 좌표, srpgRange → 다이아몬드 자동생성.
+   * @returns {{ coords: Array, mode: 'reach'|'range'|'none', rangeN: number|null }}
+   */
+  function parseReach(noteText) {
+    if (!noteText) return { coords: [], mode: 'none', rangeN: null };
+    var m = REACH_RE.exec(noteText);
+    if (m) return { coords: parseCoordStr(m[1]), mode: 'reach', rangeN: null };
+    m = RANGE_RE.exec(noteText);
+    if (m) {
+      var n = parseInt(m[1], 10);
+      return { coords: diamondCoords(n), mode: 'range', rangeN: n };
+    }
+    return { coords: [], mode: 'none', rangeN: null };
+  }
+
+  /**
+   * 노트에서 효과범위(Area) 정보를 추출.
+   * @returns {Array<{dx,dy}>}
+   */
+  function parseArea(noteText) {
+    if (!noteText) return [];
+    var m = AREA_RE.exec(noteText);
+    return m ? parseCoordStr(m[1]) : [];
+  }
+
+  function serializeReach(coords, mode, rangeN) {
+    if (mode === 'range' && rangeN != null) return '<srpgRange:' + rangeN + '>';
+    if (!coords || !coords.length) return '';
+    return '<srpgReach:' + serializeCoords(coords) + '>';
+  }
+
+  function serializeArea(coords) {
+    if (!coords || !coords.length) return '';
+    return '<srpgArea:' + serializeCoords(coords) + '>';
+  }
+
+  // ── Options 파싱 ────────────────────────────────────────
+
+  function parseOptions(noteText) {
+    if (!noteText) return { rotate: false, selfTarget: false };
+    return {
+      rotate: /<srpgRotate>/i.test(noteText),
+      selfTarget: /<srpgSelfTarget>/i.test(noteText)
+    };
+  }
+
+  function serializeOptions(opts) {
+    var lines = [];
+    if (opts.rotate) lines.push('<srpgRotate>');
+    if (opts.selfTarget) lines.push('<srpgSelfTarget>');
+    return lines.join('\n');
+  }
+
+  // ── Legacy Projectile 파싱 ──────────────────────────────
+
+  var PROJ_TAGS = [
+    'srpgProjectile', 'srpgProjImage', 'srpgProjFrameW', 'srpgProjFrameH',
+    'srpgProjFrames', 'srpgProjFrameSpeed', 'srpgProjSpeed', 'srpgProjScale',
+    'srpgProjRotate', 'srpgProjTrail', 'srpgProjTrailAlpha',
+    'srpgProjImpactAnim', 'srpgProjImpactSe',
+    'srpgArcHeight', 'srpgCameraPan', 'srpgScatterRadius', 'srpgWarningDuration',
+    'srpgBeamStart', 'srpgBeamMid', 'srpgBeamEnd',
+    'srpgBeamDuration', 'srpgBeamWidth', 'srpgHitCount', 'srpgHitInterval'
+  ];
+
+  function parseLegacyProj(noteText) {
+    if (!noteText) return null;
+    var result = {};
+    var found = false;
+    PROJ_TAGS.forEach(function (tag) {
+      var re = new RegExp('<' + tag + ':([^>]+)>', 'i');
+      var m = re.exec(noteText);
+      if (m) { result[tag] = tryNum(m[1]); found = true; }
+    });
+    return found ? result : null;
+  }
+
+  function serializeLegacyProj(proj) {
+    if (!proj) return '';
+    return Object.keys(proj).map(function (k) {
+      return '<' + k + ':' + proj[k] + '>';
+    }).join('\n');
+  }
+
+  // ── mergeIntoNote ───────────────────────────────────────
+
+  /**
+   * 기존 노트 텍스트에서 관리 대상 태그만 교체하고, 나머지는 보존.
+   * @param {string} origNote - 원본 노트 텍스트
+   * @param {Object} data - { phases, reach:{coords,mode,rangeN}, area, options, legacyProj }
+   * @returns {string} - 병합된 노트 텍스트
+   */
+  function mergeIntoNote(origNote, data) {
+    var note = origNote || '';
+
+    // 관리 대상 태그 목록 (제거 후 재생성)
+    var managedPatterns = [
+      /<srpgPhase:[^>]*>\s*/gi,
+      /<srpgReach:[^>]*>\s*/gi,
+      /<srpgRange:\d+>\s*/gi,
+      /<srpgArea:[^>]*>\s*/gi,
+      /<srpgRotate>\s*/gi,
+      /<srpgSelfTarget>\s*/gi
+    ];
+
+    // 기존 관리 태그 제거
+    managedPatterns.forEach(function (pat) {
+      note = note.replace(pat, '');
+    });
+
+    // 레거시 투사체 태그도 관리 대상이면 제거 후 재생성
+    if (data.legacyProj !== undefined) {
+      PROJ_TAGS.forEach(function (tag) {
+        var re = new RegExp('<' + tag + ':[^>]*>\\s*', 'gi');
+        note = note.replace(re, '');
+      });
+    }
+
+    note = note.replace(/\n{3,}/g, '\n\n').trim();
+
+    // 새 태그 생성
+    var newParts = [];
+
+    if (data.phases && data.phases.length) {
+      newParts.push(serializePhases(data.phases));
+    }
+
+    if (data.reach) {
+      var reachStr = serializeReach(data.reach.coords, data.reach.mode, data.reach.rangeN);
+      if (reachStr) newParts.push(reachStr);
+    }
+
+    if (data.area && data.area.length) {
+      newParts.push(serializeArea(data.area));
+    }
+
+    if (data.options) {
+      var optStr = serializeOptions(data.options);
+      if (optStr) newParts.push(optStr);
+    }
+
+    if (data.legacyProj) {
+      newParts.push(serializeLegacyProj(data.legacyProj));
+    }
+
+    var newBlock = newParts.join('\n');
+    return note ? (note + '\n' + newBlock) : newBlock;
+  }
+
+  // ── 요약 텍스트 생성 (요약 패널용) ─────────────────────
+
+  var ATOM_LABELS = {
+    dash: '돌진', push: '밀침', pull: '끌어당김', throw: '넘기기',
+    swap: '교환', escape: '이탈', leap: '도약',
+    hit: '타격', proj: '투사체', chain: '전파', multi: '다중지정', dot: '지속뎀',
+    summon: '소환', terrain: '지형변형', trap: '함정',
+    counter: '카운터', interrupt: '차단', reflect: '반사', trigger: '조건발동'
+  };
+
+  var PATH_LABELS = { line: '직선', arc: '포물선', jump: '점프' };
+  var STOP_LABELS = { adjacent: '인접', on: '위', behind: '뒤' };
+  var DIR_LABELS = { away: '후방', side_L: '좌측', side_R: '우측', free: '자유' };
+
+  /**
+   * Phase 배열을 한 줄 요약 텍스트로 변환.
+   * 예: "[돌진(직선→인접)] → [타격(AOE)] → [밀침(후방2)]"
+   */
+  function summarizePhases(phases) {
+    if (!phases || !phases.length) return '(설정 없음)';
+    return phases.map(function (p) {
+      var label = ATOM_LABELS[p.type] || p.type;
+      var details = [];
+
+      if (p.type === 'dash' || p.type === 'leap') {
+        if (p.path) details.push(PATH_LABELS[p.path] || p.path);
+        if (p.stopAt) details.push('→' + (STOP_LABELS[p.stopAt] || p.stopAt));
+      }
+      if (p.type === 'push' || p.type === 'throw') {
+        if (p.dir) details.push(DIR_LABELS[p.dir] || p.dir);
+        if (p.dist) details.push(p.dist + '칸');
+        if (p.casterFollow) details.push('추적');
+      }
+      if (p.type === 'pull') {
+        if (p.dist) details.push(p.dist + '칸');
+        if (p.stopAt) details.push('→' + (STOP_LABELS[p.stopAt] || p.stopAt));
+      }
+      if (p.type === 'hit') {
+        if (p.area) details.push('AOE');
+        if (p.heal) details.push('힐');
+        if (p.targetTeam === 'ally') details.push('아군');
+      }
+      if (p.type === 'proj') {
+        details.push(p.projType || p.type || '');
+      }
+      if (p.type === 'chain') {
+        details.push('×' + (p.maxBounce || '?'));
+        if (p.damageDecay && p.damageDecay > 1) details.push('증폭');
+        if (p.splitCount && p.splitCount > 1) details.push(p.splitCount + '분기');
+      }
+      if (p.type === 'escape') {
+        if (p.dest) details.push(p.dest === 'back' ? '후방' : p.dest);
+        if (p.dist) details.push(p.dist + '칸');
+      }
+      if (p.type === 'terrain') {
+        if (p.effect) details.push(p.effect);
+        if (p.duration) details.push(p.duration + '턴');
+      }
+      if (p.type === 'multi') {
+        details.push(p.count + '발');
+      }
+
+      var suffix = details.length ? '(' + details.join(',') + ')' : '';
+      var cond = p['if'] ? ' if:' + p['if'] : '';
+      var rep = (p.repeat && p.repeat > 1) ? ' ×' + p.repeat : '';
+      return '[' + label + suffix + cond + rep + ']';
+    }).join(' → ');
+  }
+
+  // ── Public API ──────────────────────────────────────────
+
+  return {
+    parsePhases: parsePhases,
+    serializePhases: serializePhases,
+    parseReach: parseReach,
+    parseArea: parseArea,
+    serializeReach: serializeReach,
+    serializeArea: serializeArea,
+    parseOptions: parseOptions,
+    serializeOptions: serializeOptions,
+    parseLegacyProj: parseLegacyProj,
+    serializeLegacyProj: serializeLegacyProj,
+    mergeIntoNote: mergeIntoNote,
+    summarizePhases: summarizePhases,
+    diamondCoords: diamondCoords,
+    // constants for UI
+    ATOM_LABELS: ATOM_LABELS,
+    PATH_LABELS: PATH_LABELS,
+    STOP_LABELS: STOP_LABELS,
+    DIR_LABELS: DIR_LABELS
+  };
+}));
+
+
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+var state = {
+  skillName:'새 스킬', category:'melee', element:'wood',
+  phases:[], reach:{coords:[],mode:'none',rangeN:null},
+  area:[], options:{rotate:false,selfTarget:false},
+  selPhase:-1
+};
+var gridTab='reach'; // 'reach' or 'area'
+
+var EL_COLORS = {wood:'#4a7c59',fire:'#c44536',earth:'#b5893a',metal:'#7a8b99',water:'#3a7bd5'};
+var CAT_COLORS = {move:'#3a7c59',atk:'#c44536',place:'#b5893a',react:'#4488cc'};
+
+var ATOMS = {
+  dash:{cat:'move',icon:'💨',label:'돌진'},
+  pull:{cat:'move',icon:'🧲',label:'끌어당김'},
+  push:{cat:'move',icon:'🫸',label:'밀침'},
+  'throw':{cat:'move',icon:'↗️',label:'넘기기'},
+  swap:{cat:'move',icon:'🔄',label:'교환'},
+  escape:{cat:'move',icon:'🏃',label:'이탈'},
+  leap:{cat:'move',icon:'⬆️',label:'도약'},
+  hit:{cat:'atk',icon:'⚔️',label:'타격'},
+  proj:{cat:'atk',icon:'🎯',label:'투사체'},
+  chain:{cat:'atk',icon:'⚡',label:'전파'},
+  multi:{cat:'atk',icon:'🎯',label:'다중지정'},
+  dot:{cat:'atk',icon:'☠️',label:'지속뎀'},
+  summon:{cat:'place',icon:'📦',label:'소환'},
+  terrain:{cat:'place',icon:'🌍',label:'지형변형'},
+  trap:{cat:'place',icon:'⚠️',label:'함정'}
+};
+
+// ═══════════════════════════════════════════════════════════════
+// HEADER
+// ═══════════════════════════════════════════════════════════════
+function setCat(btn, val) {
+  state.category = val;
+  document.querySelectorAll('#cat-group button').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+}
+function setEl(btn, val) {
+  state.element = val;
+  document.querySelectorAll('#el-group button').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  drawGrid();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GRID EDITOR
+// ═══════════════════════════════════════════════════════════════
+function getGridN() { return parseInt(document.getElementById('grid-size').value)||9; }
+function getAutoN() { return parseInt(document.getElementById('auto-n').value)||3; }
+
+function switchTab(tab, btn) {
+  gridTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  document.getElementById('area-options').style.display = tab==='area'?'flex':'none';
+  drawGrid();
+}
+
+function changeGridSize() { resizeCanvas(); drawGrid(); }
+
+function resizeCanvas() {
+  var n = getGridN();
+  var maxW = document.getElementById('grid-panel').clientWidth - 20;
+  var ts = Math.min(Math.floor(maxW/n), 36);
+  var cv = document.getElementById('grid-canvas');
+  cv.width = n*ts; cv.height = n*ts;
+  cv._ts = ts; cv._n = n;
+}
+
+function getCurCoords() { return gridTab==='reach'? state.reach.coords : state.area; }
+function setCurCoords(coords) {
+  if(gridTab==='reach') { state.reach.coords=coords; state.reach.mode='reach'; state.reach.rangeN=null; }
+  else state.area=coords;
+}
+
+function coordKey(dx,dy){ return dx+','+dy; }
+function hasCoord(arr,dx,dy){ return arr.some(function(c){return c.dx===dx&&c.dy===dy;}); }
+function addCoord(arr,dx,dy){ if(!hasCoord(arr,dx,dy)) arr.push({dx:dx,dy:dy}); }
+function removeCoord(arr,dx,dy){ return arr.filter(function(c){return !(c.dx===dx&&c.dy===dy);}); }
+
+function drawGrid() {
+  var cv = document.getElementById('grid-canvas');
+  if(!cv._ts) resizeCanvas();
+  var c = cv.getContext('2d');
+  var n = cv._n, ts = cv._ts;
+  var half = Math.floor(n/2);
+  c.clearRect(0,0,cv.width,cv.height);
+
+  // grid lines
+  c.strokeStyle='#1e2a45'; c.lineWidth=1;
+  for(var i=0;i<=n;i++){
+    c.beginPath();c.moveTo(i*ts,0);c.lineTo(i*ts,n*ts);c.stroke();
+    c.beginPath();c.moveTo(0,i*ts);c.lineTo(n*ts,i*ts);c.stroke();
+  }
+
+  // selected tiles
+  var coords = getCurCoords();
+  var ec = EL_COLORS[state.element]||'#d4a843';
+  var fillColor = gridTab==='reach'? ec : '#ff8800';
+  coords.forEach(function(co){
+    var px = (half+co.dx)*ts, py = (half+co.dy)*ts;
+    if(px>=0&&px<n*ts&&py>=0&&py<n*ts){
+      c.fillStyle = fillColor+'44';
+      c.fillRect(px+1,py+1,ts-2,ts-2);
+      c.strokeStyle = fillColor+'88'; c.lineWidth=1;
+      c.strokeRect(px+1,py+1,ts-2,ts-2);
+    }
+  });
+
+  // center marker
+  var cx=half*ts+ts/2, cy=half*ts+ts/2;
+  c.fillStyle = gridTab==='reach'?'#3a88d5':'#c44536';
+  c.font = 'bold '+Math.round(ts*0.45)+'px sans-serif';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(gridTab==='reach'?'★':'●', cx, cy);
+  c.font = Math.round(ts*0.22)+'px sans-serif';
+  c.fillStyle = '#888';
+  c.fillText(gridTab==='reach'?'시전자':'타겟', cx, cy+ts*0.35);
+
+  regen();
+}
+
+// Canvas click handler
+(function(){
+  var cv = document.getElementById('grid-canvas');
+  var painting = false, paintMode = 'add';
+
+  cv.addEventListener('mousedown', function(e){
+    e.preventDefault();
+    var n=cv._n, ts=cv._ts, half=Math.floor(n/2);
+    var rect=cv.getBoundingClientRect();
+    var gx=Math.floor((e.clientX-rect.left)/ts)-half;
+    var gy=Math.floor((e.clientY-rect.top)/ts)-half;
+    if(gx===0&&gy===0) return; // center
+    var coords=getCurCoords();
+    if(e.button===2){ paintMode='remove'; painting=true; setCurCoords(removeCoord(coords,gx,gy)); drawGrid(); return; }
+    painting=true;
+    if(hasCoord(coords,gx,gy)){ paintMode='remove'; setCurCoords(removeCoord(coords,gx,gy)); }
+    else { paintMode='add'; addCoord(coords,gx,gy); }
+    drawGrid();
+  });
+  cv.addEventListener('mousemove', function(e){
+    if(!painting) return;
+    var n=cv._n, ts=cv._ts, half=Math.floor(n/2);
+    var rect=cv.getBoundingClientRect();
+    var gx=Math.floor((e.clientX-rect.left)/ts)-half;
+    var gy=Math.floor((e.clientY-rect.top)/ts)-half;
+    if(gx===0&&gy===0) return;
+    var coords=getCurCoords();
+    if(paintMode==='add') addCoord(coords,gx,gy);
+    else setCurCoords(removeCoord(coords,gx,gy));
+    drawGrid();
+  });
+  cv.addEventListener('mouseup', function(){ painting=false; });
+  cv.addEventListener('mouseleave', function(){ painting=false; });
+  cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+})();
+
+function autoGen(shape) {
+  var n = getAutoN();
+  var coords = [];
+  if(shape==='diamond'){
+    for(var dx=-n;dx<=n;dx++) for(var dy=-n;dy<=n;dy++){
+      if(dx===0&&dy===0) continue;
+      if(Math.abs(dx)+Math.abs(dy)<=n) coords.push({dx:dx,dy:dy});
+    }
+  } else if(shape==='cross'){
+    for(var i=1;i<=n;i++){
+      coords.push({dx:i,dy:0},{dx:-i,dy:0},{dx:0,dy:i},{dx:0,dy:-i});
+    }
+  } else if(shape==='line'){
+    for(var i2=1;i2<=n;i2++) coords.push({dx:0,dy:-i2});
+  }
+  setCurCoords(coords); drawGrid();
+}
+function clearGrid(){ setCurCoords([]); drawGrid(); }
+function onOptChange(){
+  state.options.rotate = document.getElementById('opt-rotate').checked;
+  state.options.selfTarget = document.getElementById('opt-self').checked;
+  regen();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE TIMELINE
+// ═══════════════════════════════════════════════════════════════
+function renderPhases() {
+  var list = document.getElementById('phase-list');
+  list.innerHTML = '';
+  state.phases.forEach(function(p,i){
+    var a = ATOMS[p.type]||{cat:'atk',icon:'❓',label:p.type};
+    var catColor = CAT_COLORS[a.cat]||'#666';
+    var div = document.createElement('div');
+    div.className = 'phase-block'+(i===state.selPhase?' selected':'');
+    div.style.borderLeftColor = catColor;
+    div.draggable = true;
+    div.dataset.idx = i;
+    div.onclick = function(e){ if(!e.target.classList.contains('del-btn')) selectPhase(i); };
+
+    var badges = '';
+    if(p['if']) badges += '<span class="badge cond">if:'+esc(p['if'])+'</span>';
+    if(p.repeat&&p.repeat>1) badges += '<span class="badge">×'+p.repeat+'</span>';
+
+    div.innerHTML = '<span class="icon">'+a.icon+'</span>'
+      +'<div class="info"><div class="type-name">'+a.label+'</div>'
+      +'<div class="summary">'+buildSummary(p)+'</div>'
+      +(badges?'<div class="badges">'+badges+'</div>':'')
+      +'</div>'
+      +'<button class="del-btn" onclick="delPhase('+i+')">×</button>';
+
+    // drag events
+    div.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',''+i);e.dataTransfer.effectAllowed='move';});
+    div.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move';this.style.borderTopColor='var(--accent)';});
+    div.addEventListener('dragleave',function(){this.style.borderTopColor='';});
+    div.addEventListener('drop',function(e){
+      e.preventDefault(); this.style.borderTopColor='';
+      var from=parseInt(e.dataTransfer.getData('text/plain'));
+      var to=parseInt(this.dataset.idx);
+      if(from===to) return;
+      var item=state.phases.splice(from,1)[0];
+      state.phases.splice(to,0,item);
+      if(state.selPhase===from) state.selPhase=to;
+      renderPhases(); renderParams(); regen();
+    });
+
+    list.appendChild(div);
+  });
+}
+
+function buildSummary(p) {
+  var parts=[];
+  if(p.type==='dash'||p.type==='leap'){
+    if(p.path) parts.push({line:'직선',arc:'포물선',jump:'점프'}[p.path]||p.path);
+    if(p.stopAt) parts.push('→'+{adjacent:'인접',on:'위',behind:'뒤'}[p.stopAt]||p.stopAt);
+  }
+  if(p.type==='push'||p.type==='throw'){
+    if(p.dir) parts.push({away:'후방',side_L:'좌측',side_R:'우측',free:'자유'}[p.dir]||p.dir);
+    if(p.dist) parts.push(p.dist+'칸');
+    if(p.casterFollow) parts.push('추적');
+  }
+  if(p.type==='pull'){ if(p.stopAt) parts.push('→'+{adjacent:'인접',on:'위'}[p.stopAt]||p.stopAt); }
+  if(p.type==='hit'){ if(p.heal) parts.push('힐'); if(p.targetTeam==='ally') parts.push('아군'); }
+  if(p.type==='proj'){ parts.push(p.projType||'projectile'); }
+  if(p.type==='chain'){ parts.push('×'+(p.maxBounce||'?')); if(p.damageDecay>1) parts.push('증폭'); }
+  if(p.type==='escape'){ if(p.dest) parts.push({back:'후방',free:'자유',random:'랜덤'}[p.dest]||p.dest); if(p.dist) parts.push(p.dist+'칸'); }
+  if(p.type==='terrain'){ if(p.effect) parts.push(p.effect); }
+  if(p.type==='multi'){ parts.push((p.count||2)+'발'); }
+  return parts.join(', ')||'기본';
+}
+
+function selectPhase(i) { state.selPhase=i; renderPhases(); renderParams(); }
+function delPhase(i) {
+  state.phases.splice(i,1);
+  if(state.selPhase>=state.phases.length) state.selPhase=state.phases.length-1;
+  renderPhases(); renderParams(); regen();
+}
+
+function addPhase(type) {
+  var defaults = {type:type};
+  if(type==='dash') Object.assign(defaults,{path:'line',stopAt:'adjacent',speed:5});
+  if(type==='push') Object.assign(defaults,{dir:'away',dist:2});
+  if(type==='pull') Object.assign(defaults,{dist:99,stopAt:'adjacent'});
+  if(type==='escape') Object.assign(defaults,{dest:'back',dist:3});
+  if(type==='hit') Object.assign(defaults,{anim:1,targetTeam:'enemy'});
+  if(type==='proj') Object.assign(defaults,{projType:'projectile'});
+  if(type==='chain') Object.assign(defaults,{maxBounce:4,searchRadius:3,damageDecay:0.8,targetTeam:'enemy'});
+  if(type==='terrain') Object.assign(defaults,{effect:'mud',duration:3});
+  if(type==='multi') Object.assign(defaults,{count:3});
+  if(type==='dot') Object.assign(defaults,{duration:3});
+  if(type==='trap') Object.assign(defaults,{duration:5});
+  state.phases.push(defaults);
+  state.selPhase = state.phases.length-1;
+  hideAdd();
+  renderPhases(); renderParams(); regen();
+}
+
+function buildAddMenu() {
+  var cats = {move:'이동계',atk:'공격계',place:'설치계'};
+  var html = '';
+  Object.keys(cats).forEach(function(cat){
+    html += '<div class="add-cat-label">'+cats[cat]+'</div>';
+    Object.keys(ATOMS).forEach(function(type){
+      if(ATOMS[type].cat===cat){
+        html += '<div class="add-item" onclick="addPhase(\''+type+'\')">'+ATOMS[type].icon+' '+ATOMS[type].label+'</div>';
+      }
+    });
+  });
+  document.getElementById('add-dropdown').innerHTML = html;
+}
+
+function toggleAdd() {
+  var dd=document.getElementById('add-dropdown');
+  dd.classList.toggle('show');
+}
+function hideAdd() { document.getElementById('add-dropdown').classList.remove('show'); }
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.add-phase-area')) hideAdd();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PARAMETER PANEL
+// ═══════════════════════════════════════════════════════════════
+function renderParams() {
+  var empty = document.getElementById('param-empty');
+  var content = document.getElementById('param-content');
+  if(state.selPhase<0||state.selPhase>=state.phases.length){
+    empty.style.display='block'; content.style.display='none'; return;
+  }
+  empty.style.display='none'; content.style.display='block';
+  var p = state.phases[state.selPhase];
+  var a = ATOMS[p.type]||{label:p.type};
+  var h = '<div class="param-title">'+a.icon+' '+a.label+' 파라미터</div><div class="param-grid">';
+
+  if(p.type==='dash'||p.type==='leap'){
+    h += radioRow('path','경로',{line:'직선',arc:'포물선',jump:'점프'},p.path||'line');
+    h += radioRow('stopAt','도착',{adjacent:'인접',on:'위',behind:'뒤'},p.stopAt||'adjacent');
+    h += rangeRow('speed','속도',1,10,1,p.speed||5);
+    h += radioRow('onCollide','충돌',{stop:'정지',pierce:'관통',damage:'데미지'},p.onCollide||'stop');
+  }
+  if(p.type==='push'||p.type==='throw'){
+    h += radioRow('dir','방향',{away:'후방',side_L:'좌측',side_R:'우측',free:'자유'},p.dir||'away');
+    h += numRow('dist','거리',1,9,p.dist||2);
+    h += checkRow('casterFollow','시전자 추적',p.casterFollow||false);
+    h += radioRow('onCollide','충돌',{stop:'정지',damage:'데미지',chain_push:'연쇄'},p.onCollide||'stop');
+  }
+  if(p.type==='pull'){
+    h += numRow('dist','거리',1,99,p.dist||99);
+    h += radioRow('stopAt','도착',{adjacent:'인접',on:'위'},p.stopAt||'adjacent');
+  }
+  if(p.type==='escape'){
+    h += radioRow('dest','방향',{back:'후방',free:'자유',random:'랜덤'},p.dest||'back');
+    h += numRow('dist','거리',1,9,p.dist||3);
+  }
+  if(p.type==='hit'){
+    h += '<div class="param-row"><label></label><span style="color:var(--dim);font-size:9px;">효과범위 → 그리드 에디터의 "효과범위" 탭에서 편집</span></div>';
+    h += numRow('anim','애니메이션ID',0,999,p.anim||1);
+    h += radioRow('targetTeam','대상',{enemy:'적',ally:'아군',all:'전체'},p.targetTeam||'enemy');
+    h += checkRow('heal','회복(힐)',p.heal||false);
+    h += rangeRow('bonusDamage','보너스뎀',0,2,0.1,p.bonusDamage||0);
+  }
+  if(p.type==='proj'){
+    h += radioRow('projType','종류',{projectile:'비행체',hitray:'빔',artillery:'포격'},p.projType||'projectile');
+  }
+  if(p.type==='chain'){
+    h += numRow('maxBounce','바운스',1,10,p.maxBounce||4);
+    h += numRow('searchRadius','탐색반경',1,9,p.searchRadius||3);
+    h += rangeRow('damageDecay','감쇠율',0.5,1.5,0.05,p.damageDecay||0.8);
+    h += numRow('splitCount','분기수',1,3,p.splitCount||1);
+    h += checkRow('canRepeat','중복타격',p.canRepeat||false);
+    h += radioRow('targetTeam','대상',{enemy:'적',ally:'아군'},p.targetTeam||'enemy');
+    h += textRow('condition','전파조건',p.condition||'');
+  }
+  if(p.type==='terrain'){
+    h += textRow('effect','효과',p.effect||'mud');
+    h += numRow('duration','지속(턴)',0,99,p.duration||3);
+  }
+  if(p.type==='multi'){
+    h += numRow('count','타겟수',2,6,p.count||3);
+    h += checkRow('sharePool','중복지정',p.sharePool||false);
+  }
+  if(p.type==='dot'){
+    h += numRow('duration','지속(턴)',1,10,p.duration||3);
+    h += checkRow('stackable','중첩가능',p.stackable||false);
+  }
+  if(p.type==='trap'){
+    h += numRow('duration','지속(턴)',1,99,p.duration||5);
+    h += checkRow('visible','가시',p.visible===undefined?false:p.visible);
+  }
+
+  // common: if, repeat
+  h += '<div style="grid-column:1/-1;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;"></div>';
+  h += condRow('if','조건',p['if']||'');
+  h += numRow('repeat','반복',1,9,p.repeat||1);
+
+  h += '</div>';
+  content.innerHTML = h;
+  bindParams();
+}
+
+function radioRow(key,label,opts,cur){
+  var h='<div class="param-row"><label>'+label+'</label><div class="opts">';
+  Object.keys(opts).forEach(function(v){
+    h+='<button data-key="'+key+'" data-val="'+v+'"'+(v===cur?' class="active"':'')+' onclick="setParam(\''+key+"','"+v+"',this)\">"+opts[v]+'</button>';
+  });
+  return h+'</div></div>';
+}
+function rangeRow(key,label,min,max,step,cur){
+  return '<div class="param-row"><label>'+label+'</label>'
+    +'<input type="range" min="'+min+'" max="'+max+'" step="'+step+'" value="'+cur+'" oninput="setParamNum(\''+key+'\',this.value);this.nextElementSibling.textContent=this.value">'
+    +'<span style="min-width:28px;text-align:center;">'+cur+'</span></div>';
+}
+function numRow(key,label,min,max,cur){
+  return '<div class="param-row"><label>'+label+'</label>'
+    +'<input type="number" min="'+min+'" max="'+max+'" value="'+cur+'" onchange="setParamNum(\''+key+'\',this.value)"></div>';
+}
+function checkRow(key,label,checked){
+  return '<div class="param-row"><label>'+label+'</label>'
+    +'<input type="checkbox"'+(checked?' checked':'')+' onchange="setParamBool(\''+key+'\',this.checked)"></div>';
+}
+function textRow(key,label,val){
+  return '<div class="param-row"><label>'+label+'</label>'
+    +'<input type="text" value="'+esc(val)+'" style="width:120px;" onchange="setParamText(\''+key+'\',this.value)"></div>';
+}
+function condRow(key,label,val){
+  var presets=['','crit','kill','hit','miss'];
+  var isPreset=presets.indexOf(val)>=0;
+  var h='<div class="param-row"><label>'+label+'</label>';
+  h+='<select onchange="onCondSel(this)"><option value=""'+(val===''?' selected':'')+'>없음</option>';
+  h+='<option value="crit"'+(val==='crit'?' selected':'')+'>crit</option>';
+  h+='<option value="kill"'+(val==='kill'?' selected':'')+'>kill</option>';
+  h+='<option value="hit"'+(val==='hit'?' selected':'')+'>hit</option>';
+  h+='<option value="miss"'+(val==='miss'?' selected':'')+'>miss</option>';
+  h+='<option value="__custom"'+(!isPreset&&val?' selected':'')+'>직접입력...</option>';
+  h+='</select>';
+  h+='<input type="text" id="cond-custom" value="'+esc(!isPreset?val:'')+'" style="width:80px;'+(isPreset||!val?'display:none':'')+'" onchange="setParamText(\'if\',this.value)">';
+  return h+'</div>';
+}
+function onCondSel(sel){
+  var ci=document.getElementById('cond-custom');
+  if(sel.value==='__custom'){ ci.style.display=''; ci.focus(); return; }
+  ci.style.display='none';
+  setParamText('if',sel.value);
+}
+
+function setParam(key,val,btn){
+  if(state.selPhase<0) return;
+  state.phases[state.selPhase][key]=val;
+  // update radio buttons
+  btn.parentElement.querySelectorAll('button').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  renderPhases(); regen();
+}
+function setParamNum(key,val){
+  if(state.selPhase<0) return;
+  state.phases[state.selPhase][key]=parseFloat(val)||0;
+  renderPhases(); regen();
+}
+function setParamBool(key,val){
+  if(state.selPhase<0) return;
+  state.phases[state.selPhase][key]=!!val;
+  renderPhases(); regen();
+}
+function setParamText(key,val){
+  if(state.selPhase<0) return;
+  if(val) state.phases[state.selPhase][key]=val;
+  else delete state.phases[state.selPhase][key];
+  renderPhases(); regen();
+}
+function bindParams(){} // placeholder for future event binding
+
+// ═══════════════════════════════════════════════════════════════
+// NOTE TAG REGENERATION
+// ═══════════════════════════════════════════════════════════════
+function regen() {
+  var data = {
+    phases: state.phases,
+    reach: state.reach,
+    area: state.area.length?state.area:undefined,
+    options: state.options
+  };
+  var text = SrpgPhaseParser.mergeIntoNote('', data);
+  document.getElementById('note-out').value = text;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FOOTER
+// ═══════════════════════════════════════════════════════════════
+function scrollToNote(){
+  var ta=document.getElementById('note-out');
+  ta.scrollIntoView({behavior:'smooth'}); ta.focus(); ta.select();
+}
+function copyTags(){
+  var ta=document.getElementById('note-out');
+  if(!ta.value) return;
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ta.value).then(function(){toast('클립보드에 복사됨');}).catch(function(){
+      ta.select(); document.execCommand('copy'); toast('복사됨');
+    });
+  } else { ta.select(); document.execCommand('copy'); toast('복사됨'); }
+}
+function doSave(){
+  var noteText = document.getElementById('note-out').value;
+  if(window.opener){
+    window.opener.postMessage({type:'srpgSkillSave',note:noteText,name:state.skillName},'*');
+    toast('저장 완료'); setTimeout(function(){window.close();},500);
+  } else {
+    var blob=new Blob([JSON.stringify({name:state.skillName,note:noteText},null,2)],{type:'application/json'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=state.skillName+'.json'; a.click();
+    toast('JSON 다운로드');
+  }
+}
+function doCancel(){ if(window.opener) window.close(); else toast('독립 실행 모드 — 취소 불가'); }
+
+// ═══════════════════════════════════════════════════════════════
+// SIMULATION
+// ═══════════════════════════════════════════════════════════════
+var sim = {
+  canvas:null, ctx:null, gridN:7, ts:56,
+  caster:{gx:3,gy:4}, targets:[{gx:3,gy:2,hp:100}],
+  running:false, phaseIdx:0, animId:null, fx:[], log:[],
+  dragging:null
+};
+
+function openSim(){
+  var modal=document.getElementById('sim-modal');
+  modal.style.display='block';
+  modal.innerHTML='<div class="sim-overlay" onclick="if(event.target===this)closeSim()">'
+    +'<div class="sim-box"><button class="sim-close" onclick="closeSim()">✕</button>'
+    +'<div class="sim-title">스킬 프리뷰</div>'
+    +'<div class="sim-sub">드래그로 배치 · 우클릭으로 타겟 추가/삭제</div>'
+    +'<canvas id="sim-cv" width="'+sim.gridN*sim.ts+'" height="'+sim.gridN*sim.ts+'"></canvas>'
+    +'<div class="sim-log" id="sim-log"></div>'
+    +'<div class="sim-ctrls"><button onclick="simRun()">▶ 실행</button><button onclick="simReset()">↺ 리셋</button><button onclick="closeSim()">닫기</button></div>'
+    +'</div></div>';
+  sim.canvas=document.getElementById('sim-cv');
+  sim.ctx=sim.canvas.getContext('2d');
+  sim.canvas.onmousedown=simMD;
+  sim.canvas.onmousemove=simMM;
+  sim.canvas.onmouseup=function(){sim.dragging=null;};
+  sim.canvas.oncontextmenu=function(e){e.preventDefault();};
+  simReset();
+}
+
+function closeSim(){
+  document.getElementById('sim-modal').style.display='none';
+  if(sim.animId) cancelAnimationFrame(sim.animId);
+  sim.running=false;
+}
+
+function simReset(){
+  sim.caster={gx:3,gy:4};
+  sim.targets=[{gx:3,gy:2,hp:100}];
+  sim.running=false; sim.fx=[]; sim.log=['준비 완료.'];
+  if(sim.animId) cancelAnimationFrame(sim.animId);
+  simDraw(); simLogRender();
+}
+
+function gp(gx,gy){return{x:gx*sim.ts+sim.ts/2,y:gy*sim.ts+sim.ts/2};}
+function pg(px,py){return{gx:Math.floor(px/sim.ts),gy:Math.floor(py/sim.ts)};}
+
+function simDraw(){
+  var c=sim.ctx, ts=sim.ts, n=sim.gridN;
+  c.clearRect(0,0,n*ts,n*ts);
+  // grid
+  c.strokeStyle='#1e2a45';c.lineWidth=1;
+  for(var i=0;i<=n;i++){c.beginPath();c.moveTo(i*ts,0);c.lineTo(i*ts,n*ts);c.stroke();c.beginPath();c.moveTo(0,i*ts);c.lineTo(n*ts,i*ts);c.stroke();}
+  // reach overlay
+  if(!sim.running&&state.reach.coords.length){
+    c.fillStyle=(EL_COLORS[state.element]||'#d4a843')+'33';
+    state.reach.coords.forEach(function(co){
+      var rx=sim.caster.gx+co.dx,ry=sim.caster.gy+co.dy;
+      if(rx>=0&&rx<n&&ry>=0&&ry<n) c.fillRect(rx*ts+1,ry*ts+1,ts-2,ts-2);
+    });
+  }
+  // area overlay
+  if(!sim.running&&state.area.length&&sim.targets.length){
+    c.fillStyle='#ff880033';
+    var tgt=sim.targets[0];
+    state.area.forEach(function(co){
+      var rx=tgt.gx+co.dx,ry=tgt.gy+co.dy;
+      if(rx>=0&&rx<n&&ry>=0&&ry<n) c.fillRect(rx*ts+1,ry*ts+1,ts-2,ts-2);
+    });
+  }
+  // caster
+  var cp=gp(sim.caster.gx,sim.caster.gy);
+  c.fillStyle='#3a88d5';c.beginPath();c.arc(cp.x,cp.y,ts*.35,0,Math.PI*2);c.fill();
+  c.fillStyle='#fff';c.font='bold 14px sans-serif';c.textAlign='center';c.textBaseline='middle';
+  c.fillText('★',cp.x,cp.y);
+  c.font='9px sans-serif';c.fillStyle='#8ac';c.fillText('시전자',cp.x,cp.y+ts*.35+10);
+  // targets
+  sim.targets.forEach(function(t,i){
+    var tp=gp(t.gx,t.gy);
+    c.fillStyle=t.hp<=0?'#555':'#c44536';c.beginPath();c.arc(tp.x,tp.y,ts*.3,0,Math.PI*2);c.fill();
+    c.fillStyle='#fff';c.font='bold 12px sans-serif';c.textAlign='center';c.textBaseline='middle';
+    c.fillText('●',tp.x,tp.y);
+    c.font='9px sans-serif';c.fillStyle='#e88';c.fillText('타겟'+(sim.targets.length>1?''+(i+1):''),tp.x,tp.y+ts*.3+10);
+  });
+  if(sim.fx) sim.fx.forEach(function(f){f.draw(c,ts);});
+}
+
+function simLog(msg){sim.log.push(msg);if(sim.log.length>20)sim.log.shift();simLogRender();}
+function simLogRender(){var el=document.getElementById('sim-log');if(el){el.innerHTML=sim.log.map(function(l){return'<div>'+l+'</div>';}).join('');el.scrollTop=el.scrollHeight;}}
+
+function simMD(e){
+  if(sim.running)return;
+  var rect=sim.canvas.getBoundingClientRect();
+  var px=e.clientX-rect.left,py=e.clientY-rect.top;
+  if(e.button===2){
+    var g=pg(px,py);
+    var ei=sim.targets.findIndex(function(t){return t.gx===g.gx&&t.gy===g.gy;});
+    if(ei>=0){sim.targets.splice(ei,1);simLog('타겟 제거');}
+    else if(sim.targets.length<4){sim.targets.push({gx:g.gx,gy:g.gy,hp:100});simLog('타겟 추가');}
+    simDraw();return;
+  }
+  for(var i=0;i<sim.targets.length;i++){
+    var tp=gp(sim.targets[i].gx,sim.targets[i].gy);
+    if(Math.hypot(px-tp.x,py-tp.y)<sim.ts*.35){sim.dragging={t:'tgt',i:i};return;}
+  }
+  var cp=gp(sim.caster.gx,sim.caster.gy);
+  if(Math.hypot(px-cp.x,py-cp.y)<sim.ts*.35) sim.dragging={t:'cast'};
+}
+function simMM(e){
+  if(!sim.dragging)return;
+  var rect=sim.canvas.getBoundingClientRect();
+  var g=pg(e.clientX-rect.left,e.clientY-rect.top);
+  g.gx=Math.max(0,Math.min(sim.gridN-1,g.gx));g.gy=Math.max(0,Math.min(sim.gridN-1,g.gy));
+  if(sim.dragging.t==='tgt'){sim.targets[sim.dragging.i].gx=g.gx;sim.targets[sim.dragging.i].gy=g.gy;}
+  else{sim.caster.gx=g.gx;sim.caster.gy=g.gy;}
+  simDraw();
+}
+
+function simRun(){
+  if(sim.running)return;
+  if(!state.phases.length){simLog('Phase가 없습니다.');return;}
+  sim.running=true;sim.phaseIdx=0;sim.fx=[];
+  sim.targets.forEach(function(t){t.hp=100;});
+  simLog('── 시작 ──');
+  simNext();
+}
+
+function simNext(){
+  if(sim.phaseIdx>=state.phases.length){simLog('── 완료 ──');sim.running=false;simDraw();return;}
+  var p=state.phases[sim.phaseIdx];
+  var label=(ATOMS[p.type]||{label:p.type}).label;
+  simLog('Phase '+(sim.phaseIdx+1)+': '+label);
+  sim.phaseIdx++;
+  var fn={dash:simDash,leap:simDash,hit:simHit,push:simPush,'throw':simPush,pull:simPull,escape:simEsc,chain:simChain,proj:simProj};
+  if(fn[p.type]) fn[p.type](p,simNext);
+  else{simLog('  (시각효과 없음)');setTimeout(simNext,400);}
+}
+
+function simAnim(dur,tick,done){
+  var s=performance.now();
+  function loop(now){
+    var t=Math.min((now-s)/dur,1);tick(t);simDraw();
+    if(t<1)sim.animId=requestAnimationFrame(loop);
+    else{sim.fx=[];if(done)done();}
+  }
+  sim.animId=requestAnimationFrame(loop);
+}
+
+function simDash(p,done){
+  if(!sim.targets.length){done();return;}
+  var tgt=sim.targets[0],sa=p.stopAt||'adjacent';
+  var dx=tgt.gx-sim.caster.gx,dy=tgt.gy-sim.caster.gy;
+  var destX=tgt.gx,destY=tgt.gy;
+  if(sa==='adjacent'){
+    if(Math.abs(dx)>=Math.abs(dy))destX=tgt.gx-(dx>0?1:-1);else destY=tgt.gy-(dy>0?1:-1);
+  }else if(sa==='behind'){
+    if(Math.abs(dx)>=Math.abs(dy))destX=tgt.gx+(dx>0?1:-1);else destY=tgt.gy+(dy>0?1:-1);
+  }
+  destX=Math.max(0,Math.min(sim.gridN-1,destX));destY=Math.max(0,Math.min(sim.gridN-1,destY));
+  var fx=sim.caster.gx,fy=sim.caster.gy;
+  simLog('  → ('+fx+','+fy+')→('+destX+','+destY+')');
+  simAnim(500,function(t){
+    var e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    sim.caster.gx=Math.round(fx+(destX-fx)*e);sim.caster.gy=Math.round(fy+(destY-fy)*e);
+  },function(){sim.caster.gx=destX;sim.caster.gy=destY;setTimeout(done,200);});
+}
+
+function simHit(p,done){
+  var tgts=sim.targets.filter(function(t){return t.hp>0;});
+  if(!tgts.length){done();return;}
+  var tgt=tgts[0];
+  simAnim(400,function(t){
+    sim.fx=[{draw:function(c,ts){
+      var tp=gp(tgt.gx,tgt.gy);
+      c.strokeStyle='rgba(255,200,60,'+(1-t)+')';c.lineWidth=3;
+      c.beginPath();c.arc(tp.x,tp.y,t*ts*.8,0,Math.PI*2);c.stroke();
+      if(t<.3){c.fillStyle='rgba(255,100,60,'+(0.4*(1-t/.3))+')';c.fillRect(tgt.gx*ts,tgt.gy*ts,ts,ts);}
+    }}];
+  },function(){tgt.hp=Math.max(0,tgt.hp-30);setTimeout(done,200);});
+}
+
+function simPush(p,done){
+  if(!sim.targets.length){done();return;}
+  var tgt=sim.targets[0],dist=p.dist||2,dir=p.dir||'away';
+  var dx=0,dy=0;
+  if(dir==='away'){var ddx=tgt.gx-sim.caster.gx,ddy=tgt.gy-sim.caster.gy;var l=Math.max(Math.abs(ddx),Math.abs(ddy),1);dx=Math.round(ddx/l);dy=Math.round(ddy/l);}
+  else if(dir==='side_L'){var d0=tgt.gx-sim.caster.gx,d1=tgt.gy-sim.caster.gy;dx=-Math.sign(d1);dy=Math.sign(d0);}
+  else if(dir==='side_R'){var d2=tgt.gx-sim.caster.gx,d3=tgt.gy-sim.caster.gy;dx=Math.sign(d3);dy=-Math.sign(d2);}
+  if(!dx&&!dy)dy=-1;
+  var destX=Math.max(0,Math.min(sim.gridN-1,tgt.gx+dx*dist)),destY=Math.max(0,Math.min(sim.gridN-1,tgt.gy+dy*dist));
+  var fx=tgt.gx,fy=tgt.gy,follow=p.casterFollow||p.type==='throw';
+  simAnim(400,function(t){
+    var e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    tgt.gx=Math.round(fx+(destX-fx)*e);tgt.gy=Math.round(fy+(destY-fy)*e);
+    if(follow){sim.caster.gx=Math.round(fx+(destX-dx-fx)*e);sim.caster.gy=Math.round(fy+(destY-dy-fy)*e);}
+  },function(){tgt.gx=destX;tgt.gy=destY;setTimeout(done,200);});
+}
+
+function simPull(p,done){
+  if(!sim.targets.length){done();return;}
+  var tgt=sim.targets[0],sa=p.stopAt||'adjacent';
+  var destX=sim.caster.gx,destY=sim.caster.gy;
+  if(sa==='adjacent'){
+    var dx=sim.caster.gx-tgt.gx,dy=sim.caster.gy-tgt.gy;
+    if(Math.abs(dx)>=Math.abs(dy))destX=sim.caster.gx-(dx>0?1:-1);else destY=sim.caster.gy-(dy>0?1:-1);
+  }
+  destX=Math.max(0,Math.min(sim.gridN-1,destX));destY=Math.max(0,Math.min(sim.gridN-1,destY));
+  var fx=tgt.gx,fy=tgt.gy;
+  simAnim(400,function(t){
+    var e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    tgt.gx=Math.round(fx+(destX-fx)*e);tgt.gy=Math.round(fy+(destY-fy)*e);
+  },function(){tgt.gx=destX;tgt.gy=destY;setTimeout(done,200);});
+}
+
+function simEsc(p,done){
+  var dist=p.dist||3;
+  var dx=sim.caster.gx-(sim.targets.length?sim.targets[0].gx:sim.caster.gx);
+  var dy=sim.caster.gy-(sim.targets.length?sim.targets[0].gy:sim.caster.gy);
+  if(!dx&&!dy)dy=1;var l=Math.max(Math.abs(dx),Math.abs(dy),1);dx=Math.round(dx/l);dy=Math.round(dy/l);
+  var destX=Math.max(0,Math.min(sim.gridN-1,sim.caster.gx+dx*dist)),destY=Math.max(0,Math.min(sim.gridN-1,sim.caster.gy+dy*dist));
+  var fx=sim.caster.gx,fy=sim.caster.gy;
+  simAnim(400,function(t){
+    var e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    sim.caster.gx=Math.round(fx+(destX-fx)*e);sim.caster.gy=Math.round(fy+(destY-fy)*e);
+  },function(){sim.caster.gx=destX;sim.caster.gy=destY;setTimeout(done,200);});
+}
+
+function simChain(p,done){
+  var tgts=sim.targets.filter(function(t){return t.hp>0;});
+  if(!tgts.length){done();return;}
+  var order=[tgts[0]],visited=new Set([0]);
+  var maxB=p.maxBounce||3,rad=p.searchRadius||3;
+  for(var b=0;b<maxB-1;b++){
+    var last=order[order.length-1],best=-1,bd=Infinity;
+    for(var j=0;j<tgts.length;j++){
+      if(visited.has(j))continue;
+      var d=Math.abs(tgts[j].gx-last.gx)+Math.abs(tgts[j].gy-last.gy);
+      if(d<=rad&&d<bd){bd=d;best=j;}
+    }
+    if(best<0)break;visited.add(best);order.push(tgts[best]);
+  }
+  simLog('  → 전파 ×'+order.length);
+  var ci=0;
+  function nb(){
+    if(ci>=order.length-1){setTimeout(done,200);return;}
+    var from=order[ci],to=order[ci+1];ci++;
+    simAnim(250,function(t){
+      sim.fx=[{draw:function(c,ts){
+        var fp=gp(from.gx,from.gy),tp=gp(to.gx,to.gy);
+        var cx=fp.x+(tp.x-fp.x)*t,cy=fp.y+(tp.y-fp.y)*t;
+        c.strokeStyle='#88ccff';c.lineWidth=2;c.beginPath();c.moveTo(fp.x,fp.y);c.lineTo(cx,cy);c.stroke();
+        c.fillStyle='#88ccff';c.beginPath();c.arc(cx,cy,4,0,Math.PI*2);c.fill();
+      }}];
+    },function(){
+      to.hp=Math.max(0,to.hp-20);
+      simAnim(150,function(t2){
+        sim.fx=[{draw:function(c,ts){
+          var tp=gp(to.gx,to.gy);c.strokeStyle='rgba(136,204,255,'+(1-t2)+')';c.lineWidth=2;
+          c.beginPath();c.arc(tp.x,tp.y,t2*sim.ts*.5,0,Math.PI*2);c.stroke();
+        }}];
+      },nb);
+    });
+  }
+  nb();
+}
+
+function simProj(p,done){
+  if(!sim.targets.length){done();return;}
+  var tgt=sim.targets[0],fx=sim.caster.gx,fy=sim.caster.gy;
+  var pt=p.projType||'projectile',isArt=pt==='artillery';
+  simAnim(isArt?600:350,function(t){
+    sim.fx=[{draw:function(c,ts){
+      var fp=gp(fx,fy),tp=gp(tgt.gx,tgt.gy);
+      if(pt==='hitray'){
+        c.strokeStyle='#ff6';c.lineWidth=3+Math.sin(t*10)*2;
+        c.beginPath();c.moveTo(fp.x,fp.y);c.lineTo(tp.x,tp.y);c.stroke();
+      }else{
+        var cx=fp.x+(tp.x-fp.x)*t,cy=fp.y+(tp.y-fp.y)*t;
+        if(isArt) cy+=-Math.sin(t*Math.PI)*ts*2;
+        c.fillStyle=isArt?'#ff6633':'#aad';c.beginPath();c.arc(cx,cy,6,0,Math.PI*2);c.fill();
+      }
+    }}];
+  },function(){
+    tgt.hp=Math.max(0,tgt.hp-25);
+    simAnim(200,function(t2){
+      sim.fx=[{draw:function(c,ts){
+        var tp=gp(tgt.gx,tgt.gy);c.strokeStyle='rgba(255,200,60,'+(1-t2)+')';c.lineWidth=2;
+        c.beginPath();c.arc(tp.x,tp.y,t2*sim.ts*.6,0,Math.PI*2);c.stroke();
+      }}];
+    },function(){setTimeout(done,150);});
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(msg){
+  var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');
+  setTimeout(function(){el.classList.remove('show');},2000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+function init(){
+  document.getElementById('skill-name').addEventListener('input',function(){state.skillName=this.value;});
+  buildAddMenu();
+  resizeCanvas();
+  drawGrid();
+  renderPhases();
+  regen();
+  // Listen for postMessage (popup mode)
+  window.addEventListener('message',function(e){
+    if(e.data&&e.data.type==='srpgSkillLoad'){
+      if(e.data.name) { state.skillName=e.data.name; document.getElementById('skill-name').value=e.data.name; }
+      if(e.data.note) loadFromNote(e.data.note);
+    }
+  });
+  // URL params
+  var params=new URLSearchParams(window.location.search);
+  if(params.get('note')) loadFromNote(decodeURIComponent(params.get('note')));
+  if(params.get('name')) { state.skillName=params.get('name'); document.getElementById('skill-name').value=params.get('name'); }
+}
+
+function loadFromNote(noteText){
+  state.phases = SrpgPhaseParser.parsePhases(noteText);
+  var r = SrpgPhaseParser.parseReach(noteText);
+  state.reach = r;
+  state.area = SrpgPhaseParser.parseArea(noteText);
+  state.options = SrpgPhaseParser.parseOptions(noteText);
+  document.getElementById('opt-rotate').checked = state.options.rotate;
+  document.getElementById('opt-self').checked = state.options.selfTarget;
+  state.selPhase = state.phases.length?0:-1;
+  drawGrid(); renderPhases(); renderParams(); regen();
+}
+
+init();
+</script>
+</body>
+</html>

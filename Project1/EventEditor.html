@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RMMZ Event Editor</title>
+<style>
+:root {
+  --bg-dark: #1a1a2e;
+  --bg-panel: #16213e;
+  --bg-card: #0f3460;
+  --bg-input: #1a1a3e;
+  --accent: #e94560;
+  --accent2: #533483;
+  --text: #e0e0e0;
+  --text-dim: #8899aa;
+  --text-bright: #ffffff;
+  --border: #2a3a5e;
+  --success: #4ecca3;
+  --warning: #f5a623;
+  --rmmz-window: rgba(0, 0, 32, 0.85);
+  --rmmz-border: #4488cc;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: var(--bg-dark); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+header { background: linear-gradient(135deg, var(--bg-panel), var(--accent2)); padding: 10px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid var(--accent); }
+header h1 { font-size: 18px; color: var(--text-bright); }
+header .toolbar { display: flex; gap: 8px; margin-left: auto; }
+.btn { padding: 6px 14px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+.btn:hover { background: var(--accent2); border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #ff5577; }
+.btn.success { background: var(--success); border-color: var(--success); color: #111; }
+.btn.small { padding: 3px 8px; font-size: 12px; }
+
+#main { display: flex; flex: 1; overflow: hidden; }
+
+/* Editor Panel */
+#editor-panel { width: 340px; min-width: 280px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+#editor-panel .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+#editor-panel .panel-header h2 { font-size: 14px; color: var(--text-bright); }
+#cmd-list { flex: 1; overflow-y: auto; padding: 4px; }
+.cmd-item { padding: 6px 10px; margin: 2px 0; border-radius: 4px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; border: 1px solid transparent; transition: all 0.1s; }
+.cmd-item:hover { background: rgba(255,255,255,0.05); }
+.cmd-item.selected { background: var(--bg-card); border-color: var(--accent); }
+.cmd-item .cmd-icon { font-size: 11px; width: 20px; text-align: center; flex-shrink: 0; }
+.cmd-item .cmd-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmd-item .cmd-actions { display: none; gap: 2px; }
+.cmd-item:hover .cmd-actions, .cmd-item.selected .cmd-actions { display: flex; }
+.cmd-indent { display: inline-block; width: 16px; flex-shrink: 0; }
+
+/* Props Panel */
+#props-panel { width: 340px; min-width: 280px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+#props-panel .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+#props-panel .panel-header h2 { font-size: 14px; color: var(--text-bright); }
+#props-content { flex: 1; overflow-y: auto; padding: 14px; }
+.prop-group { margin-bottom: 14px; }
+.prop-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; display: block; }
+.prop-input { width: 100%; padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 13px; }
+.prop-input:focus { outline: none; border-color: var(--accent); }
+textarea.prop-input { resize: vertical; min-height: 80px; font-family: inherit; }
+select.prop-input { cursor: pointer; }
+
+/* Face Picker */
+.face-picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.face-preview { width: 72px; height: 72px; border: 2px solid var(--border); border-radius: 4px; background: var(--bg-input); cursor: pointer; overflow: hidden; position: relative; }
+.face-preview img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.face-preview:hover { border-color: var(--accent); }
+.face-none { display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-dim); height: 100%; }
+
+/* Face Grid Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: none; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal { background: var(--bg-panel); border: 2px solid var(--accent); border-radius: 8px; padding: 20px; max-width: 650px; max-height: 80vh; overflow-y: auto; }
+.modal h3 { margin-bottom: 12px; color: var(--text-bright); }
+.face-sheet-section { margin-bottom: 16px; }
+.face-sheet-section .sheet-name { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+.face-grid { display: grid; grid-template-columns: repeat(4, 72px); gap: 4px; }
+.face-cell { width: 72px; height: 72px; border: 2px solid var(--border); border-radius: 3px; cursor: pointer; overflow: hidden; image-rendering: pixelated; }
+.face-cell:hover { border-color: var(--accent); transform: scale(1.05); }
+.face-cell.selected { border-color: var(--success); box-shadow: 0 0 8px var(--success); }
+.face-cell canvas { width: 72px; height: 72px; }
+
+/* Preview Panel */
+#preview-panel { flex: 1; background: #111; display: flex; flex-direction: column; }
+#preview-panel .panel-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--bg-panel); }
+#preview-panel .panel-header h2 { font-size: 14px; color: var(--text-bright); }
+.preview-controls { display: flex; gap: 6px; align-items: center; }
+#preview-container { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; background: #0a0a0a; }
+#game-screen { width: 816px; height: 624px; background: #222; position: relative; overflow: hidden; transform-origin: center; border: 2px solid #333; image-rendering: pixelated; }
+#game-screen.scaled { transform: scale(var(--preview-scale, 0.75)); }
+
+/* RMMZ-style Message Window */
+.msg-window { position: absolute; left: 4px; right: 4px; height: 168px; padding: 12px; display: none; }
+.msg-window.bottom { bottom: 4px; }
+.msg-window.middle { top: 228px; }
+.msg-window.top { top: 4px; }
+.msg-window .window-bg { position: absolute; inset: 0; background: var(--rmmz-window); border: 3px solid rgba(68, 136, 204, 0.6); border-radius: 4px; }
+.msg-window .window-bg::after { content:''; position: absolute; inset: 3px; border: 1px solid rgba(68, 136, 204, 0.3); border-radius: 2px; }
+.msg-window.bg-dim .window-bg { background: rgba(0,0,0,0.75); border-color: transparent; }
+.msg-window.bg-dim .window-bg::after { display: none; }
+.msg-window.bg-transparent .window-bg { background: transparent; border-color: transparent; }
+.msg-window.bg-transparent .window-bg::after { display: none; }
+.msg-content { position: relative; display: flex; gap: 14px; height: 100%; }
+.msg-face { width: 144px; height: 144px; flex-shrink: 0; image-rendering: pixelated; }
+.msg-face canvas { width: 144px; height: 144px; }
+.msg-text-area { flex: 1; display: flex; flex-direction: column; justify-content: flex-start; padding-top: 4px; }
+.msg-text { font-size: 26px; line-height: 1.5; color: #fff; font-family: 'GameFont', sans-serif; white-space: pre-wrap; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
+
+/* Choice Window */
+.choice-window { position: absolute; right: 4px; display: none; min-width: 200px; }
+.choice-window .window-bg { position: absolute; inset: 0; background: var(--rmmz-window); border: 3px solid rgba(68, 136, 204, 0.6); border-radius: 4px; }
+.choice-window .window-bg::after { content:''; position: absolute; inset: 3px; border: 1px solid rgba(68, 136, 204, 0.3); border-radius: 2px; }
+.choice-list { position: relative; padding: 12px 16px; }
+.choice-item { font-size: 24px; color: #fff; padding: 6px 12px; font-family: 'GameFont', sans-serif; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); cursor: pointer; }
+.choice-item.highlighted { background: rgba(255,255,255,0.15); border-radius: 3px; }
+.choice-cursor { display: inline-block; margin-right: 6px; }
+
+/* Command Picker Modal */
+#cmd-picker .cmd-category { margin-bottom: 14px; }
+#cmd-picker .cmd-category h4 { font-size: 12px; color: var(--accent); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+#cmd-picker .cmd-option { padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 13px; transition: background 0.1s; }
+#cmd-picker .cmd-option:hover { background: var(--bg-card); }
+#cmd-picker .cmd-option .cmd-desc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+/* Export Panel */
+#export-panel { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 200; align-items: center; justify-content: center; }
+#export-panel.active { display: flex; }
+#export-panel .modal { width: 700px; max-height: 85vh; }
+#export-json { width: 100%; height: 400px; background: #0d1117; color: #7ee787; border: 1px solid var(--border); border-radius: 4px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; padding: 12px; resize: vertical; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-dark); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
+
+/* Event settings bar */
+.event-settings { padding: 10px 14px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+.event-settings .row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.event-settings .row:last-child { margin-bottom: 0; }
+.event-settings label { font-size: 12px; color: var(--text-dim); min-width: 60px; }
+.event-settings input, .event-settings select { padding: 3px 8px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: 3px; font-size: 12px; }
+.event-settings input:focus, .event-settings select:focus { outline: none; border-color: var(--accent); }
+.event-settings input[type=number] { width: 60px; }
+
+/* Notification */
+.toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 20px; background: var(--success); color: #111; border-radius: 6px; font-size: 13px; z-index: 999; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RMMZ Event Editor</h1>
+  <span style="font-size:12px;color:var(--text-dim)">이벤트 커맨드 에디터 &amp; 프리뷰어</span>
+  <div class="toolbar">
+    <button class="btn" onclick="importJSON()">JSON 불러오기</button>
+    <button class="btn primary" onclick="showExport()">JSON 내보내기</button>
+  </div>
+</header>
+
+<div id="main">
+  <!-- Editor Panel -->
+  <div id="editor-panel">
+    <div class="event-settings">
+      <div class="row">
+        <label>이벤트명</label>
+        <input type="text" id="ev-name" value="EV001" style="flex:1">
+      </div>
+      <div class="row">
+        <label>트리거</label>
+        <select id="ev-trigger">
+          <option value="0">결정 버튼</option>
+          <option value="1">플레이어 접촉</option>
+          <option value="2">이벤트 접촉</option>
+          <option value="3">자동 실행</option>
+          <option value="4">병렬 처리</option>
+        </select>
+        <label style="margin-left:8px">위치</label>
+        <input type="number" id="ev-x" value="8" min="0" style="width:45px">
+        <input type="number" id="ev-y" value="6" min="0" style="width:45px">
+      </div>
+    </div>
+    <div class="panel-header">
+      <h2>커맨드 목록</h2>
+      <button class="btn small primary" onclick="showCmdPicker()">+ 추가</button>
+    </div>
+    <div id="cmd-list"></div>
+  </div>
+
+  <!-- Properties Panel -->
+  <div id="props-panel">
+    <div class="panel-header">
+      <h2>속성</h2>
+    </div>
+    <div id="props-content">
+      <p style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">커맨드를 선택하면 여기에 속성이 표시됩니다</p>
+    </div>
+  </div>
+
+  <!-- Preview Panel -->
+  <div id="preview-panel">
+    <div class="panel-header">
+      <h2>미리보기</h2>
+      <div class="preview-controls">
+        <button class="btn small" onclick="previewReset()" title="처음으로">⏮</button>
+        <button class="btn small" onclick="previewPrev()" title="이전">◀</button>
+        <button class="btn small primary" onclick="previewNext()" title="다음 (Space)">▶ 다음</button>
+        <button class="btn small" onclick="previewAutoPlay()" title="자동 재생" id="btn-autoplay">⏩</button>
+        <span id="preview-step" style="font-size:12px;color:var(--text-dim);margin-left:8px"></span>
+      </div>
+    </div>
+    <div id="preview-container">
+      <div id="game-screen" class="scaled">
+        <div id="game-bg" style="width:100%;height:100%;background:#222;display:flex;align-items:center;justify-content:center;">
+          <span style="color:#555;font-size:14px">게임 화면 영역 (816×624)</span>
+        </div>
+        <div class="msg-window bottom" id="msg-window">
+          <div class="window-bg"></div>
+          <div class="msg-content">
+            <div class="msg-face" id="msg-face" style="display:none"><canvas width="144" height="144"></canvas></div>
+            <div class="msg-text-area"><div class="msg-text" id="msg-text"></div></div>
+          </div>
+        </div>
+        <div class="choice-window" id="choice-window">
+          <div class="window-bg"></div>
+          <div class="choice-list" id="choice-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Command Picker Modal -->
+<div class="modal-overlay" id="cmd-picker-modal">
+  <div class="modal" style="width:480px" id="cmd-picker">
+    <h3>커맨드 추가</h3>
+    <div class="cmd-category">
+      <h4>메시지</h4>
+      <div class="cmd-option" onclick="addCmd('showText')">
+        💬 텍스트 표시
+        <div class="cmd-desc">대화 메시지를 표시합니다 (페이스칩, 배경, 위치 설정)</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('showChoices')">
+        🔀 선택지 표시
+        <div class="cmd-desc">플레이어에게 선택지를 제시합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('showScrollingText')">
+        📜 스크롤 텍스트
+        <div class="cmd-desc">화면을 스크롤하는 텍스트 (오프닝/엔딩용)</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>게임 진행</h4>
+      <div class="cmd-option" onclick="addCmd('controlSwitches')">
+        🔲 스위치 조작
+        <div class="cmd-desc">게임 스위치를 ON/OFF합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('controlVariables')">
+        📊 변수 조작
+        <div class="cmd-desc">게임 변수의 값을 설정합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('conditionalBranch')">
+        🔀 조건 분기
+        <div class="cmd-desc">조건에 따라 처리를 분기합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('changeItems')">
+        🎒 아이템 증감
+        <div class="cmd-desc">아이템을 추가하거나 제거합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('changeGold')">
+        💰 소지금 증감
+        <div class="cmd-desc">소지금을 증가 또는 감소시킵니다</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>이동</h4>
+      <div class="cmd-option" onclick="addCmd('transferPlayer')">
+        🚪 장소 이동
+        <div class="cmd-desc">플레이어를 다른 맵으로 이동시킵니다</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>화면/연출</h4>
+      <div class="cmd-option" onclick="addCmd('fadeout')">
+        ⬛ 화면 페이드아웃
+        <div class="cmd-desc">화면을 서서히 어둡게 합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('fadein')">
+        ⬜ 화면 페이드인
+        <div class="cmd-desc">화면을 서서히 밝게 합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('wait')">
+        ⏳ 대기
+        <div class="cmd-desc">지정한 프레임 수만큼 대기합니다 (60=1초)</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('shakeScreen')">
+        📳 화면 흔들기
+        <div class="cmd-desc">화면을 흔드는 효과입니다</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>오디오</h4>
+      <div class="cmd-option" onclick="addCmd('playBgm')">
+        🎵 BGM 재생
+        <div class="cmd-desc">배경 음악을 재생합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('playSe')">
+        🔊 SE 재생
+        <div class="cmd-desc">효과음을 재생합니다</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>전투</h4>
+      <div class="cmd-option" onclick="addCmd('battleProcessing')">
+        ⚔️ 전투 처리
+        <div class="cmd-desc">지정한 적 그룹과 전투를 시작합니다</div>
+      </div>
+    </div>
+    <div class="cmd-category">
+      <h4>기타</h4>
+      <div class="cmd-option" onclick="addCmd('comment')">
+        📝 주석
+        <div class="cmd-desc">메모용 주석입니다 (게임에 영향 없음)</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('label')">
+        🏷 라벨
+        <div class="cmd-desc">라벨을 설정합니다</div>
+      </div>
+      <div class="cmd-option" onclick="addCmd('jumpToLabel')">
+        ↩ 라벨로 이동
+        <div class="cmd-desc">지정한 라벨 위치로 이동합니다</div>
+      </div>
+    </div>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn" onclick="closeCmdPicker()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Face Picker Modal -->
+<div class="modal-overlay" id="face-picker-modal">
+  <div class="modal" style="width:640px">
+    <h3>페이스칩 선택</h3>
+    <div style="margin-bottom:12px">
+      <button class="btn small" onclick="selectFace('',0)" style="margin-bottom:8px">없음 (페이스칩 제거)</button>
+    </div>
+    <div id="face-grid-container"></div>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn" onclick="closeFacePicker()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Export Modal -->
+<div id="export-panel">
+  <div class="modal">
+    <h3 style="margin-bottom:12px">이벤트 JSON</h3>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:8px">이 JSON을 복사하거나, Map JSON의 events 배열에 삽입할 수 있습니다.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn small" onclick="copyExportCommands()">커맨드만 복사</button>
+      <button class="btn small primary" onclick="copyExportFull()">전체 이벤트 복사</button>
+    </div>
+    <textarea id="export-json" readonly></textarea>
+    <div style="text-align:right;margin-top:12px">
+      <button class="btn" onclick="closeExport()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const FACE_SHEETS = [
+  'Actor1','Actor2','Actor3','Evil','Monster','Nature',
+  'People1','People2','People3','People4',
+  'SF_Actor1','SF_Actor2','SF_Actor3','SF_Monster','SF_People1'
+];
+const ACTORS = [
+  {id:1,name:'리드',face:'Actor1',fi:0},{id:2,name:'프리실라',face:'Actor1',fi:1},
+  {id:3,name:'게일',face:'Actor1',fi:2},{id:4,name:'미쉘',face:'Actor1',fi:3},
+  {id:5,name:'알버트',face:'Actor1',fi:4},{id:6,name:'케이시',face:'Actor1',fi:5},
+  {id:7,name:'엘리엇',face:'Actor1',fi:6},{id:8,name:'로자',face:'Actor1',fi:7}
+];
+const ITEMS = [
+  {id:7,name:'물약'},{id:8,name:'일류 물약'},{id:9,name:'초일류 물약'},
+  {id:10,name:'매직 워터'},{id:11,name:'각성제'},{id:12,name:'치료 허브'},
+  {id:13,name:'해독제'},{id:14,name:'미라클 드롭'},{id:15,name:'엘릭서'},
+  {id:18,name:'인카운트 감소기'},{id:19,name:'드롭 증분기'},
+  {id:23,name:'HP 향상'},{id:24,name:'MP 향상'},{id:25,name:'공격력 향상'},
+  {id:26,name:'방어력 향상'},{id:27,name:'마법 향상'},{id:28,name:'저항 향상'},
+  {id:29,name:'민첩성 향상'},{id:30,name:'운 향상'}
+];
+const TROOPS = [
+  {id:1,name:'고블린*2'},{id:2,name:'난쟁이*2'},{id:3,name:'까마귀*2'},
+  {id:4,name:'나무 거인'},{id:5,name:'마수'}
+];
+
+// Face image cache
+const faceImages = {};
+function loadFaceSheet(name) {
+  return new Promise(resolve => {
+    if (faceImages[name]) return resolve(faceImages[name]);
+    const img = new Image();
+    img.onload = () => { faceImages[name] = img; resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = `img/faces/${name}.png`;
+  });
+}
+function drawFace(canvas, faceName, faceIndex) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!faceName || !faceImages[faceName]) return;
+  const img = faceImages[faceName];
+  const sw = 144, sh = 144;
+  const sx = (faceIndex % 4) * sw;
+  const sy = Math.floor(faceIndex / 4) * sh;
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+}
+
+// ============================================================
+// STATE
+// ============================================================
+let commands = [];
+let selectedIdx = -1;
+let insertAfterIdx = -1; // where to insert new commands
+let previewState = { step: -1, autoPlay: false };
+let currentFaceCallback = null;
+
+// Unique ID counter
+let cmdIdCounter = 0;
+function newId() { return ++cmdIdCounter; }
+
+// ============================================================
+// COMMAND DEFINITIONS
+// ============================================================
+function createCmd(type) {
+  const id = newId();
+  switch(type) {
+    case 'showText': return { id, type, faceName:'', faceIndex:0, background:0, positionType:2, lines:[''] };
+    case 'showChoices': return { id, type, choices:['선택1','선택2'], cancelType:-2, branches:[[],[]] };
+    case 'showScrollingText': return { id, type, speed:2, noFast:false, lines:[''] };
+    case 'controlSwitches': return { id, type, startId:1, endId:1, value:0 };
+    case 'controlVariables': return { id, type, startId:1, endId:1, operationType:0, operand:0, value:0 };
+    case 'conditionalBranch': return { id, type, condType:0, switchId:1, switchValue:0, hasElse:true, trueBranch:[], falseBranch:[] };
+    case 'transferPlayer': return { id, type, mapId:1, x:0, y:0, direction:0, fadeType:0 };
+    case 'fadeout': return { id, type };
+    case 'fadein': return { id, type };
+    case 'wait': return { id, type, frames:60 };
+    case 'shakeScreen': return { id, type, power:5, speed:5, duration:60, waitForCompletion:true };
+    case 'playBgm': return { id, type, name:'', volume:90, pitch:100, pan:0 };
+    case 'playSe': return { id, type, name:'', volume:90, pitch:100, pan:0 };
+    case 'battleProcessing': return { id, type, troopId:1, canEscape:true, canLose:false };
+    case 'comment': return { id, type, text:'' };
+    case 'label': return { id, type, name:'' };
+    case 'jumpToLabel': return { id, type, name:'' };
+    case 'changeItems': return { id, type, itemId:7, operation:0, operandType:0, value:1 };
+    case 'changeGold': return { id, type, operation:0, operandType:0, value:100 };
+    default: return { id, type:'comment', text:'(unknown)' };
+  }
+}
+
+function cmdDisplayText(cmd) {
+  switch(cmd.type) {
+    case 'showText': {
+      const face = cmd.faceName ? `[${cmd.faceName}:${cmd.faceIndex}] ` : '';
+      const txt = cmd.lines.join(' ').substring(0, 40);
+      return `💬 ${face}${txt || '(비어있음)'}`;
+    }
+    case 'showChoices': return `🔀 선택지: ${cmd.choices.join(', ')}`;
+    case 'showScrollingText': return `📜 스크롤: ${cmd.lines.join(' ').substring(0,30)}`;
+    case 'controlSwitches': return `🔲 스위치 [${cmd.startId}${cmd.endId>cmd.startId?'~'+cmd.endId:''}] = ${cmd.value===0?'ON':'OFF'}`;
+    case 'controlVariables': return `📊 변수 [${cmd.startId}] ${['=','+=','-=','*=','/=','%='][cmd.operationType]} ${cmd.value}`;
+    case 'conditionalBranch': return `🔀 조건: 스위치[${cmd.switchId}] == ${cmd.switchValue===0?'ON':'OFF'}`;
+    case 'transferPlayer': return `🚪 장소 이동 → 맵${cmd.mapId} (${cmd.x},${cmd.y})`;
+    case 'fadeout': return '⬛ 화면 페이드아웃';
+    case 'fadein': return '⬜ 화면 페이드인';
+    case 'wait': return `⏳ 대기 ${cmd.frames}프레임 (${(cmd.frames/60).toFixed(1)}초)`;
+    case 'shakeScreen': return `📳 화면 흔들기 (강도:${cmd.power})`;
+    case 'playBgm': return `🎵 BGM: ${cmd.name || '(없음)'}`;
+    case 'playSe': return `🔊 SE: ${cmd.name || '(없음)'}`;
+    case 'battleProcessing': return `⚔️ 전투: ${TROOPS.find(t=>t.id===cmd.troopId)?.name || cmd.troopId}`;
+    case 'comment': return `📝 ${cmd.text.substring(0,30) || '(주석)'}`;
+    case 'label': return `🏷 라벨: ${cmd.name}`;
+    case 'jumpToLabel': return `↩ 이동: ${cmd.name}`;
+    case 'changeItems': return `🎒 아이템: ${ITEMS.find(i=>i.id===cmd.itemId)?.name||cmd.itemId} ${cmd.operation===0?'+':'-'}${cmd.value}`;
+    case 'changeGold': return `💰 소지금 ${cmd.operation===0?'+':'-'}${cmd.value}G`;
+    default: return cmd.type;
+  }
+}
+
+// ============================================================
+// EDITOR UI
+// ============================================================
+function renderCmdList() {
+  const el = document.getElementById('cmd-list');
+  el.innerHTML = '';
+  commands.forEach((cmd, idx) => {
+    const div = document.createElement('div');
+    div.className = 'cmd-item' + (idx === selectedIdx ? ' selected' : '');
+    div.onclick = () => selectCmd(idx);
+    div.innerHTML = `
+      <span class="cmd-text">${cmdDisplayText(cmd)}</span>
+      <span class="cmd-actions">
+        <button class="btn small" onclick="event.stopPropagation();moveCmd(${idx},-1)" title="위로">▲</button>
+        <button class="btn small" onclick="event.stopPropagation();moveCmd(${idx},1)" title="아래로">▼</button>
+        <button class="btn small" onclick="event.stopPropagation();duplicateCmd(${idx})" title="복제">📋</button>
+        <button class="btn small" onclick="event.stopPropagation();deleteCmd(${idx})" title="삭제" style="color:var(--accent)">✕</button>
+      </span>`;
+    el.appendChild(div);
+  });
+  // end marker
+  const endDiv = document.createElement('div');
+  endDiv.className = 'cmd-item';
+  endDiv.style.color = 'var(--text-dim)';
+  endDiv.style.fontStyle = 'italic';
+  endDiv.innerHTML = '<span class="cmd-icon">◇</span><span class="cmd-text">이벤트 끝</span>';
+  el.appendChild(endDiv);
+}
+
+function selectCmd(idx) {
+  selectedIdx = idx;
+  insertAfterIdx = idx;
+  renderCmdList();
+  renderProps();
+}
+
+function moveCmd(idx, dir) {
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= commands.length) return;
+  [commands[idx], commands[newIdx]] = [commands[newIdx], commands[idx]];
+  if (selectedIdx === idx) selectedIdx = newIdx;
+  else if (selectedIdx === newIdx) selectedIdx = idx;
+  renderCmdList();
+}
+
+function duplicateCmd(idx) {
+  const clone = JSON.parse(JSON.stringify(commands[idx]));
+  clone.id = newId();
+  commands.splice(idx + 1, 0, clone);
+  selectedIdx = idx + 1;
+  renderCmdList();
+  renderProps();
+}
+
+function deleteCmd(idx) {
+  commands.splice(idx, 1);
+  if (selectedIdx >= commands.length) selectedIdx = commands.length - 1;
+  renderCmdList();
+  renderProps();
+}
+
+// ============================================================
+// PROPERTIES PANEL
+// ============================================================
+function renderProps() {
+  const el = document.getElementById('props-content');
+  if (selectedIdx < 0 || selectedIdx >= commands.length) {
+    el.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:20px 0;text-align:center">커맨드를 선택하면 여기에 속성이 표시됩니다</p>';
+    return;
+  }
+  const cmd = commands[selectedIdx];
+  let html = '';
+
+  switch(cmd.type) {
+    case 'showText':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">페이스칩</label>
+          <div class="face-picker">
+            <div class="face-preview" onclick="openFacePicker(${selectedIdx})">
+              ${cmd.faceName ? `<canvas width="72" height="72" id="prop-face-preview"></canvas>` : '<div class="face-none">없음</div>'}
+            </div>
+            <div style="font-size:12px;color:var(--text-dim)">
+              ${cmd.faceName ? `${cmd.faceName} [${cmd.faceIndex}]` : '클릭하여 선택'}
+            </div>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">배경</label>
+          <select class="prop-input" onchange="updateProp('background',+this.value)">
+            <option value="0" ${cmd.background===0?'selected':''}>윈도우</option>
+            <option value="1" ${cmd.background===1?'selected':''}>어둡게</option>
+            <option value="2" ${cmd.background===2?'selected':''}>투명</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">위치</label>
+          <select class="prop-input" onchange="updateProp('positionType',+this.value)">
+            <option value="0" ${cmd.positionType===0?'selected':''}>상단</option>
+            <option value="1" ${cmd.positionType===1?'selected':''}>중앙</option>
+            <option value="2" ${cmd.positionType===2?'selected':''}>하단</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">텍스트 (줄바꿈으로 구분, 최대 4줄)</label>
+          <textarea class="prop-input" rows="4" oninput="updateTextLines(this.value)"
+            placeholder="대화 내용을 입력하세요...">${cmd.lines.join('\n')}</textarea>
+        </div>`;
+      break;
+
+    case 'showChoices':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">선택지 (최대 6개)</label>
+          ${cmd.choices.map((c,i) => `
+            <div style="display:flex;gap:4px;margin-bottom:4px">
+              <input class="prop-input" value="${escHtml(c)}" onchange="updateChoice(${i},this.value)" style="flex:1" placeholder="선택지 ${i+1}">
+              ${cmd.choices.length > 2 ? `<button class="btn small" onclick="removeChoice(${i})" style="color:var(--accent)">✕</button>` : ''}
+            </div>`).join('')}
+          ${cmd.choices.length < 6 ? `<button class="btn small" onclick="addChoice()">+ 선택지 추가</button>` : ''}
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">취소 시 동작</label>
+          <select class="prop-input" onchange="updateProp('cancelType',+this.value)">
+            <option value="-2" ${cmd.cancelType===-2?'selected':''}>취소 불가</option>
+            <option value="-1" ${cmd.cancelType===-1?'selected':''}>분기</option>
+            ${cmd.choices.map((c,i) => `<option value="${i}" ${cmd.cancelType===i?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </div>`;
+      break;
+
+    case 'showScrollingText':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">스크롤 속도</label>
+          <input type="number" class="prop-input" value="${cmd.speed}" min="1" max="8" onchange="updateProp('speed',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">빨리감기 허용</label>
+          <select class="prop-input" onchange="updateProp('noFast',this.value==='true')">
+            <option value="false" ${!cmd.noFast?'selected':''}>예</option>
+            <option value="true" ${cmd.noFast?'selected':''}>아니오</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">텍스트</label>
+          <textarea class="prop-input" rows="8" oninput="updateProp('lines',this.value.split('\\n'))">${cmd.lines.join('\n')}</textarea>
+        </div>`;
+      break;
+
+    case 'controlSwitches':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">스위치 번호 (시작)</label>
+          <input type="number" class="prop-input" value="${cmd.startId}" min="1" onchange="updateProp('startId',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">스위치 번호 (끝)</label>
+          <input type="number" class="prop-input" value="${cmd.endId}" min="1" onchange="updateProp('endId',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">값</label>
+          <select class="prop-input" onchange="updateProp('value',+this.value)">
+            <option value="0" ${cmd.value===0?'selected':''}>ON</option>
+            <option value="1" ${cmd.value===1?'selected':''}>OFF</option>
+          </select>
+        </div>`;
+      break;
+
+    case 'controlVariables':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">변수 번호</label>
+          <input type="number" class="prop-input" value="${cmd.startId}" min="1" onchange="updateProp('startId',+this.value);updateProp('endId',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">조작</label>
+          <select class="prop-input" onchange="updateProp('operationType',+this.value)">
+            <option value="0" ${cmd.operationType===0?'selected':''}>대입 (=)</option>
+            <option value="1" ${cmd.operationType===1?'selected':''}>가산 (+=)</option>
+            <option value="2" ${cmd.operationType===2?'selected':''}>감산 (-=)</option>
+            <option value="3" ${cmd.operationType===3?'selected':''}>곱셈 (*=)</option>
+            <option value="4" ${cmd.operationType===4?'selected':''}>나눗셈 (/=)</option>
+            <option value="5" ${cmd.operationType===5?'selected':''}>나머지 (%=)</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">값 (상수)</label>
+          <input type="number" class="prop-input" value="${cmd.value}" onchange="updateProp('value',+this.value)">
+        </div>`;
+      break;
+
+    case 'conditionalBranch':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">조건 타입</label>
+          <select class="prop-input" onchange="updateProp('condType',+this.value);renderProps()">
+            <option value="0" ${cmd.condType===0?'selected':''}>스위치</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">스위치 번호</label>
+          <input type="number" class="prop-input" value="${cmd.switchId}" min="1" onchange="updateProp('switchId',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">조건</label>
+          <select class="prop-input" onchange="updateProp('switchValue',+this.value)">
+            <option value="0" ${cmd.switchValue===0?'selected':''}>ON</option>
+            <option value="1" ${cmd.switchValue===1?'selected':''}>OFF</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">그 외의 경우 (Else)</label>
+          <select class="prop-input" onchange="updateProp('hasElse',this.value==='true')">
+            <option value="true" ${cmd.hasElse?'selected':''}>있음</option>
+            <option value="false" ${!cmd.hasElse?'selected':''}>없음</option>
+          </select>
+        </div>
+        <p style="font-size:11px;color:var(--warning);margin-top:8px">※ 분기 내부 커맨드는 JSON에서 직접 편집하세요</p>`;
+      break;
+
+    case 'transferPlayer':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">맵 ID</label>
+          <input type="number" class="prop-input" value="${cmd.mapId}" min="1" onchange="updateProp('mapId',+this.value)">
+        </div>
+        <div class="prop-group" style="display:flex;gap:8px">
+          <div style="flex:1"><label class="prop-label">X</label>
+            <input type="number" class="prop-input" value="${cmd.x}" min="0" onchange="updateProp('x',+this.value)"></div>
+          <div style="flex:1"><label class="prop-label">Y</label>
+            <input type="number" class="prop-input" value="${cmd.y}" min="0" onchange="updateProp('y',+this.value)"></div>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">방향</label>
+          <select class="prop-input" onchange="updateProp('direction',+this.value)">
+            <option value="0" ${cmd.direction===0?'selected':''}>그대로</option>
+            <option value="2" ${cmd.direction===2?'selected':''}>아래</option>
+            <option value="4" ${cmd.direction===4?'selected':''}>왼쪽</option>
+            <option value="6" ${cmd.direction===6?'selected':''}>오른쪽</option>
+            <option value="8" ${cmd.direction===8?'selected':''}>위</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">페이드</label>
+          <select class="prop-input" onchange="updateProp('fadeType',+this.value)">
+            <option value="0" ${cmd.fadeType===0?'selected':''}>검정</option>
+            <option value="1" ${cmd.fadeType===1?'selected':''}>흰색</option>
+            <option value="2" ${cmd.fadeType===2?'selected':''}>없음</option>
+          </select>
+        </div>`;
+      break;
+
+    case 'wait':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">대기 프레임 (60 = 1초)</label>
+          <input type="number" class="prop-input" value="${cmd.frames}" min="1" onchange="updateProp('frames',+this.value)">
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${(cmd.frames/60).toFixed(2)}초</div>
+        </div>`;
+      break;
+
+    case 'shakeScreen':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">강도 (1-9)</label>
+          <input type="number" class="prop-input" value="${cmd.power}" min="1" max="9" onchange="updateProp('power',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">속도 (1-9)</label>
+          <input type="number" class="prop-input" value="${cmd.speed}" min="1" max="9" onchange="updateProp('speed',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">지속 프레임</label>
+          <input type="number" class="prop-input" value="${cmd.duration}" min="1" onchange="updateProp('duration',+this.value)">
+        </div>`;
+      break;
+
+    case 'playBgm':
+    case 'playSe':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">파일명 (확장자 제외)</label>
+          <input class="prop-input" value="${escHtml(cmd.name)}" onchange="updateProp('name',this.value)" placeholder="예: Battle1">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">볼륨 (0-100)</label>
+          <input type="number" class="prop-input" value="${cmd.volume}" min="0" max="100" onchange="updateProp('volume',+this.value)">
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">피치 (50-150)</label>
+          <input type="number" class="prop-input" value="${cmd.pitch}" min="50" max="150" onchange="updateProp('pitch',+this.value)">
+        </div>`;
+      break;
+
+    case 'battleProcessing':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">적 그룹</label>
+          <select class="prop-input" onchange="updateProp('troopId',+this.value)">
+            ${TROOPS.map(t => `<option value="${t.id}" ${cmd.troopId===t.id?'selected':''}>${t.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">도주 허용</label>
+          <select class="prop-input" onchange="updateProp('canEscape',this.value==='true')">
+            <option value="true" ${cmd.canEscape?'selected':''}>예</option>
+            <option value="false" ${!cmd.canEscape?'selected':''}>아니오</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">패배 허용</label>
+          <select class="prop-input" onchange="updateProp('canLose',this.value==='true')">
+            <option value="true" ${cmd.canLose?'selected':''}>예</option>
+            <option value="false" ${!cmd.canLose?'selected':''}>아니오</option>
+          </select>
+        </div>`;
+      break;
+
+    case 'comment':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">주석</label>
+          <textarea class="prop-input" rows="4" oninput="updateProp('text',this.value)" placeholder="메모 입력...">${escHtml(cmd.text)}</textarea>
+        </div>`;
+      break;
+
+    case 'label':
+    case 'jumpToLabel':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">라벨 이름</label>
+          <input class="prop-input" value="${escHtml(cmd.name)}" onchange="updateProp('name',this.value)" placeholder="라벨명 입력">
+        </div>`;
+      break;
+
+    case 'changeItems':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">아이템</label>
+          <select class="prop-input" onchange="updateProp('itemId',+this.value)">
+            ${ITEMS.map(i => `<option value="${i.id}" ${cmd.itemId===i.id?'selected':''}>${i.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">증가/감소</label>
+          <select class="prop-input" onchange="updateProp('operation',+this.value)">
+            <option value="0" ${cmd.operation===0?'selected':''}>증가</option>
+            <option value="1" ${cmd.operation===1?'selected':''}>감소</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">수량</label>
+          <input type="number" class="prop-input" value="${cmd.value}" min="1" onchange="updateProp('value',+this.value)">
+        </div>`;
+      break;
+
+    case 'changeGold':
+      html = `
+        <div class="prop-group">
+          <label class="prop-label">증가/감소</label>
+          <select class="prop-input" onchange="updateProp('operation',+this.value)">
+            <option value="0" ${cmd.operation===0?'selected':''}>증가</option>
+            <option value="1" ${cmd.operation===1?'selected':''}>감소</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label class="prop-label">금액</label>
+          <input type="number" class="prop-input" value="${cmd.value}" min="0" onchange="updateProp('value',+this.value)">
+        </div>`;
+      break;
+  }
+
+  el.innerHTML = html;
+
+  // Draw face preview if needed
+  if (cmd.type === 'showText' && cmd.faceName) {
+    const canvas = document.getElementById('prop-face-preview');
+    if (canvas) drawFace(canvas, cmd.faceName, cmd.faceIndex);
+  }
+}
+
+function updateProp(key, val) {
+  if (selectedIdx < 0 || selectedIdx >= commands.length) return;
+  commands[selectedIdx][key] = val;
+  renderCmdList();
+}
+
+function updateTextLines(text) {
+  if (selectedIdx < 0) return;
+  commands[selectedIdx].lines = text.split('\n').slice(0, 4);
+  renderCmdList();
+}
+
+function updateChoice(idx, val) {
+  if (selectedIdx < 0) return;
+  commands[selectedIdx].choices[idx] = val;
+  // Sync branches array length
+  while (commands[selectedIdx].branches.length < commands[selectedIdx].choices.length) {
+    commands[selectedIdx].branches.push([]);
+  }
+  renderCmdList();
+}
+
+function addChoice() {
+  if (selectedIdx < 0) return;
+  const cmd = commands[selectedIdx];
+  if (cmd.choices.length >= 6) return;
+  cmd.choices.push(`선택지 ${cmd.choices.length + 1}`);
+  cmd.branches.push([]);
+  renderCmdList();
+  renderProps();
+}
+
+function removeChoice(idx) {
+  if (selectedIdx < 0) return;
+  const cmd = commands[selectedIdx];
+  if (cmd.choices.length <= 2) return;
+  cmd.choices.splice(idx, 1);
+  cmd.branches.splice(idx, 1);
+  renderCmdList();
+  renderProps();
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ============================================================
+// COMMAND PICKER
+// ============================================================
+function showCmdPicker() {
+  document.getElementById('cmd-picker-modal').classList.add('active');
+}
+function closeCmdPicker() {
+  document.getElementById('cmd-picker-modal').classList.remove('active');
+}
+function addCmd(type) {
+  const cmd = createCmd(type);
+  const idx = insertAfterIdx >= 0 ? insertAfterIdx + 1 : commands.length;
+  commands.splice(idx, 0, cmd);
+  selectedIdx = idx;
+  insertAfterIdx = idx;
+  closeCmdPicker();
+  renderCmdList();
+  renderProps();
+  // Load face if needed
+  if (type === 'showText') {
+    preloadAllFaces();
+  }
+}
+
+// ============================================================
+// FACE PICKER
+// ============================================================
+let facesLoaded = false;
+async function preloadAllFaces() {
+  if (facesLoaded) return;
+  await Promise.all(FACE_SHEETS.map(s => loadFaceSheet(s)));
+  facesLoaded = true;
+}
+
+async function openFacePicker(cmdIdx) {
+  currentFaceCallback = cmdIdx;
+  await preloadAllFaces();
+  const container = document.getElementById('face-grid-container');
+  container.innerHTML = '';
+  for (const sheet of FACE_SHEETS) {
+    const img = faceImages[sheet];
+    if (!img) continue;
+    const sec = document.createElement('div');
+    sec.className = 'face-sheet-section';
+    sec.innerHTML = `<div class="sheet-name">${sheet}</div>`;
+    const grid = document.createElement('div');
+    grid.className = 'face-grid';
+    for (let i = 0; i < 8; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'face-cell';
+      const c = document.createElement('canvas');
+      c.width = 72; c.height = 72;
+      const ctx = c.getContext('2d');
+      const sx = (i % 4) * 144, sy = Math.floor(i / 4) * 144;
+      ctx.drawImage(img, sx, sy, 144, 144, 0, 0, 72, 72);
+      cell.appendChild(c);
+      cell.onclick = () => selectFace(sheet, i);
+      // Highlight current selection
+      if (commands[cmdIdx]?.faceName === sheet && commands[cmdIdx]?.faceIndex === i) {
+        cell.classList.add('selected');
+      }
+      grid.appendChild(cell);
+    }
+    sec.appendChild(grid);
+    container.appendChild(sec);
+  }
+  document.getElementById('face-picker-modal').classList.add('active');
+}
+
+function selectFace(sheet, index) {
+  if (currentFaceCallback !== null && commands[currentFaceCallback]) {
+    commands[currentFaceCallback].faceName = sheet;
+    commands[currentFaceCallback].faceIndex = index;
+    renderCmdList();
+    renderProps();
+  }
+  closeFacePicker();
+}
+
+function closeFacePicker() {
+  document.getElementById('face-picker-modal').classList.remove('active');
+  currentFaceCallback = null;
+}
+
+// ============================================================
+// PREVIEW
+// ============================================================
+function getPreviewableCommands() {
+  // Flatten for preview: return only visually previewable commands
+  return commands.filter(c => ['showText','showChoices','showScrollingText','fadeout','fadein','wait'].includes(c.type));
+}
+
+function previewReset() {
+  previewState.step = -1;
+  previewState.autoPlay = false;
+  hidePreview();
+  updatePreviewStep();
+}
+
+function previewPrev() {
+  const pCmds = getPreviewableCommands();
+  if (previewState.step > 0) {
+    previewState.step--;
+    showPreviewStep(pCmds[previewState.step]);
+  } else {
+    previewState.step = -1;
+    hidePreview();
+  }
+  updatePreviewStep();
+}
+
+function previewNext() {
+  const pCmds = getPreviewableCommands();
+  if (previewState.step < pCmds.length - 1) {
+    previewState.step++;
+    showPreviewStep(pCmds[previewState.step]);
+  } else {
+    previewState.autoPlay = false;
+  }
+  updatePreviewStep();
+}
+
+function previewAutoPlay() {
+  previewState.autoPlay = !previewState.autoPlay;
+  document.getElementById('btn-autoplay').style.background = previewState.autoPlay ? 'var(--accent)' : '';
+  if (previewState.autoPlay) autoStep();
+}
+
+function autoStep() {
+  if (!previewState.autoPlay) return;
+  const pCmds = getPreviewableCommands();
+  if (previewState.step >= pCmds.length - 1) {
+    previewState.autoPlay = false;
+    document.getElementById('btn-autoplay').style.background = '';
+    return;
+  }
+  previewNext();
+  const cmd = pCmds[previewState.step];
+  const delay = cmd?.type === 'wait' ? Math.max(500, (cmd.frames / 60) * 1000) : 1500;
+  setTimeout(autoStep, delay);
+}
+
+function updatePreviewStep() {
+  const pCmds = getPreviewableCommands();
+  const el = document.getElementById('preview-step');
+  if (previewState.step < 0) {
+    el.textContent = `대기 중 (${pCmds.length}개 표시 가능)`;
+  } else {
+    el.textContent = `${previewState.step + 1} / ${pCmds.length}`;
+  }
+}
+
+function hidePreview() {
+  document.getElementById('msg-window').style.display = 'none';
+  document.getElementById('choice-window').style.display = 'none';
+  document.getElementById('game-screen').style.background = '#222';
+}
+
+async function showPreviewStep(cmd) {
+  if (!cmd) return;
+  const msgWin = document.getElementById('msg-window');
+  const choiceWin = document.getElementById('choice-window');
+  const gameScreen = document.getElementById('game-screen');
+
+  // Reset
+  choiceWin.style.display = 'none';
+
+  switch(cmd.type) {
+    case 'showText': {
+      await preloadAllFaces();
+      // Position
+      msgWin.className = 'msg-window';
+      msgWin.classList.add(['top','middle','bottom'][cmd.positionType]);
+      // Background
+      if (cmd.background === 1) msgWin.classList.add('bg-dim');
+      else if (cmd.background === 2) msgWin.classList.add('bg-transparent');
+      // Face
+      const faceEl = document.getElementById('msg-face');
+      if (cmd.faceName && faceImages[cmd.faceName]) {
+        faceEl.style.display = 'block';
+        drawFace(faceEl.querySelector('canvas'), cmd.faceName, cmd.faceIndex);
+      } else {
+        faceEl.style.display = 'none';
+      }
+      // Text
+      document.getElementById('msg-text').textContent = cmd.lines.join('\n');
+      msgWin.style.display = 'block';
+      break;
+    }
+    case 'showChoices': {
+      // Find the previous showText command to keep it visible
+      const pCmds = getPreviewableCommands();
+      const prevText = previewState.step > 0 ? pCmds.slice(0, previewState.step).reverse().find(c => c.type === 'showText') : null;
+      if (prevText) {
+        await showPreviewStep(prevText);
+      }
+      // Show choices
+      const listEl = document.getElementById('choice-list');
+      listEl.innerHTML = cmd.choices.map((c, i) =>
+        `<div class="choice-item ${i===0?'highlighted':''}" onmouseenter="highlightChoice(this)">${i===0?'<span class="choice-cursor">▶</span>':'<span class="choice-cursor" style="visibility:hidden">▶</span>'}${escHtml(c)}</div>`
+      ).join('');
+      // Position choice window above message
+      const msgPos = ['top','middle','bottom'][commands.find(c=>c.type==='showText')?.positionType ?? 2];
+      choiceWin.style.bottom = msgPos === 'bottom' ? '176px' : 'auto';
+      choiceWin.style.top = msgPos === 'top' ? '176px' : (msgPos === 'middle' ? '400px' : 'auto');
+      choiceWin.style.display = 'block';
+      break;
+    }
+    case 'fadeout': {
+      msgWin.style.display = 'none';
+      gameScreen.style.background = '#000';
+      break;
+    }
+    case 'fadein': {
+      gameScreen.style.background = '#222';
+      break;
+    }
+    case 'wait': {
+      // Keep current state, just show wait indicator
+      break;
+    }
+    case 'showScrollingText': {
+      msgWin.style.display = 'none';
+      // Simple representation
+      document.getElementById('msg-text').textContent = cmd.lines.join('\n');
+      msgWin.className = 'msg-window middle bg-transparent';
+      msgWin.style.display = 'block';
+      document.getElementById('msg-face').style.display = 'none';
+      break;
+    }
+  }
+}
+
+function highlightChoice(el) {
+  el.parentElement.querySelectorAll('.choice-item').forEach(c => {
+    c.classList.remove('highlighted');
+    c.querySelector('.choice-cursor').style.visibility = 'hidden';
+  });
+  el.classList.add('highlighted');
+  el.querySelector('.choice-cursor').style.visibility = 'visible';
+}
+
+// ============================================================
+// JSON EXPORT
+// ============================================================
+function generateRmmzCommands(indent = 0) {
+  const result = [];
+  for (const cmd of commands) {
+    switch(cmd.type) {
+      case 'showText':
+        result.push({code:101, indent, parameters:[cmd.faceName, cmd.faceIndex, cmd.background, cmd.positionType]});
+        for (const line of cmd.lines) {
+          result.push({code:401, indent, parameters:[line]});
+        }
+        break;
+      case 'showChoices':
+        result.push({code:102, indent, parameters:[cmd.choices, cmd.cancelType, 0, 2, 0]});
+        for (let i = 0; i < cmd.choices.length; i++) {
+          result.push({code:402, indent, parameters:[i, cmd.choices[i]]});
+          result.push({code:0, indent: indent+1, parameters:[]});
+        }
+        if (cmd.cancelType === -1) {
+          result.push({code:403, indent, parameters:[]});
+          result.push({code:0, indent: indent+1, parameters:[]});
+        }
+        result.push({code:404, indent, parameters:[]});
+        break;
+      case 'showScrollingText':
+        result.push({code:105, indent, parameters:[cmd.speed, cmd.noFast]});
+        for (const line of cmd.lines) {
+          result.push({code:405, indent, parameters:[line]});
+        }
+        break;
+      case 'controlSwitches':
+        result.push({code:121, indent, parameters:[cmd.startId, cmd.endId, cmd.value]});
+        break;
+      case 'controlVariables':
+        result.push({code:122, indent, parameters:[cmd.startId, cmd.endId, cmd.operationType, cmd.operand, cmd.value]});
+        break;
+      case 'conditionalBranch':
+        result.push({code:111, indent, parameters:[cmd.condType, cmd.switchId, cmd.switchValue]});
+        result.push({code:0, indent: indent+1, parameters:[]});
+        if (cmd.hasElse) {
+          result.push({code:411, indent, parameters:[]});
+          result.push({code:0, indent: indent+1, parameters:[]});
+        }
+        result.push({code:412, indent, parameters:[]});
+        break;
+      case 'transferPlayer':
+        result.push({code:201, indent, parameters:[0, cmd.mapId, cmd.x, cmd.y, cmd.direction, cmd.fadeType]});
+        break;
+      case 'fadeout':
+        result.push({code:221, indent, parameters:[]});
+        break;
+      case 'fadein':
+        result.push({code:222, indent, parameters:[]});
+        break;
+      case 'wait':
+        result.push({code:230, indent, parameters:[cmd.frames]});
+        break;
+      case 'shakeScreen':
+        result.push({code:235, indent, parameters:[cmd.power, cmd.speed, cmd.duration, cmd.waitForCompletion]});
+        break;
+      case 'playBgm':
+        result.push({code:241, indent, parameters:[{name:cmd.name, volume:cmd.volume, pitch:cmd.pitch, pan:cmd.pan}]});
+        break;
+      case 'playSe':
+        result.push({code:250, indent, parameters:[{name:cmd.name, volume:cmd.volume, pitch:cmd.pitch, pan:cmd.pan}]});
+        break;
+      case 'battleProcessing':
+        result.push({code:301, indent, parameters:[0, cmd.troopId, cmd.canEscape, cmd.canLose]});
+        break;
+      case 'comment':
+        const cLines = cmd.text.split('\n');
+        result.push({code:108, indent, parameters:[cLines[0] || '']});
+        for (let i = 1; i < cLines.length; i++) {
+          result.push({code:408, indent, parameters:[cLines[i]]});
+        }
+        break;
+      case 'label':
+        result.push({code:118, indent, parameters:[cmd.name]});
+        break;
+      case 'jumpToLabel':
+        result.push({code:119, indent, parameters:[cmd.name]});
+        break;
+      case 'changeItems':
+        result.push({code:126, indent, parameters:[cmd.itemId, cmd.operation, cmd.operandType, cmd.value]});
+        break;
+      case 'changeGold':
+        result.push({code:125, indent, parameters:[cmd.operation, cmd.operandType, cmd.value]});
+        break;
+    }
+  }
+  // Terminator
+  result.push({code:0, indent:0, parameters:[]});
+  return result;
+}
+
+function generateFullEvent() {
+  const evName = document.getElementById('ev-name').value || 'EV001';
+  const trigger = +document.getElementById('ev-trigger').value;
+  const x = +document.getElementById('ev-x').value;
+  const y = +document.getElementById('ev-y').value;
+
+  return {
+    id: 1,
+    name: evName,
+    note: '',
+    pages: [{
+      conditions: {
+        actorId: 1, actorValid: false,
+        itemId: 1, itemValid: false,
+        selfSwitchCh: 'A', selfSwitchValid: false,
+        switch1Id: 1, switch1Valid: false,
+        switch2Id: 1, switch2Valid: false,
+        variableId: 1, variableValid: false, variableValue: 0
+      },
+      directionFix: false,
+      image: { tileId: 0, characterName: '', direction: 2, pattern: 1, characterIndex: 0 },
+      list: generateRmmzCommands(),
+      moveFrequency: 3,
+      moveRoute: { list: [{code:0,parameters:[]}], repeat: true, skippable: false, wait: false },
+      moveSpeed: 3,
+      moveType: 0,
+      priorityType: 1,
+      stepAnime: false,
+      through: false,
+      trigger: trigger,
+      walkAnime: true
+    }],
+    x: x,
+    y: y
+  };
+}
+
+function showExport() {
+  const json = JSON.stringify(generateFullEvent(), null, 2);
+  document.getElementById('export-json').value = json;
+  document.getElementById('export-panel').classList.add('active');
+}
+
+function closeExport() {
+  document.getElementById('export-panel').classList.remove('active');
+}
+
+function copyExportCommands() {
+  const json = JSON.stringify(generateRmmzCommands(), null, 2);
+  navigator.clipboard.writeText(json).then(() => showToast('커맨드 JSON이 클립보드에 복사되었습니다'));
+}
+
+function copyExportFull() {
+  const json = JSON.stringify(generateFullEvent(), null, 2);
+  navigator.clipboard.writeText(json).then(() => showToast('전체 이벤트 JSON이 클립보드에 복사되었습니다'));
+}
+
+function importJSON() {
+  const input = prompt('이벤트 JSON을 붙여넣으세요 (전체 이벤트 또는 커맨드 배열):');
+  if (!input) return;
+  try {
+    const data = JSON.parse(input);
+    let cmdList;
+    if (Array.isArray(data)) {
+      cmdList = data;
+    } else if (data.pages && data.pages[0]) {
+      cmdList = data.pages[0].list;
+      if (data.name) document.getElementById('ev-name').value = data.name;
+      if (data.pages[0].trigger !== undefined) document.getElementById('ev-trigger').value = data.pages[0].trigger;
+      if (data.x !== undefined) document.getElementById('ev-x').value = data.x;
+      if (data.y !== undefined) document.getElementById('ev-y').value = data.y;
+    } else {
+      throw new Error('Invalid format');
+    }
+    importCommandList(cmdList);
+    showToast('JSON을 불러왔습니다');
+  } catch(e) {
+    alert('JSON 파싱 실패: ' + e.message);
+  }
+}
+
+function importCommandList(list) {
+  commands = [];
+  let i = 0;
+  while (i < list.length) {
+    const c = list[i];
+    switch(c.code) {
+      case 101: { // Show Text
+        const cmd = createCmd('showText');
+        cmd.faceName = c.parameters[0] || '';
+        cmd.faceIndex = c.parameters[1] || 0;
+        cmd.background = c.parameters[2] || 0;
+        cmd.positionType = c.parameters[3] || 2;
+        cmd.lines = [];
+        i++;
+        while (i < list.length && list[i].code === 401) {
+          cmd.lines.push(list[i].parameters[0]);
+          i++;
+        }
+        if (cmd.lines.length === 0) cmd.lines = [''];
+        commands.push(cmd);
+        continue;
+      }
+      case 102: { // Show Choices
+        const cmd = createCmd('showChoices');
+        cmd.choices = c.parameters[0] || [];
+        cmd.cancelType = c.parameters[1] || -2;
+        cmd.branches = cmd.choices.map(() => []);
+        commands.push(cmd);
+        i++;
+        // Skip through branch contents until 404
+        let depth = 0;
+        while (i < list.length && !(list[i].code === 404 && depth === 0)) {
+          if (list[i].code === 102) depth++;
+          if (list[i].code === 404) depth--;
+          i++;
+        }
+        i++; // skip 404
+        continue;
+      }
+      case 105: { // Scrolling Text
+        const cmd = createCmd('showScrollingText');
+        cmd.speed = c.parameters[0] || 2;
+        cmd.noFast = c.parameters[1] || false;
+        cmd.lines = [];
+        i++;
+        while (i < list.length && list[i].code === 405) {
+          cmd.lines.push(list[i].parameters[0]);
+          i++;
+        }
+        commands.push(cmd);
+        continue;
+      }
+      case 108: { // Comment
+        const cmd = createCmd('comment');
+        cmd.text = c.parameters[0] || '';
+        i++;
+        while (i < list.length && list[i].code === 408) {
+          cmd.text += '\n' + list[i].parameters[0];
+          i++;
+        }
+        commands.push(cmd);
+        continue;
+      }
+      case 111: { // Conditional Branch
+        const cmd = createCmd('conditionalBranch');
+        cmd.condType = c.parameters[0] || 0;
+        cmd.switchId = c.parameters[1] || 1;
+        cmd.switchValue = c.parameters[2] || 0;
+        commands.push(cmd);
+        i++;
+        continue;
+      }
+      case 118: { const cmd = createCmd('label'); cmd.name = c.parameters[0]||''; commands.push(cmd); break; }
+      case 119: { const cmd = createCmd('jumpToLabel'); cmd.name = c.parameters[0]||''; commands.push(cmd); break; }
+      case 121: { const cmd = createCmd('controlSwitches'); cmd.startId=c.parameters[0]; cmd.endId=c.parameters[1]; cmd.value=c.parameters[2]; commands.push(cmd); break; }
+      case 122: { const cmd = createCmd('controlVariables'); cmd.startId=c.parameters[0]; cmd.endId=c.parameters[1]; cmd.operationType=c.parameters[2]; cmd.operand=c.parameters[3]; cmd.value=c.parameters[4]; commands.push(cmd); break; }
+      case 125: { const cmd = createCmd('changeGold'); cmd.operation=c.parameters[0]; cmd.operandType=c.parameters[1]; cmd.value=c.parameters[2]; commands.push(cmd); break; }
+      case 126: { const cmd = createCmd('changeItems'); cmd.itemId=c.parameters[0]; cmd.operation=c.parameters[1]; cmd.operandType=c.parameters[2]; cmd.value=c.parameters[3]; commands.push(cmd); break; }
+      case 201: { const cmd = createCmd('transferPlayer'); cmd.mapId=c.parameters[1]; cmd.x=c.parameters[2]; cmd.y=c.parameters[3]; cmd.direction=c.parameters[4]||0; cmd.fadeType=c.parameters[5]||0; commands.push(cmd); break; }
+      case 221: commands.push(createCmd('fadeout')); break;
+      case 222: commands.push(createCmd('fadein')); break;
+      case 230: { const cmd = createCmd('wait'); cmd.frames=c.parameters[0]||60; commands.push(cmd); break; }
+      case 235: { const cmd = createCmd('shakeScreen'); cmd.power=c.parameters[0]; cmd.speed=c.parameters[1]; cmd.duration=c.parameters[2]; commands.push(cmd); break; }
+      case 241: { const cmd = createCmd('playBgm'); const p=c.parameters[0]||{}; cmd.name=p.name||''; cmd.volume=p.volume||90; cmd.pitch=p.pitch||100; commands.push(cmd); break; }
+      case 250: { const cmd = createCmd('playSe'); const p=c.parameters[0]||{}; cmd.name=p.name||''; cmd.volume=p.volume||90; cmd.pitch=p.pitch||100; commands.push(cmd); break; }
+      case 301: { const cmd = createCmd('battleProcessing'); cmd.troopId=c.parameters[1]||1; cmd.canEscape=c.parameters[2]!==false; cmd.canLose=c.parameters[3]===true; commands.push(cmd); break; }
+      default: break; // skip unknown codes
+    }
+    i++;
+  }
+  selectedIdx = commands.length > 0 ? 0 : -1;
+  renderCmdList();
+  renderProps();
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ============================================================
+// KEYBOARD SHORTCUTS
+// ============================================================
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); previewNext(); }
+  if (e.code === 'Backspace') { e.preventDefault(); previewPrev(); }
+  if (e.code === 'Escape') {
+    closeCmdPicker(); closeFacePicker(); closeExport();
+  }
+  if (e.code === 'Delete' && selectedIdx >= 0) { deleteCmd(selectedIdx); }
+});
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) {
+      el.classList.remove('active');
+    }
+  });
+});
+document.getElementById('export-panel').addEventListener('click', e => {
+  if (e.target.id === 'export-panel') closeExport();
+});
+
+// ============================================================
+// PREVIEW SCALING
+// ============================================================
+function updatePreviewScale() {
+  const container = document.getElementById('preview-container');
+  const screen = document.getElementById('game-screen');
+  const cw = container.clientWidth - 40;
+  const ch = container.clientHeight - 40;
+  const scale = Math.min(cw / 816, ch / 624, 1);
+  screen.style.setProperty('--preview-scale', scale);
+}
+window.addEventListener('resize', updatePreviewScale);
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  await preloadAllFaces();
+  renderCmdList();
+  updatePreviewStep();
+  updatePreviewScale();
+}
+init();
+</script>
+</body>
+</html>
