@@ -12305,6 +12305,9 @@ const GitHubAdapter = {
             },
         };
 
+        // Expose UI to global scope for inline onclick handlers
+        window.UI = UI;
+
         // Initialize
         document.getElementById('projectInput').addEventListener('change', loadProjectFolder);
 
