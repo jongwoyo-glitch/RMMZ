@@ -97,13 +97,19 @@
                     <div style="display:flex; flex:1; overflow:hidden;">
                         <div class="dbListPanel">
                             <input type="text" id="dbSearch" placeholder="검색..." onkeyup="UI.dbSearch()" style="width:100%; box-sizing:border-box; margin-bottom:8px; padding:6px 8px; background:#1a1a2e; border:1px solid #16213e; color:#eee; border-radius:3px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; padding:2px 4px; font-size:0.8em; color:#aaa;">
+                                <span>최대 개수: <span id="dbMaxCount" style="color:#e0e0e0;">0</span></span>
+                                <button class="iconBtn" onclick="UI.dbChangeMax()" style="padding:2px 8px; font-size:0.85em;">변경</button>
+                            </div>
                             <ul class="itemList" id="dbList" style="flex:1; overflow-y:auto; margin:0; padding:0;"></ul>
                             <div style="display:flex; gap:5px; margin-top:8px;">
                                 <button class="iconBtn" onclick="UI.dbAddItem()" style="flex:1;">+ 추가</button>
                                 <button class="iconBtn danger" onclick="UI.dbDeleteItem()" style="width:50px;">삭제</button>
                             </div>
                         </div>
-                        <div class="dbResizer" id="dbResizer"></div>
+                        <div class="dbResizer" id="dbResizer">
+                            <button id="dbResizerToggle" onclick="UI.toggleResizeMode()" style="position:absolute; top:50%; transform:translateY(-50%); width:16px; height:40px; background:#0f3460; border:1px solid #16213e; border-radius:3px; color:#ccc; font-size:10px; cursor:pointer; padding:0; z-index:10; display:flex; align-items:center; justify-content:center;" title="리사이즈 모드 전환">⇔</button>
+                        </div>
                         <div class="centerPanel" style="overflow-y:auto;position:relative;">
                             <div id="dbFormContainer" class="formPanel"></div>
                             <div class="dbFormResizer" id="dbFormResizer">

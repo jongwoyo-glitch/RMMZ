@@ -804,16 +804,20 @@ const GitHubAdapter = {
                 const data = State.database[State.currentDBTab] || [];
                 const list = document.getElementById('dbList');
                 list.innerHTML = '';
-                if (!Array.isArray(data)) return; // system is object, skip
+                if (!Array.isArray(data)) return;
+                const showNum = ['actors','classes','skills','items','weapons','armors'].includes(State.currentDBTab);
                 data.forEach((item, id) => {
                     if (!item) return;
                     const li = document.createElement('li');
-                    li.textContent = item.name || item.id || '#' + id;
+                    const name = item.name || item.id || '#' + id;
+                    li.textContent = showNum ? id + '. ' + name : name;
                     li.dataset.id = id;
                     li.onclick = () => UI.dbSelectItem(id);
                     if (State.currentDBItem === id) li.classList.add('selected');
                     list.appendChild(li);
                 });
+                const maxEl = document.getElementById('dbMaxCount');
+                if (maxEl) maxEl.textContent = data.length;
             },
 
             dbSelectItem(id) {
@@ -849,6 +853,32 @@ const GitHubAdapter = {
                 State.currentDBItem = null;
                 UI.refreshDB();
                 document.getElementById('dbFormContainer').innerHTML = '';
+            },
+
+            dbChangeMax() {
+                const tab = State.currentDBTab;
+                const data = State.database[tab] || [];
+                const cur = data.length;
+                const input = prompt('최대 개수를 입력하세요 (현재: ' + cur + ')', cur);
+                if (input === null) return;
+                const newMax = parseInt(input);
+                if (isNaN(newMax) || newMax < 1) { alert('1 이상의 숫자를 입력하세요.'); return; }
+                if (newMax > cur) {
+                    for (let i = cur; i < newMax; i++) { data.push({ id: i, name: '' }); }
+                } else if (newMax < cur) {
+                    if (!confirm('현재 ' + cur + '개에서 ' + newMax + '개로 줄입니다. 뒤의 ' + (cur - newMax) + '개가 삭제됩니다. 계속하시겠습니까?')) return;
+                    data.length = newMax;
+                }
+                if (State.currentDBItem >= newMax) State.currentDBItem = newMax - 1;
+                UI.refreshDB(); UI.renderDBForm();
+            },
+
+            toggleResizeMode() {
+                const btn = document.getElementById('dbResizerToggle');
+                if (!btn) return;
+                State._resizeLocked = !State._resizeLocked;
+                btn.style.background = State._resizeLocked ? '#e74c6f' : '#0f3460';
+                btn.title = State._resizeLocked ? '리사이즈 모드 해제' : '리사이즈 모드 전환';
             },
 
             renderDBForm() {
@@ -6140,6 +6170,7 @@ const GitHubAdapter = {
                 const mapData = State.maps[State.currentMap];
                 const w = mapData.width || 13, h = mapData.height || 9;
                 const TS = 48, zoom = State.mapZoomLevel;
+                State._lastDrawnZoom = zoom;
                 const editLayer = State.mapEditLayer;
 
                 canvas.width = w * TS * zoom;
@@ -6676,7 +6707,7 @@ const GitHubAdapter = {
                 if (layer === 5) {
                     const regionId = State._selectedRegionId || 0;
                     const isEraser = (tool === 'eraser');
-                    const val = isEraser ? 0 : regionId;
+                    const val = isEraser ? 0 : (regionId << 8);
                     const brushSize = State.mapBrushSize || 1;
                     if (!State._regionPaintUndo) {
                         UI._pushUndo(State.currentMap);
@@ -6876,7 +6907,7 @@ const GitHubAdapter = {
                 if (layer === 5) {
                     const regionId = State._selectedRegionId || 0;
                     const isEraser = (State.mapTool === 'eraser');
-                    const val = isEraser ? 0 : regionId;
+                    const val = isEraser ? 0 : (regionId << 8);
                     const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
                     const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
                     for (let y = minY; y <= maxY; y++) {
@@ -7342,7 +7373,7 @@ const GitHubAdapter = {
 
                 for (let y = 0; y < h; y++) {
                     for (let x = 0; x < w; x++) {
-                        const rid = data[regionBase + y * w + x] || 0;
+                        const rid = (data[regionBase + y * w + x] || 0) >> 8;
                         const info = regionNames[rid];
                         if (rid === 0 && !info) continue;
                         const colorKey = info ? (info.elevType === 'cliff' ? 'cliff' : info.elevationLevel) : null;
@@ -7466,10 +7497,15 @@ const GitHubAdapter = {
             _applyCanvasTransform() {
                 const canvas = document.getElementById('mapCanvas');
                 if (!canvas) return;
-                const t = `translate(${State.mapPanX}px, ${State.mapPanY}px)`;
+                const drawnZoom = State._lastDrawnZoom || State.mapZoomLevel;
+                const cssScale = State.mapZoomLevel / drawnZoom;
+                const t = `translate(${State.mapPanX}px, ${State.mapPanY}px) scale(${cssScale})`;
                 canvas.style.transform = t;
+                canvas.style.transformOrigin = '0 0';
                 const overlay = document.getElementById('mapGridOverlay');
-                if (overlay) overlay.style.transform = t;
+                if (overlay) { overlay.style.transform = t; overlay.style.transformOrigin = '0 0'; }
+                const zoomEl = document.getElementById('zoomLevel');
+                if (zoomEl) zoomEl.textContent = Math.round(State.mapZoomLevel * 100) + '%';
             },
 
             _drawGridOverlay(w, h, TS, zoom) {
@@ -12723,31 +12759,48 @@ const GitHubAdapter = {
                 var resizer = document.getElementById('dbResizer');
                 var panel = document.querySelector('.dbListPanel');
                 if (!resizer || !panel) return;
+                var saved = localStorage.getItem('dbListPanelWidth');
+                if (saved) { panel.style.width = saved + 'px'; panel.style.minWidth = saved + 'px'; }
                 var startX, startW;
+                function clampW(w) { return Math.max(100, Math.min(500, w)); }
                 resizer.addEventListener('mousedown', function(e) {
                     e.preventDefault();
-                    startX = e.clientX;
-                    startW = panel.offsetWidth;
+                    startX = e.clientX; startW = panel.offsetWidth;
                     resizer.classList.add('active');
-                    document.body.style.cursor = 'col-resize';
-                    document.body.style.userSelect = 'none';
+                    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
                     document.addEventListener('mousemove', onMove);
                     document.addEventListener('mouseup', onUp);
                 });
                 function onMove(e) {
-                    var w = startW + (e.clientX - startX);
-                    if (w < 100) w = 100;
-                    if (w > 500) w = 500;
-                    panel.style.width = w + 'px';
-                    panel.style.minWidth = w + 'px';
+                    var w = clampW(startW + (e.clientX - startX));
+                    panel.style.width = w + 'px'; panel.style.minWidth = w + 'px';
                 }
                 function onUp() {
                     resizer.classList.remove('active');
-                    document.body.style.cursor = '';
-                    document.body.style.userSelect = '';
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
+                    document.body.style.cursor = ''; document.body.style.userSelect = '';
+                    document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+                    try { localStorage.setItem('dbListPanelWidth', panel.offsetWidth); } catch(e){}
                 }
+                // Touch support for iPad resizer
+                resizer.addEventListener('touchstart', function(e) {
+                    if (e.touches.length !== 1) return;
+                    e.preventDefault();
+                    startX = e.touches[0].clientX; startW = panel.offsetWidth;
+                    resizer.classList.add('active');
+                    State._resizeMode = true;
+                }, { passive: false });
+                document.addEventListener('touchmove', function(e) {
+                    if (!State._resizeMode) return;
+                    e.preventDefault();
+                    var w = clampW(startW + (e.touches[0].clientX - startX));
+                    panel.style.width = w + 'px'; panel.style.minWidth = w + 'px';
+                }, { passive: false });
+                document.addEventListener('touchend', function() {
+                    if (!State._resizeMode) return;
+                    State._resizeMode = false;
+                    resizer.classList.remove('active');
+                    try { localStorage.setItem('dbListPanelWidth', panel.offsetWidth); } catch(e){}
+                });
             })();
 
             // DB form panel right-edge resizer
