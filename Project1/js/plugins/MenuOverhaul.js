@@ -1313,6 +1313,34 @@ Window_GridInventoryPanel.prototype.initialize = function(x, y, w, h) {
   this._hoverGy = -1;
   // 인포 패널용
   this._infoItem = null;
+  // 아이템 이미지 캐시 (invImage 노트태그 기반)
+  this._itemImageCache = {};
+  this._itemImageReady = {};
+};
+
+// 아이템 이미지 로드 (invImage 노트태그 → img/items/ 파일)
+Window_GridInventoryPanel.prototype._loadInvImage = function(dataItem) {
+  if (!dataItem || !dataItem.note) return null;
+  var key = (dataItem.id || 0) + '_' + (dataItem.name || '');
+  if (this._itemImageReady[key]) return this._itemImageCache[key] || null;
+  if (this._itemImageCache[key] === undefined) {
+    var m = dataItem.note.match(/<invImage:([^>]+)>/);
+    if (!m) { this._itemImageCache[key] = null; this._itemImageReady[key] = true; return null; }
+    var path = m[1];
+    // path 예: img/items/itemImg_5.png → folder='img/items/', name='itemImg_5'
+    var lastSlash = path.lastIndexOf('/');
+    var folder = (lastSlash >= 0) ? path.substring(0, lastSlash + 1) : '';
+    var name = path.substring(lastSlash + 1).replace(/\.png$/i, '');
+    var bmp = ImageManager.loadBitmap(folder, name);
+    this._itemImageCache[key] = bmp;
+    var self = this;
+    bmp.addLoadListener(function() {
+      self._itemImageReady[key] = true;
+      self.refresh();
+    });
+    return null;  // 아직 로딩 중
+  }
+  return this._itemImageCache[key];
 };
 
 Window_GridInventoryPanel.prototype.setActor = function(actor) {
@@ -1409,12 +1437,18 @@ Window_GridInventoryPanel.prototype.refresh = function() {
     // 아이템 배경
     this.contents.fillRect(ix + 1, iy + 1, iw, ih, 'rgba(50, 70, 100, 0.5)');
 
-    // 아이콘 (중앙)
-    var iconIndex = dataItem.iconIndex;
-    if (iconIndex > 0) {
-      var iconCx = ix + Math.floor(iw / 2) - 12;
-      var iconCy = iy + Math.floor(ih / 2) - 12;
-      this.drawIcon(iconIndex, iconCx, iconCy);
+    // 아이템 이미지 또는 아이콘 (중앙)
+    var invBmp = this._loadInvImage(dataItem);
+    if (invBmp && invBmp.isReady() && invBmp.width > 0) {
+      // invImage가 있으면 셀 크기에 맞춰 그리기 (blt = 안전한 Bitmap 복사)
+      this.contents.blt(invBmp, 0, 0, invBmp.width, invBmp.height, ix + 1, iy + 1, iw, ih);
+    } else {
+      var iconIndex = dataItem.iconIndex;
+      if (iconIndex > 0) {
+        var iconCx = ix + Math.floor(iw / 2) - 12;
+        var iconCy = iy + Math.floor(ih / 2) - 12;
+        this.drawIcon(iconIndex, iconCx, iconCy);
+      }
     }
 
     // 수량 (같은 아이템이 여러 개면 해당 칸은 1개이므로 표시 안 함)
@@ -1437,7 +1471,10 @@ Window_GridInventoryPanel.prototype.refresh = function() {
         ctx.save();
         ctx.globalAlpha = 0.6;
         this.contents.fillRect(gx, gy, dp.w * cs - 2, dp.h * cs - 2, 'rgba(100, 150, 255, 0.4)');
-        if (dataItem.iconIndex > 0) {
+        var ghostBmp = this._loadInvImage(dataItem);
+        if (ghostBmp && ghostBmp.isReady() && ghostBmp.width > 0) {
+          this.contents.blt(ghostBmp, 0, 0, ghostBmp.width, ghostBmp.height, gx, gy, dp.w * cs - 2, dp.h * cs - 2);
+        } else if (dataItem.iconIndex > 0) {
           this.drawIcon(dataItem.iconIndex,
             gx + Math.floor((dp.w * cs - 2) / 2) - 12,
             gy + Math.floor((dp.h * cs - 2) / 2) - 12);
@@ -1506,8 +1543,11 @@ Window_GridInventoryPanel.prototype._drawItemInfo = function(ox, oy, w, maxH) {
   ctx.restore();
 
   var y = oy + 4;
-  // 아이콘 + 이름
-  if (item.iconIndex > 0) {
+  // 아이콘 또는 아이템 이미지 + 이름
+  var infoBmp = this._loadInvImage(item);
+  if (infoBmp && infoBmp.isReady() && infoBmp.width > 0) {
+    this.contents.blt(infoBmp, 0, 0, infoBmp.width, infoBmp.height, ox + 2, y, 28, 28);
+  } else if (item.iconIndex > 0) {
     this.drawIcon(item.iconIndex, ox + 4, y);
   }
   this.contents.fontSize = 13;
