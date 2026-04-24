@@ -1338,10 +1338,10 @@ function renderParams() {
     h += numRow('splitCount','분기수',1,3,p.splitCount||1);
     h += checkRow('canRepeat','중복타격',p.canRepeat||false);
     h += radioRow('targetTeam','대상',{enemy:'적',ally:'아군'},p.targetTeam||'enemy');
-    h += textRow('condition','전파조건',p.condition||'');
+    h += chainCondRow('condition','전파조건',p.condition||'');
   }
   if(p.type==='terrain'){
-    h += textRow('effect','효과',p.effect||'mud');
+    h += effectSelectRow('effect','효과',p.effect||'mud');
     h += numRow('duration','지속(턴)',0,99,p.duration||3);
   }
   if(p.type==='multi'){
@@ -1390,6 +1390,43 @@ function checkRow(key,label,checked){
 function textRow(key,label,val){
   return '<div class="param-row"><label>'+label+'</label>'
     +'<input type="text" value="'+esc(val)+'" style="width:120px;" onchange="setParamText(\''+key+'\',this.value)"></div>';
+}
+function effectSelectRow(key,label,cur){
+  var surfOpts=[
+    {v:'fire',l:'🔥 화염'},  {v:'water',l:'💧 물'},   {v:'blood',l:'🩸 피'},
+    {v:'poison',l:'☠️ 독'}, {v:'oil',l:'🛢️ 기름'},  {v:'mud',l:'🟤 진흙'},
+    {v:'web',l:'🕸️ 거미줄'},{v:'lava',l:'🌋 용암'}
+  ];
+  var cloudOpts=[
+    {v:'steam',l:'♨️ 수증기'},     {v:'firecloud',l:'🔥 화염구름'},
+    {v:'poisoncloud',l:'☠️ 독구름'},{v:'smoke',l:'💨 연기'},
+    {v:'snow',l:'❄️ 눈'},           {v:'dust',l:'🌫️ 먼지'},
+    {v:'storm',l:'⛈️ 폭풍'},       {v:'bloodcloud',l:'🩸 피구름'}
+  ];
+  var h='<div class="param-row"><label>'+label+'</label><select onchange="setParamText(\''+key+'\',this.value)" style="width:140px;">';
+  h+='<optgroup label="지면 장판">';
+  surfOpts.forEach(function(o){h+='<option value="'+o.v+'"'+(cur===o.v?' selected':'')+'>'+o.l+'</option>';});
+  h+='</optgroup><optgroup label="구름">';
+  cloudOpts.forEach(function(o){h+='<option value="'+o.v+'"'+(cur===o.v?' selected':'')+'>'+o.l+'</option>';});
+  h+='</optgroup></select></div>';
+  return h;
+}
+function chainCondRow(key,label,val){
+  var presets=[{v:'',l:'없음'},{v:'crit',l:'치명타 시'},{v:'kill',l:'처치 시'},{v:'hit',l:'명중 시'},{v:'miss',l:'빗나감 시'},{v:'lowHP',l:'대상 HP 50% 이하'},{v:'highHP',l:'대상 HP 50% 이상'}];
+  var isPreset=presets.some(function(p){return p.v===val;});
+  var h='<div class="param-row"><label>'+label+'</label>';
+  h+='<select onchange="onChainCondSel(this)">';
+  presets.forEach(function(p){h+='<option value="'+p.v+'"'+(val===p.v?' selected':'')+'>'+p.l+'</option>';});
+  h+='<option value="__custom"'+(!isPreset&&val?' selected':'')+'>직접입력...</option>';
+  h+='</select>';
+  h+='<input type="text" id="chainCond-custom" value="'+esc(!isPreset?val:'')+'" style="width:80px;'+(isPreset||!val?'display:none':'')+'" onchange="setParamText(\'condition\',this.value)">';
+  return h+'</div>';
+}
+function onChainCondSel(sel){
+  var ci=document.getElementById('chainCond-custom');
+  if(sel.value==='__custom'){ ci.style.display=''; ci.focus(); return; }
+  ci.style.display='none';
+  setParamText('condition',sel.value);
 }
 function condRow(key,label,val){
   var presets=['','crit','kill','hit','miss'];
@@ -1809,48 +1846,4 @@ function simProj(p,done){
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toast(msg){
   var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');
-  setTimeout(function(){el.classList.remove('show');},2000);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// INIT
-// ═══════════════════════════════════════════════════════════════
-function init(){
-  document.getElementById('skill-name').addEventListener('input',function(){state.skillName=this.value;});
-  buildAddMenu();
-  resizeCanvas();
-  drawGrid();
-  renderPhases();
-  regen();
-  loadAnimDB();
-  drawUnified();
-  drawDirPreviews();
-  // Listen for postMessage (popup mode)
-  window.addEventListener('message',function(e){
-    if(e.data&&e.data.type==='srpgSkillLoad'){
-      if(e.data.name) { state.skillName=e.data.name; document.getElementById('skill-name').value=e.data.name; }
-      if(e.data.note) loadFromNote(e.data.note);
-    }
-  });
-  // URL params
-  var params=new URLSearchParams(window.location.search);
-  if(params.get('note')) loadFromNote(decodeURIComponent(params.get('note')));
-  if(params.get('name')) { state.skillName=params.get('name'); document.getElementById('skill-name').value=params.get('name'); }
-}
-
-function loadFromNote(noteText){
-  state.phases = SrpgPhaseParser.parsePhases(noteText);
-  var r = SrpgPhaseParser.parseReach(noteText);
-  state.reach = r;
-  state.area = SrpgPhaseParser.parseArea(noteText);
-  state.options = SrpgPhaseParser.parseOptions(noteText);
-  document.getElementById('opt-rotate').checked = state.options.rotate;
-  document.getElementById('opt-self').checked = state.options.selfTarget;
-  state.selPhase = state.phases.length?0:-1;
-  drawGrid(); renderPhases(); renderParams(); regen();
-}
-
-init();
-</script>
-</body>
-</html>
+  setTimeout(function(){el.classList.remove('sho
