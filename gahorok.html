@@ -228,9 +228,22 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif
 .dm-gen-btn:hover{box-shadow:0 0 16px rgba(212,168,67,.3);}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 .saju-table,.sup,.el-ch,.st-g,.cpt,.prm-sec{animation:fadeIn .5s ease both;}
+
+/* ===== NAV BAR ===== */
+.nav-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:100;}
+.nav-title{font-family:'Noto Serif KR',serif;font-size:13px;font-weight:700;color:var(--gold);letter-spacing:2px;}
+.nav-btn{padding:5px 14px;font-size:10px;font-weight:600;color:var(--dim);background:var(--card);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;transition:all .2s;text-decoration:none;letter-spacing:.5px;}
+.nav-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gdim);}
 </style>
 </head>
 <body>
+<div class="nav-bar">
+  <span class="nav-title">가 호 록</span>
+  <div style="display:flex;gap:8px;">
+    <a class="nav-btn" href="RMMZStudio.html" title="RMMZ Studio로 돌아가기">Studio</a>
+    <button class="nav-btn" onclick="location.reload()" title="새로고침">새로고침</button>
+  </div>
+</div>
 <div class="ct">
   <div class="tog"><div class="tog-b" onclick="setMode('player')" id="mp">플레이어</div><div class="tog-b on" onclick="setMode('npc')" id="mn">NPC</div><div class="tog-b" onclick="randomNpc()" id="mr">🎲</div><div class="tog-b" onclick="showDesignModal()" id="md">🔧 설계</div></div>
   <div class="hdr"><div class="hdr-t">가 호 록</div><div class="hdr-n" id="cn"></div><div class="hdr-i" id="ci"></div><div class="hdr-s" id="cs"></div><div class="badge" id="cb"></div><div class="badge" id="cr" style="display:none;background:rgba(74,124,89,.15);color:#8a8778;margin-left:4px;"></div></div>

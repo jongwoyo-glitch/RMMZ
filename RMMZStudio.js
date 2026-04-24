@@ -355,6 +355,28 @@ const GitHubAdapter = {
         this._treeCache = null;
     },
 
+    encodeConfigToHash() {
+        if (!this._owner || !this._repo || !this._token) return '';
+        var cfg = { o: this._owner, r: this._repo, b: this._branch || 'main', t: this._token, p: this._projectDir || 'Project1' };
+        return 'gh=' + btoa(unescape(encodeURIComponent(JSON.stringify(cfg))));
+    },
+
+    decodeConfigFromHash(hash) {
+        if (!hash) return null;
+        var m = hash.replace(/^#/, '').match(/gh=([A-Za-z0-9+\/=]+)/);
+        if (!m) return null;
+        try {
+            var cfg = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
+            return { owner: cfg.o, repo: cfg.r, branch: cfg.b || 'main', token: cfg.t, projectDir: cfg.p || 'Project1' };
+        } catch(e) { return null; }
+    },
+
+    getBookmarkUrl() {
+        var hash = this.encodeConfigToHash();
+        if (!hash) return null;
+        return location.origin + location.pathname + '#' + hash;
+    },
+
     _openConfigDB() {
         return new Promise((resolve, reject) => {
             const req = indexedDB.open('RMMZStudioConfig', 1);
@@ -11326,6 +11348,8 @@ const GitHubAdapter = {
                     const mapCount = Object.keys(data.maps || {}).length;
                     statusEl.textContent = 'GitHub: DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
                     setTimeout(() => { statusEl.textContent = ''; }, 4000);
+                    var cfgHash = GitHubAdapter.encodeConfigToHash();
+                    if (cfgHash) history.replaceState(null, '', '#' + cfgHash);
                 } catch (e) {
                     console.error('[GitHub] Connect failed:', e);
                     if (errEl) {
@@ -11344,6 +11368,16 @@ const GitHubAdapter = {
                 GitHubAdapter.clearConfig();
                 window.__RMMZ_GITHUB = false;
                 location.reload();
+            },
+
+            async _studioRefresh() {
+                try {
+                    if (window.caches) { var ks = await caches.keys(); for (var k of ks) await caches.delete(k); }
+                    ['RMMZStudioSpriteDB','RMMZStudioTileCache'].forEach(function(n){ try { indexedDB.deleteDatabase(n); } catch(e){} });
+                    var cfgHash = GitHubAdapter.encodeConfigToHash();
+                    if (cfgHash) history.replaceState(null, '', '#' + cfgHash);
+                    location.reload(true);
+                } catch(e) { location.reload(true); }
             },
 
             async _uploadFile(relativePath, file) {
@@ -12580,9 +12614,10 @@ const GitHubAdapter = {
             const statusEl = document.getElementById('saveStatus');
             const isServer = location.protocol === 'http:' || location.protocol === 'https:';
 
-            // ── GitHub 모드 체크 ──
+            // ── GitHub 모드 체크 (URL 해시 설정 포함) ──
             const ghMode = new URLSearchParams(location.search).get('mode') === 'github';
-            if (ghMode || window.__RMMZ_GITHUB) {
+            const hasHashCfg = location.hash && location.hash.includes('gh=');
+            if (ghMode || hasHashCfg || window.__RMMZ_GITHUB) {
                 try {
                     statusEl.textContent = 'GitHub 설정 로드 중...';
                     const cfg = await GitHubAdapter.loadConfig();
@@ -12601,8 +12636,23 @@ const GitHubAdapter = {
                         statusEl.textContent = 'GitHub: DB ' + dbCount + '종 / 맵 ' + mapCount + '개 로드됨';
                         setTimeout(() => { statusEl.textContent = ''; }, 4000);
                     } else {
-                        // 설정 없으면 GitHub 로그인 화면 표시
-                        UI._showGitHubLogin();
+                        var hashCfg = GitHubAdapter.decodeConfigFromHash(location.hash);
+                        if (hashCfg && hashCfg.token && hashCfg.owner && hashCfg.repo) {
+                            GitHubAdapter.init(hashCfg.owner, hashCfg.repo, hashCfg.token, hashCfg.branch);
+                            await GitHubAdapter.saveConfig();
+                            statusEl.textContent = 'GitHub에서 프로젝트 로드 중...';
+                            var data2 = await GitHubAdapter.loadProject();
+                            window.__RMMZ_GITHUB = true;
+                            window.__RMMZ_SERVER = false;
+                            State.projectPath = hashCfg.owner + '/' + hashCfg.repo;
+                            State.projectName = data2.database?.System?.gameTitle || hashCfg.repo;
+                            API.loadProject(data2);
+                            UI._updateProjectBadge();
+                            statusEl.textContent = 'GitHub 해시 복원 완료';
+                            setTimeout(function(){ statusEl.textContent = ''; }, 4000);
+                        } else {
+                            UI._showGitHubLogin();
+                        }
                     }
                 } catch (e) {
                     console.error('[GitHub] Load failed:', e);

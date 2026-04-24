@@ -45,6 +45,9 @@
                     </div>
                     <button onclick="(window.UI||UI)._connectGitHub()" style="width:100%;padding:8px;background:#238636;border:none;border-radius:6px;color:#fff;font-weight:bold;cursor:pointer;">연결</button>
                     <div id="ghError" style="color:#f85149;font-size:0.8em;margin-top:8px;display:none;"></div>
+                    <div style="margin-top:10px;">
+                        <button id="btnCopyBookmark" onclick="(function(){var u=GitHubAdapter.getBookmarkUrl();if(!u){alert('먼저 GitHub에 연결하세요.');return;}navigator.clipboard.writeText(u).then(function(){var b=document.getElementById('btnCopyBookmark');b.textContent='복사됨!';setTimeout(function(){b.textContent='접속 링크 복사';},1500);});})()" style="width:100%;padding:6px;background:#1a1a2e;border:1px solid #30363d;border-radius:6px;color:#8b949e;font-size:11px;cursor:pointer;" title="토큰이 포함된 접속 URL을 복사합니다. 북마크에 저장하면 캐시 삭제 후에도 자동 연결됩니다.">접속 링크 복사</button>
+                    </div>
                 </div>
                 <div id="progressBar">
                     <div id="progressFill"></div>
@@ -64,9 +67,11 @@
                 <button class="modeTab" onclick="API.switchMode('resources')">리소스</button>
                 <button class="modeTab" onclick="API.switchMode('plugins')">플러그인</button>
                 <button class="modeTab" onclick="API.switchMode('preview')" style="color:#2ecc71;">프리뷰</button>
+                <button class="modeTab" onclick="window.open('gahorok.html','_blank')" style="color:#d4a843;" title="가호록 — 사주 가호 시뮬레이터">가호록</button>
                 <div style="flex:1"></div>
                 <button class="modeTab" style="background:#e67e22;color:#fff;" onclick="UI.showProjectSwitcher()">프로젝트 교체</button>
                 <button id="btnSaveProject" class="modeTab" style="background:#2ecc71;color:#fff;" onclick="API.saveToProject()">프로젝트 저장</button>
+                <button class="modeTab" style="background:#3498db;color:#fff;" onclick="UI._studioRefresh()" title="캐시 초기화 후 GitHub 재연결 (토큰/경로 유지)">새로고침</button>
                 <span id="saveStatus" style="color:#aaa;font-size:0.8em;margin-left:8px;align-self:center;"></span>
             </div>
 
@@ -354,15 +359,4 @@
     <!-- Project Switcher Modal -->
     <div id="projectSwitcherModal" class="modal">
         <div class="modalContent" style="min-width:560px;max-width:640px;">
-            <div class="modalHeader">
-                프로젝트 교체
-                <button class="closeBtn" onclick="UI.closeProjectSwitcher()">×</button>
-            </div>
-            <div id="projectSwitcherBody"></div>
-        </div>
-    </div>
-
-    <script src="Project1/js/libs/effekseer.min.js"></script>
-    <script src="RMMZStudio.js" defer></script>
-</body>
-</html>
+            <div class="moda
