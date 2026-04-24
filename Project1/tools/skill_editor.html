@@ -25,10 +25,10 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
 #header input { width:140px; font-size:13px; font-weight:500; }
 .tog-group { display:flex; gap:1px; }
 .tog-group button { min-width:auto; font-size:9px; padding:3px 5px; }
-.deity-btn-group { display:flex; gap:1px; flex-wrap:wrap; max-width:600px; }
-.deity-btn-group button { font-size:8px; padding:2px 4px; min-width:auto; line-height:1.2; text-align:center; border-width:2px; }
-.deity-btn-group .d-domain { display:block; font-size:6px; color:var(--dim); margin-top:1px; white-space:nowrap; }
-.deity-btn-group button.active .d-domain { color:#333; }
+.el-btn-group { display:flex; gap:1px; }
+.el-btn-group button { font-size:9px; padding:3px 6px; min-width:auto; line-height:1.2; text-align:center; }
+.el-btn-group .el-sub { display:block; font-size:7px; color:var(--dim); margin-top:1px; }
+.el-btn-group button.active .el-sub { color:#333; }
 
 /* ── MAIN 3-COLUMN ── */
 #main { flex:1; display:flex; overflow:hidden; min-height:0; }
@@ -146,19 +146,12 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
     <button onclick="setCat(this,'magic')">마법공격</button>
     <button onclick="setCat(this,'support')">마법보조</button>
   </div>
-  <div class="deity-btn-group" id="el-group">
-    <button style="border-color:var(--water)" onclick="setDeity(this,'노크탄','water')" title="子 · 교활한 비밀의 신">🌙 노크탄<span class="d-domain">비밀</span></button>
-    <button style="border-color:var(--earth)" onclick="setDeity(this,'그란디르','earth')" title="丑 · 느긋한 대지의 신">🪨 그란디르<span class="d-domain">대지</span></button>
-    <button class="active" style="border-color:var(--wood)" onclick="setDeity(this,'프레간','wood')" title="寅 · 용맹한 전쟁의 신">⚔️ 프레간<span class="d-domain">전쟁</span></button>
-    <button style="border-color:var(--wood)" onclick="setDeity(this,'플로렌','wood')" title="卯 · 다정한 사랑의 신">🌸 플로렌<span class="d-domain">사랑</span></button>
-    <button style="border-color:var(--earth)" onclick="setDeity(this,'레그나스','earth')" title="辰 · 오만한 권력의 신">👑 레그나스<span class="d-domain">권력</span></button>
-    <button style="border-color:var(--fire)" onclick="setDeity(this,'벨리스','fire')" title="巳 · 총명한 지식의 신">🔮 벨리스<span class="d-domain">지식</span></button>
-    <button style="border-color:var(--fire)" onclick="setDeity(this,'솔란','fire')" title="午 · 성급한 계몽의 신">✨ 솔란<span class="d-domain">계몽</span></button>
-    <button style="border-color:var(--earth)" onclick="setDeity(this,'큐라','earth')" title="未 · 과묵한 등불의 신">🏮 큐라<span class="d-domain">등불</span></button>
-    <button style="border-color:var(--metal)" onclick="setDeity(this,'크리시스','metal')" title="申 · 엄격한 심판의 신">⚖️ 크리시스<span class="d-domain">심판</span></button>
-    <button style="border-color:var(--metal)" onclick="setDeity(this,'스펠라','metal')" title="酉 · 깐깐한 장인의 신">🔨 스펠라<span class="d-domain">장인</span></button>
-    <button style="border-color:var(--earth)" onclick="setDeity(this,'에르미탄','earth')" title="戌 · 완고한 믿음의 신">📿 에르미탄<span class="d-domain">믿음</span></button>
-    <button style="border-color:var(--water)" onclick="setDeity(this,'레바','water')" title="亥 · 게으른 축제의 신">🎊 레바<span class="d-domain">축제</span></button>
+  <div class="el-btn-group" id="el-group">
+    <button class="active" style="border-color:var(--wood)" onclick="setEl(this,'wood')">목(木)<span class="el-sub">프레간·플로렌</span></button>
+    <button style="border-color:var(--fire)" onclick="setEl(this,'fire')">화(火)<span class="el-sub">솔란·벨리스</span></button>
+    <button style="border-color:var(--earth)" onclick="setEl(this,'earth')">토(土)<span class="el-sub">그란디르·레그나스·큐라·에르미탄</span></button>
+    <button style="border-color:var(--metal)" onclick="setEl(this,'metal')">금(金)<span class="el-sub">크리시스·스펠라</span></button>
+    <button style="border-color:var(--water)" onclick="setEl(this,'water')">수(水)<span class="el-sub">노크탄·레바</span></button>
   </div>
 </div>
 
@@ -638,7 +631,7 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
 // STATE
 // ═══════════════════════════════════════════════════════════════
 var state = {
-  skillName:'새 스킬', category:'melee', element:'wood', deity:'프레간',
+  skillName:'새 스킬', category:'melee', element:'wood',
   phases:[], reach:{coords:[],mode:'none',rangeN:null},
   area:[], options:{rotate:false,selfTarget:false},
   selPhase:-1
@@ -679,15 +672,12 @@ function setCat(btn, val) {
   document.querySelectorAll('#cat-group button').forEach(function(b){b.classList.remove('active');});
   btn.classList.add('active');
 }
-function setDeity(btn, deity, elem) {
-  state.deity = deity;
-  state.element = elem;
+function setEl(btn, val) {
+  state.element = val;
   document.querySelectorAll('#el-group button').forEach(function(b){b.classList.remove('active');});
   btn.classList.add('active');
   drawGrid();
 }
-// Legacy compat
-function setEl(btn, val) { setDeity(btn, '', val); }
 
 // ═══════════════════════════════════════════════════════════════
 // GRID EDITOR
@@ -1391,42 +1381,41 @@ function textRow(key,label,val){
   return '<div class="param-row"><label>'+label+'</label>'
     +'<input type="text" value="'+esc(val)+'" style="width:120px;" onchange="setParamText(\''+key+'\',this.value)"></div>';
 }
-function effectSelectRow(key,label,cur){
-  var surfOpts=[
-    {v:'fire',l:'🔥 화염'},  {v:'water',l:'💧 물'},   {v:'blood',l:'🩸 피'},
-    {v:'poison',l:'☠️ 독'}, {v:'oil',l:'🛢️ 기름'},  {v:'mud',l:'🟤 진흙'},
-    {v:'web',l:'🕸️ 거미줄'},{v:'lava',l:'🌋 용암'}
-  ];
-  var cloudOpts=[
-    {v:'steam',l:'♨️ 수증기'},     {v:'firecloud',l:'🔥 화염구름'},
-    {v:'poisoncloud',l:'☠️ 독구름'},{v:'smoke',l:'💨 연기'},
-    {v:'snow',l:'❄️ 눈'},           {v:'dust',l:'🌫️ 먼지'},
-    {v:'storm',l:'⛈️ 폭풍'},       {v:'bloodcloud',l:'🩸 피구름'}
-  ];
-  var h='<div class="param-row"><label>'+label+'</label><select onchange="setParamText(\''+key+'\',this.value)" style="width:140px;">';
-  h+='<optgroup label="지면 장판">';
-  surfOpts.forEach(function(o){h+='<option value="'+o.v+'"'+(cur===o.v?' selected':'')+'>'+o.l+'</option>';});
-  h+='</optgroup><optgroup label="구름">';
-  cloudOpts.forEach(function(o){h+='<option value="'+o.v+'"'+(cur===o.v?' selected':'')+'>'+o.l+'</option>';});
+function effectSelectRow(key,label,val){
+  var surfaces=['fire','water','blood','poison','oil','mud','web','lava'];
+  var clouds=['steam','firecloud','poisoncloud','smoke','snow','dust','storm','bloodcloud'];
+  var h='<div class="param-row"><label>'+label+'</label>';
+  h+='<select onchange="setParamText(\''+key+'\',this.value)">';
+  h+='<optgroup label="장판(Surface)">';
+  for(var i=0;i<surfaces.length;i++){
+    h+='<option value="'+surfaces[i]+'"'+(val===surfaces[i]?' selected':'')+'>'+surfaces[i]+'</option>';
+  }
+  h+='</optgroup><optgroup label="구름(Cloud)">';
+  for(var i=0;i<clouds.length;i++){
+    h+='<option value="'+clouds[i]+'"'+(val===clouds[i]?' selected':'')+'>'+clouds[i]+'</option>';
+  }
   h+='</optgroup></select></div>';
   return h;
 }
 function chainCondRow(key,label,val){
-  var presets=[{v:'',l:'없음'},{v:'crit',l:'치명타 시'},{v:'kill',l:'처치 시'},{v:'hit',l:'명중 시'},{v:'miss',l:'빗나감 시'},{v:'lowHP',l:'대상 HP 50% 이하'},{v:'highHP',l:'대상 HP 50% 이상'}];
-  var isPreset=presets.some(function(p){return p.v===val;});
+  var presets=['','adjacent','hp50','sameElement','random50','always'];
+  var labels=['없음','인접','HP50%이하','같은원소','50%확률','항상'];
+  var isPreset=presets.indexOf(val)>=0;
   var h='<div class="param-row"><label>'+label+'</label>';
-  h+='<select onchange="onChainCondSel(this)">';
-  presets.forEach(function(p){h+='<option value="'+p.v+'"'+(val===p.v?' selected':'')+'>'+p.l+'</option>';});
+  h+='<select onchange="onChainCondSel(\''+key+'\',this)">';
+  for(var i=0;i<presets.length;i++){
+    h+='<option value="'+presets[i]+'"'+(val===presets[i]?' selected':'')+'>'+labels[i]+'</option>';
+  }
   h+='<option value="__custom"'+(!isPreset&&val?' selected':'')+'>직접입력...</option>';
   h+='</select>';
-  h+='<input type="text" id="chainCond-custom" value="'+esc(!isPreset?val:'')+'" style="width:80px;'+(isPreset||!val?'display:none':'')+'" onchange="setParamText(\'condition\',this.value)">';
+  h+='<input type="text" class="chain-cond-custom" value="'+esc(!isPreset?val:'')+'" style="width:80px;margin-left:4px;'+(isPreset||!val?'display:none':'')+'" onchange="setParamText(\''+key+'\',this.value)">';
   return h+'</div>';
 }
-function onChainCondSel(sel){
-  var ci=document.getElementById('chainCond-custom');
+function onChainCondSel(key,sel){
+  var ci=sel.parentNode.querySelector('.chain-cond-custom');
   if(sel.value==='__custom'){ ci.style.display=''; ci.focus(); return; }
   ci.style.display='none';
-  setParamText('condition',sel.value);
+  setParamText(key,sel.value);
 }
 function condRow(key,label,val){
   var presets=['','crit','kill','hit','miss'];
@@ -1846,4 +1835,48 @@ function simProj(p,done){
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toast(msg){
   var el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');
-  setTimeout(function(){el.classList.remove('sho
+  setTimeout(function(){el.classList.remove('show');},2000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+function init(){
+  document.getElementById('skill-name').addEventListener('input',function(){state.skillName=this.value;});
+  buildAddMenu();
+  resizeCanvas();
+  drawGrid();
+  renderPhases();
+  regen();
+  loadAnimDB();
+  drawUnified();
+  drawDirPreviews();
+  // Listen for postMessage (popup mode)
+  window.addEventListener('message',function(e){
+    if(e.data&&e.data.type==='srpgSkillLoad'){
+      if(e.data.name) { state.skillName=e.data.name; document.getElementById('skill-name').value=e.data.name; }
+      if(e.data.note) loadFromNote(e.data.note);
+    }
+  });
+  // URL params
+  var params=new URLSearchParams(window.location.search);
+  if(params.get('note')) loadFromNote(decodeURIComponent(params.get('note')));
+  if(params.get('name')) { state.skillName=params.get('name'); document.getElementById('skill-name').value=params.get('name'); }
+}
+
+function loadFromNote(noteText){
+  state.phases = SrpgPhaseParser.parsePhases(noteText);
+  var r = SrpgPhaseParser.parseReach(noteText);
+  state.reach = r;
+  state.area = SrpgPhaseParser.parseArea(noteText);
+  state.options = SrpgPhaseParser.parseOptions(noteText);
+  document.getElementById('opt-rotate').checked = state.options.rotate;
+  document.getElementById('opt-self').checked = state.options.selfTarget;
+  state.selPhase = state.phases.length?0:-1;
+  drawGrid(); renderPhases(); renderParams(); regen();
+}
+
+init();
+</script>
+</body>
+</html>
