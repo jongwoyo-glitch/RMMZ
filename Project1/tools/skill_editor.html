@@ -13,85 +13,127 @@
   --move-color: #3a7c59; --atk-color: #c44536; --place-color: #b5893a; --react-color: #4488cc;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Noto Sans KR',sans-serif; background:var(--bg); color:var(--text); font-size:12px; overflow-x:hidden; }
-button { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px; font-family:inherit; }
+body { font-family:'Noto Sans KR',sans-serif; background:var(--bg); color:var(--text); font-size:12px; overflow:hidden; height:100vh; display:flex; flex-direction:column; }
+button { background:var(--panel); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px; font-family:inherit; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
 button:hover { background:#1e2a4a; }
 button.active { background:var(--accent); color:#111; border-color:var(--accent); font-weight:500; }
 input, select { background:#0d1117; color:var(--text); border:1px solid var(--border); padding:3px 6px; border-radius:3px; font-size:11px; font-family:inherit; }
-textarea { background:#0d1117; color:var(--text); border:1px solid var(--border); padding:6px; border-radius:3px; font-size:11px; font-family:'Consolas',monospace; resize:vertical; width:100%; }
+textarea { background:#0d1117; color:var(--text); border:1px solid var(--border); padding:6px; border-radius:3px; font-size:11px; font-family:'Consolas',monospace; resize:none; width:100%; }
 
-#header { padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-#header input { width:160px; font-size:13px; font-weight:500; }
-.tog-group { display:flex; gap:2px; }
-.tog-group button { min-width:56px; font-size:10px; padding:4px 6px; }
+/* ── HEADER ── */
+#header { padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex-shrink:0; }
+#header input { width:140px; font-size:13px; font-weight:500; }
+.tog-group { display:flex; gap:1px; }
+.tog-group button { min-width:auto; font-size:9px; padding:3px 5px; }
+.deity-btn-group { display:flex; gap:1px; flex-wrap:wrap; max-width:600px; }
+.deity-btn-group button { font-size:8px; padding:2px 4px; min-width:auto; line-height:1.2; text-align:center; border-width:2px; }
+.deity-btn-group .d-domain { display:block; font-size:6px; color:var(--dim); margin-top:1px; white-space:nowrap; }
+.deity-btn-group button.active .d-domain { color:#333; }
 
-#main { display:flex; height:calc(100vh - 40px - 140px - 90px); min-height:300px; }
-#grid-panel { width:340px; min-width:280px; border-right:1px solid var(--border); padding:8px; display:flex; flex-direction:column; }
-#phase-panel { flex:1; padding:8px; display:flex; flex-direction:column; overflow-y:auto; }
+/* ── MAIN 3-COLUMN ── */
+#main { flex:1; display:flex; overflow:hidden; min-height:0; }
 
-.tab-row { display:flex; gap:2px; margin-bottom:6px; }
-.tab-btn { flex:1; text-align:center; padding:4px; font-size:10px; }
+/* Column 1: Grid */
+#col-grid { width:300px; min-width:260px; border-right:1px solid var(--border); padding:8px; display:flex; flex-direction:column; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.tab-row { display:flex; gap:2px; margin-bottom:4px; }
+.tab-btn { flex:1; text-align:center; padding:3px; font-size:10px; }
 .tab-btn.active { background:var(--accent); color:#111; }
+#grid-canvas { display:block; margin:0 auto; background:#0f1525; border:1px solid var(--border); border-radius:4px; cursor:crosshair; touch-action:none; }
+.grid-controls { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; align-items:center; }
+.grid-controls button { font-size:9px; padding:2px 5px; }
+.grid-controls select { font-size:9px; padding:1px 3px; }
+.grid-options { margin-top:3px; display:flex; gap:6px; font-size:9px; color:var(--dim); }
+.grid-options label { cursor:pointer; display:flex; align-items:center; gap:2px; }
+.sub-section { margin-top:6px; padding-top:5px; border-top:1px solid var(--border); }
+.sub-header { font-size:9px; color:var(--accent); font-weight:700; margin-bottom:3px; }
 
-#grid-canvas { display:block; margin:0 auto; background:#0f1525; border:1px solid var(--border); border-radius:4px; cursor:crosshair; }
-.grid-controls { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; align-items:center; }
-.grid-controls button { font-size:10px; padding:2px 6px; }
-.grid-controls select { font-size:10px; padding:1px 4px; }
-.grid-options { margin-top:4px; display:flex; gap:8px; font-size:10px; color:var(--dim); }
-.grid-options label { cursor:pointer; display:flex; align-items:center; gap:3px; }
-
-.phase-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
-.phase-block { background:#0d1117; border:1px solid var(--border); border-radius:4px; padding:6px 8px; cursor:pointer; display:flex; align-items:center; gap:6px; position:relative; border-left:3px solid var(--border); }
+/* Column 2: Phase Timeline */
+#col-phase { flex:1; min-width:240px; border-right:1px solid var(--border); padding:8px; display:flex; flex-direction:column; overflow:hidden; }
+.phase-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:3px; -webkit-overflow-scrolling:touch; }
+.phase-block { background:#0d1117; border:1px solid var(--border); border-radius:4px; padding:5px 7px; cursor:pointer; display:flex; align-items:center; gap:5px; position:relative; border-left:3px solid var(--border); }
 .phase-block.selected { border-color:var(--accent); background:#1a2040; }
-.phase-block .icon { font-size:14px; flex-shrink:0; width:20px; text-align:center; }
+.phase-block .icon { font-size:13px; flex-shrink:0; width:18px; text-align:center; }
 .phase-block .info { flex:1; min-width:0; }
-.phase-block .type-name { font-weight:500; font-size:11px; }
-.phase-block .summary { font-size:9px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.phase-block .badges { display:flex; gap:3px; margin-top:2px; }
-.phase-block .badge { font-size:8px; padding:1px 4px; border-radius:2px; background:#2a2a4a; color:var(--dim); }
+.phase-block .type-name { font-weight:500; font-size:10px; }
+.phase-block .summary { font-size:8px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.phase-block .badges { display:flex; gap:2px; margin-top:1px; }
+.phase-block .badge { font-size:7px; padding:1px 3px; border-radius:2px; background:#2a2a4a; color:var(--dim); }
 .phase-block .badge.cond { background:#3a2a1a; color:var(--accent); }
-.phase-block .del-btn { position:absolute; top:2px; right:4px; background:none; border:none; color:#555; font-size:10px; cursor:pointer; padding:2px; }
+.phase-block .del-btn { position:absolute; top:2px; right:3px; background:none; border:none; color:#555; font-size:9px; cursor:pointer; padding:1px; }
 .phase-block .del-btn:hover { color:#c44; }
-.add-phase-area { margin-top:6px; position:relative; }
-.add-dropdown { position:absolute; bottom:100%; left:0; right:0; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:4px; z-index:100; display:none; max-height:240px; overflow-y:auto; }
+.add-phase-area { margin-top:4px; position:relative; flex-shrink:0; }
+.add-dropdown { position:absolute; bottom:100%; left:0; right:0; background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:4px; z-index:100; display:none; max-height:200px; overflow-y:auto; }
 .add-dropdown.show { display:block; }
-.add-cat-label { font-size:9px; color:var(--accent); padding:3px 4px 1px; font-weight:700; }
-.add-item { padding:3px 8px; cursor:pointer; border-radius:3px; font-size:10px; display:flex; align-items:center; gap:4px; }
+.add-cat-label { font-size:8px; color:var(--accent); padding:2px 4px 1px; font-weight:700; }
+.add-item { padding:3px 6px; cursor:pointer; border-radius:3px; font-size:9px; display:flex; align-items:center; gap:3px; }
 .add-item:hover { background:#1e2a4a; }
 
-#param-panel { height:140px; min-height:100px; border-top:1px solid var(--border); padding:8px 12px; overflow-y:auto; background:var(--panel); }
-.param-title { font-size:11px; font-weight:700; color:var(--accent); margin-bottom:6px; }
-.param-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:4px 12px; }
-.param-row { display:flex; align-items:center; gap:6px; font-size:10px; }
-.param-row label { color:var(--dim); min-width:60px; text-align:right; flex-shrink:0; }
+/* Column 3: Params + Preview */
+#col-right { width:340px; min-width:280px; padding:8px; display:flex; flex-direction:column; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.param-title { font-size:10px; font-weight:700; color:var(--accent); margin-bottom:4px; }
+.param-grid { display:grid; grid-template-columns:1fr; gap:3px; }
+.param-row { display:flex; align-items:center; gap:5px; font-size:10px; }
+.param-row label { color:var(--dim); min-width:54px; text-align:right; flex-shrink:0; font-size:9px; }
 .param-row .opts { display:flex; gap:2px; flex-wrap:wrap; }
-.param-row .opts button { font-size:9px; padding:2px 6px; }
-.param-row input[type=range] { width:100px; }
-.param-row input[type=number] { width:50px; }
-.param-empty { color:var(--dim); font-size:10px; padding:20px; text-align:center; }
+.param-row .opts button { font-size:8px; padding:2px 5px; }
+.param-row input[type=range] { width:80px; }
+.param-row input[type=number] { width:48px; }
+.param-empty { color:var(--dim); font-size:10px; padding:12px; text-align:center; }
 
-#footer { padding:6px 12px; border-top:1px solid var(--border); background:var(--panel); display:flex; gap:8px; align-items:stretch; }
+/* Unified + EFK in right column */
+#unified-section { margin-top:6px; padding-top:5px; border-top:1px solid var(--border); }
+#unified-section .uni-header { font-size:9px; color:var(--accent); font-weight:700; margin-bottom:3px; }
+#unified-canvas { display:block; margin:0 auto; background:#0a0e1a; border:1px solid var(--border); border-radius:3px; cursor:crosshair; touch-action:none; }
+.uni-legend { display:flex; gap:6px; justify-content:center; margin-top:2px; font-size:7px; color:var(--dim); }
+.uni-legend i { display:inline-block; width:7px; height:7px; border-radius:1px; margin-right:1px; vertical-align:middle; }
+.dir-previews { display:flex; gap:3px; justify-content:center; margin-top:3px; }
+.dir-previews canvas { background:#0a0e1a; border:1px solid var(--border); border-radius:2px; touch-action:none; }
+.dir-previews .dir-label { font-size:6px; color:var(--dim); text-align:center; }
+
+#efk-preview-section { margin-top:6px; padding-top:5px; border-top:1px solid var(--border); }
+#efk-preview-section .efk-header span { font-size:9px; color:var(--accent); font-weight:700; }
+#efk-preview-section .efk-controls { display:flex; gap:2px; margin:3px 0; align-items:center; flex-wrap:wrap; }
+#efk-preview-section .efk-controls button { font-size:8px; padding:2px 5px; }
+#efk-preview-section .efk-controls button.speed-active { background:var(--accent); color:#111; }
+#efk-preview-section select { font-size:9px; flex:1; min-width:0; }
+#efk-canvas { display:block; margin:0 auto; background:#000; border:1px solid var(--border); border-radius:3px; max-width:100%; }
+.efk-info { text-align:center; font-size:8px; color:var(--dim); margin-top:2px; }
+
+/* ── FOOTER ── */
+#footer { flex-shrink:0; padding:4px 10px; border-top:1px solid var(--border); background:var(--panel); display:flex; gap:6px; align-items:center; }
 #note-area { flex:1; }
-#note-area textarea { height:60px; font-size:10px; }
-.note-header { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
-.note-header span { font-size:10px; color:var(--dim); }
-.footer-btns { display:flex; flex-direction:column; gap:3px; flex-shrink:0; }
-.footer-btns button { min-width:90px; font-size:11px; }
+#note-area textarea { height:40px; font-size:9px; }
+.note-header { display:flex; align-items:center; gap:4px; margin-bottom:2px; }
+.note-header span { font-size:9px; color:var(--dim); }
+.footer-btns { display:flex; gap:3px; flex-shrink:0; }
+.footer-btns button { min-width:70px; font-size:10px; padding:4px 8px; }
 .btn-accent { background:var(--accent); color:#111; border-color:var(--accent); font-weight:500; }
 .btn-accent:hover { background:#e0b84f; }
 
+/* ── SIMULATION MODAL ── */
 .sim-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999; }
 .sim-box { background:var(--panel);border:1px solid #333;border-radius:10px;padding:20px 24px;width:480px;max-height:90vh;overflow-y:auto;position:relative; }
 .sim-close { position:absolute;top:8px;right:12px;background:none;border:none;color:#888;font-size:18px;cursor:pointer; }
 .sim-close:hover { color:#fff; }
 .sim-title { text-align:center;font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px; }
 .sim-sub { text-align:center;font-size:10px;color:var(--dim);margin-bottom:10px; }
-#sim-canvas { display:block;margin:0 auto;background:#0f1525;border:1px solid var(--border);border-radius:4px;cursor:crosshair; }
+#sim-canvas { display:block;margin:0 auto;background:#0f1525;border:1px solid var(--border);border-radius:4px; }
 .sim-log { margin-top:6px;padding:4px 6px;background:#0d1117;border-radius:3px;font-size:9px;color:var(--dim);max-height:70px;overflow-y:auto;min-height:20px; }
 .sim-ctrls { display:flex;gap:4px;justify-content:center;margin-top:8px; }
-
 .toast { position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--accent);color:#111;padding:6px 16px;border-radius:4px;font-size:11px;z-index:10000;opacity:0;transition:opacity .3s; }
 .toast.show { opacity:1; }
+
+/* iPad touch improvements */
+@media (pointer: coarse) {
+  button { min-height:32px; padding:6px 10px; }
+  .tog-group button, .el-btn-group button { min-height:28px; }
+  .grid-controls button { min-height:28px; padding:3px 8px; }
+  .phase-block { padding:8px 10px; }
+  .add-item { padding:6px 8px; min-height:32px; }
+  .param-row .opts button { min-height:26px; padding:3px 8px; }
+  #efk-preview-section .efk-controls button { min-height:26px; }
+  .footer-btns button { min-height:36px; }
+}
 </style>
 </head>
 <body>
@@ -104,17 +146,25 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
     <button onclick="setCat(this,'magic')">마법공격</button>
     <button onclick="setCat(this,'support')">마법보조</button>
   </div>
-  <div class="tog-group" id="el-group">
-    <button class="active" style="border-color:var(--wood)" onclick="setEl(this,'wood')">목(木)</button>
-    <button style="border-color:var(--fire)" onclick="setEl(this,'fire')">화(火)</button>
-    <button style="border-color:var(--earth)" onclick="setEl(this,'earth')">토(土)</button>
-    <button style="border-color:var(--metal)" onclick="setEl(this,'metal')">금(金)</button>
-    <button style="border-color:var(--water)" onclick="setEl(this,'water')">수(水)</button>
+  <div class="deity-btn-group" id="el-group">
+    <button style="border-color:var(--water)" onclick="setDeity(this,'노크탄','water')" title="子 · 교활한 비밀의 신">🌙 노크탄<span class="d-domain">비밀</span></button>
+    <button style="border-color:var(--earth)" onclick="setDeity(this,'그란디르','earth')" title="丑 · 느긋한 대지의 신">🪨 그란디르<span class="d-domain">대지</span></button>
+    <button class="active" style="border-color:var(--wood)" onclick="setDeity(this,'프레간','wood')" title="寅 · 용맹한 전쟁의 신">⚔️ 프레간<span class="d-domain">전쟁</span></button>
+    <button style="border-color:var(--wood)" onclick="setDeity(this,'플로렌','wood')" title="卯 · 다정한 사랑의 신">🌸 플로렌<span class="d-domain">사랑</span></button>
+    <button style="border-color:var(--earth)" onclick="setDeity(this,'레그나스','earth')" title="辰 · 오만한 권력의 신">👑 레그나스<span class="d-domain">권력</span></button>
+    <button style="border-color:var(--fire)" onclick="setDeity(this,'벨리스','fire')" title="巳 · 총명한 지식의 신">🔮 벨리스<span class="d-domain">지식</span></button>
+    <button style="border-color:var(--fire)" onclick="setDeity(this,'솔란','fire')" title="午 · 성급한 계몽의 신">✨ 솔란<span class="d-domain">계몽</span></button>
+    <button style="border-color:var(--earth)" onclick="setDeity(this,'큐라','earth')" title="未 · 과묵한 등불의 신">🏮 큐라<span class="d-domain">등불</span></button>
+    <button style="border-color:var(--metal)" onclick="setDeity(this,'크리시스','metal')" title="申 · 엄격한 심판의 신">⚖️ 크리시스<span class="d-domain">심판</span></button>
+    <button style="border-color:var(--metal)" onclick="setDeity(this,'스펠라','metal')" title="酉 · 깐깐한 장인의 신">🔨 스펠라<span class="d-domain">장인</span></button>
+    <button style="border-color:var(--earth)" onclick="setDeity(this,'에르미탄','earth')" title="戌 · 완고한 믿음의 신">📿 에르미탄<span class="d-domain">믿음</span></button>
+    <button style="border-color:var(--water)" onclick="setDeity(this,'레바','water')" title="亥 · 게으른 축제의 신">🎊 레바<span class="d-domain">축제</span></button>
   </div>
 </div>
 
 <div id="main">
-  <div id="grid-panel">
+  <!-- Column 1: Grid Editor -->
+  <div id="col-grid">
     <div class="tab-row">
       <button class="tab-btn active" onclick="switchTab('reach',this)">사거리</button>
       <button class="tab-btn" onclick="switchTab('area',this)">효과범위</button>
@@ -124,39 +174,78 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
       <button onclick="autoGen('diamond')">다이아</button>
       <button onclick="autoGen('cross')">십자</button>
       <button onclick="autoGen('line')">직선</button>
+      <button onclick="autoGen('ring')">링</button>
       <select id="auto-n"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
       <button onclick="clearGrid()">초기화</button>
-      <span style="margin-left:auto;color:var(--dim);font-size:9px;">그리드:</span>
+      <span style="margin-left:auto;color:var(--dim);font-size:8px;">그리드:</span>
       <select id="grid-size" onchange="changeGridSize()"><option>5</option><option>7</option><option selected>9</option><option>11</option></select>
     </div>
     <div class="grid-options" id="area-options" style="display:none;">
       <label><input type="checkbox" id="opt-rotate" onchange="onOptChange()"> srpgRotate</label>
       <label><input type="checkbox" id="opt-self" onchange="onOptChange()"> srpgSelfTarget</label>
     </div>
+
+    <div class="sub-section">
+      <div class="sub-header">이펙트 프리뷰</div>
+      <div id="efk-preview-section">
+        <div class="efk-controls">
+          <select id="efk-anim-select"><option value="">-- 로딩 중 --</option></select>
+          <button onclick="efkPlay()">▶</button>
+          <button onclick="efkStop()">■</button>
+          <span style="font-size:8px;color:var(--dim);">속도:</span>
+          <button class="speed-active" onclick="efkSpeed(1,this)">1x</button>
+          <button onclick="efkSpeed(0.5,this)">.5</button>
+          <button onclick="efkSpeed(0.25,this)">¼</button>
+          <button onclick="efkSpeed(2,this)">2x</button>
+        </div>
+        <canvas id="efk-canvas" width="260" height="160"></canvas>
+        <div class="efk-info" id="efk-info">애니메이션 데이터를 로드합니다...</div>
+      </div>
+    </div>
   </div>
 
-  <div id="phase-panel">
+  <!-- Column 2: Phase Timeline -->
+  <div id="col-phase">
+    <div style="font-size:10px;font-weight:700;color:var(--accent);margin-bottom:4px;">Phase 파이프라인</div>
     <div class="phase-list" id="phase-list"></div>
     <div class="add-phase-area">
       <div class="add-dropdown" id="add-dropdown"></div>
       <button style="width:100%" onclick="toggleAdd()">+ Phase 추가</button>
     </div>
   </div>
-</div>
 
-<div id="param-panel">
-  <div class="param-empty" id="param-empty">Phase를 선택하면 파라미터가 표시됩니다</div>
-  <div id="param-content" style="display:none;"></div>
+  <!-- Column 3: Params + Unified Preview -->
+  <div id="col-right">
+    <div id="param-area">
+      <div class="param-empty" id="param-empty">Phase를 선택하면 파라미터가 표시됩니다</div>
+      <div id="param-content" style="display:none;"></div>
+    </div>
+
+    <div id="unified-section">
+      <div class="uni-header">통합 미리보기</div>
+      <canvas id="unified-canvas" width="200" height="200"></canvas>
+      <div class="uni-legend">
+        <span><i style="background:#3a88d5"></i>사거리</span>
+        <span><i style="background:#ff8800"></i>범위</span>
+        <span><i style="background:#ffe04a"></i>호버</span>
+      </div>
+      <div class="dir-previews" id="dir-previews">
+        <div><canvas class="dir-cv" data-dir="8" width="48" height="48"></canvas><div class="dir-label">▲상</div></div>
+        <div><canvas class="dir-cv" data-dir="4" width="48" height="48"></canvas><div class="dir-label">◀좌</div></div>
+        <div><canvas class="dir-cv" data-dir="6" width="48" height="48"></canvas><div class="dir-label">▶우</div></div>
+        <div><canvas class="dir-cv" data-dir="2" width="48" height="48"></canvas><div class="dir-label">▼하</div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="footer">
   <div id="note-area">
-    <div class="note-header"><span>노트태그 출력</span><button onclick="copyTags()">복사</button></div>
+    <div class="note-header"><span>노트태그</span><button onclick="copyTags()">복사</button></div>
     <textarea id="note-out" readonly></textarea>
   </div>
   <div class="footer-btns">
-    <button onclick="openSim()">&#9654; 시뮬레이션</button>
-    <button onclick="scrollToNote()">노트태그 보기</button>
+    <button onclick="openSim()">&#9654; 시뮬</button>
     <button class="btn-accent" onclick="doSave()">저장</button>
     <button onclick="doCancel()">취소</button>
   </div>
@@ -165,6 +254,7 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
 <div id="sim-modal" style="display:none;"></div>
 <div id="toast" class="toast"></div>
 
+<script src="../js/libs/effekseer.min.js"></script>
 <script>
 // ═══ INLINED PARSER ═══
 /**
@@ -548,7 +638,7 @@ textarea { background:#0d1117; color:var(--text); border:1px solid var(--border)
 // STATE
 // ═══════════════════════════════════════════════════════════════
 var state = {
-  skillName:'새 스킬', category:'melee', element:'wood',
+  skillName:'새 스킬', category:'melee', element:'wood', deity:'프레간',
   phases:[], reach:{coords:[],mode:'none',rangeN:null},
   area:[], options:{rotate:false,selfTarget:false},
   selPhase:-1
@@ -557,6 +647,11 @@ var gridTab='reach'; // 'reach' or 'area'
 
 var EL_COLORS = {wood:'#4a7c59',fire:'#c44536',earth:'#b5893a',metal:'#7a8b99',water:'#3a7bd5'};
 var CAT_COLORS = {move:'#3a7c59',atk:'#c44536',place:'#b5893a',react:'#4488cc'};
+
+// Animation database (loaded from Animations.json)
+var animDB = [];
+var efkReady = false;
+var efkCtx = null, efkGL = null, efkCache = {}, efkHandles = [], efkRaf = null, efkSpeedVal = 1.0;
 
 var ATOMS = {
   dash:{cat:'move',icon:'💨',label:'돌진'},
@@ -584,12 +679,15 @@ function setCat(btn, val) {
   document.querySelectorAll('#cat-group button').forEach(function(b){b.classList.remove('active');});
   btn.classList.add('active');
 }
-function setEl(btn, val) {
-  state.element = val;
+function setDeity(btn, deity, elem) {
+  state.deity = deity;
+  state.element = elem;
   document.querySelectorAll('#el-group button').forEach(function(b){b.classList.remove('active');});
   btn.classList.add('active');
   drawGrid();
 }
+// Legacy compat
+function setEl(btn, val) { setDeity(btn, '', val); }
 
 // ═══════════════════════════════════════════════════════════════
 // GRID EDITOR
@@ -609,7 +707,7 @@ function changeGridSize() { resizeCanvas(); drawGrid(); }
 
 function resizeCanvas() {
   var n = getGridN();
-  var maxW = document.getElementById('grid-panel').clientWidth - 20;
+  var maxW = document.getElementById('col-grid').clientWidth - 16;
   var ts = Math.min(Math.floor(maxW/n), 36);
   var cv = document.getElementById('grid-canvas');
   cv.width = n*ts; cv.height = n*ts;
@@ -667,6 +765,8 @@ function drawGrid() {
   c.fillText(gridTab==='reach'?'시전자':'타겟', cx, cy+ts*0.35);
 
   regen();
+  drawUnified();
+  drawDirPreviews();
 }
 
 // Canvas click handler
@@ -719,6 +819,12 @@ function autoGen(shape) {
     }
   } else if(shape==='line'){
     for(var i2=1;i2<=n;i2++) coords.push({dx:0,dy:-i2});
+  } else if(shape==='ring'){
+    for(var dx2=-n;dx2<=n;dx2++) for(var dy2=-n;dy2<=n;dy2++){
+      if(dx2===0&&dy2===0) continue;
+      var md=Math.abs(dx2)+Math.abs(dy2);
+      if(md>=n&&md<=n) coords.push({dx:dx2,dy:dy2});
+    }
   }
   setCurCoords(coords); drawGrid();
 }
@@ -727,6 +833,342 @@ function onOptChange(){
   state.options.rotate = document.getElementById('opt-rotate').checked;
   state.options.selfTarget = document.getElementById('opt-self').checked;
   regen();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// ANIMATION DATABASE + EFFEKSEER PREVIEW
+// ═══════════════════════════════════════════════════════════════
+function loadAnimDB() {
+  fetch(_efkBasePath + 'data/Animations.json')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      animDB = data || [];
+      var sel = document.getElementById('efk-anim-select');
+      sel.innerHTML = '<option value="">-- 애니메이션 선택 --</option>';
+      for(var i=1; i<animDB.length; i++){
+        var a = animDB[i];
+        if(!a || !a.effectName) continue;
+        var opt = document.createElement('option');
+        opt.value = a.effectName;
+        opt.dataset.idx = i;
+        opt.dataset.scale = a.scale || 100;
+        opt.textContent = '[' + i + '] ' + (a.name || a.effectName);
+        sel.appendChild(opt);
+      }
+      document.getElementById('efk-info').textContent = animDB.length-1 + '개 애니메이션 로드됨';
+    })
+    .catch(function(e){
+      document.getElementById('efk-info').textContent = 'Animations.json 로드 실패';
+      console.warn('[AnimDB]', e);
+    });
+}
+
+function getAnimName(animId) {
+  if(animId > 0 && animId < animDB.length && animDB[animId]) {
+    return animDB[animId].name || animDB[animId].effectName || ('ID:'+animId);
+  }
+  return 'ID:'+animId;
+}
+
+function getAnimEffectName(animId) {
+  if(animId > 0 && animId < animDB.length && animDB[animId]) {
+    return animDB[animId].effectName || '';
+  }
+  return '';
+}
+
+// Sync efk dropdown when hit phase anim changes
+function syncEfkSelect(animId) {
+  var sel = document.getElementById('efk-anim-select');
+  if(!sel) return;
+  var effectName = getAnimEffectName(animId);
+  if(effectName) {
+    for(var i=0; i<sel.options.length; i++){
+      if(sel.options[i].value === effectName){ sel.selectedIndex = i; break; }
+    }
+  }
+}
+
+// Effekseer init — compute base path dynamically for WASM/effect loading
+var _efkBasePath = (function(){
+  var p = location.pathname.replace(/\/tools\/.*$/, '/');
+  if(!p.endsWith('/')) p += '/';
+  return p;
+})();
+
+async function efkInit() {
+  if(efkReady) return;
+  var canvas = document.getElementById('efk-canvas');
+  if(typeof effekseer === 'undefined') { document.getElementById('efk-info').textContent = 'Effekseer 라이브러리 없음'; return; }
+  efkGL = canvas.getContext('webgl2', {premultipliedAlpha:true, alpha:true})
+       || canvas.getContext('webgl',  {premultipliedAlpha:true, alpha:true});
+  if(!efkGL) { document.getElementById('efk-info').textContent = 'WebGL 미지원'; return; }
+  var wasmPath = _efkBasePath + 'js/libs/effekseer.wasm';
+  console.log('[Efk] WASM path:', wasmPath);
+  if(!window._efkRuntimeInit){
+    window._efkRuntimeInit = new Promise(function(res, rej){
+      effekseer.initRuntime(wasmPath, function(){
+        console.log('[Efk] Runtime initialized OK');
+        res();
+      }, function(e){
+        console.error('[Efk] initRuntime failed:', e);
+        rej(e || 'WASM init failed');
+      });
+    });
+  }
+  try {
+    await window._efkRuntimeInit;
+  } catch(e) {
+    window._efkRuntimeInit = null; // allow retry
+    throw e;
+  }
+  efkCtx = effekseer.createContext();
+  efkCtx.init(efkGL, {instanceMaxCount:2000, squareMaxCount:8000});
+  efkCtx.setProjectionPerspective(30, canvas.width/canvas.height, 1, 1000);
+  efkCtx.setCameraLookAt(0,0,30, 0,0,0, 0,1,0);
+  efkReady = true;
+  console.log('[Efk] Context ready');
+}
+
+function efkPlay() {
+  var sel = document.getElementById('efk-anim-select');
+  var effectName = sel.value;
+  if(!effectName) { toast('애니메이션을 선택하세요'); return; }
+  efkInit().then(function(){
+    efkStop();
+    var url = _efkBasePath + 'effects/' + effectName + '.efkefc';
+    var scaleRaw = sel.selectedOptions[0] ? parseInt(sel.selectedOptions[0].dataset.scale) : 100;
+    var scale = Math.min((scaleRaw || 100) / 100, 1.5);
+    var areaCells = state.area.length > 1 ? state.area : null;
+    if(efkCache[effectName]) { _efkDoPlay(efkCache[effectName], scale, areaCells); return; }
+    var eff = efkCtx.loadEffect(url, 1.0, function(){
+      efkCache[effectName] = eff;
+      _efkDoPlay(eff, scale, areaCells);
+    }, function(){
+      document.getElementById('efk-info').textContent = '이펙트 로드 실패: ' + effectName;
+    });
+  }).catch(function(e){
+    document.getElementById('efk-info').textContent = 'Effekseer 초기화 실패: ' + (e||'unknown');
+    console.error('[Efk] init error:', e);
+  });
+}
+
+function _efkDoPlay(eff, scale, areaCells) {
+  var GRID_UNIT = 2.0;
+  efkHandles = [];
+  if(areaCells && areaCells.length > 1) {
+    var perScale = Math.min(scale, 1.5) / Math.max(1, Math.sqrt(areaCells.length)*0.8);
+    var cs = Math.min(perScale, 0.9);
+    for(var i=0;i<areaCells.length;i++){
+      var wx = areaCells[i].dx * GRID_UNIT;
+      var wy = -areaCells[i].dy * GRID_UNIT;
+      var h = efkCtx.play(eff, wx, wy, 0);
+      if(h) h.setScale(cs, cs, cs);
+      efkHandles.push(h);
+    }
+  } else {
+    var cs2 = Math.min(scale, 1.5);
+    var h2 = efkCtx.play(eff, 0, 0, 0);
+    if(h2) h2.setScale(cs2, cs2, cs2);
+    efkHandles.push(h2);
+  }
+  var info = document.getElementById('efk-info');
+  var sel = document.getElementById('efk-anim-select');
+  var opt = sel.selectedOptions[0];
+  info.textContent = (opt ? opt.textContent : '') + ' 재생 중...';
+  _efkLoop();
+}
+
+function _efkLoop() {
+  if(efkRaf) cancelAnimationFrame(efkRaf);
+  var last = performance.now();
+  function tick(now) {
+    var dt = (now - last)/1000; last = now;
+    efkGL.clearColor(0,0,0,0);
+    efkGL.clear(efkGL.COLOR_BUFFER_BIT|efkGL.DEPTH_BUFFER_BIT);
+    var alive = efkHandles.some(function(h){ return h && h.exists; });
+    if(alive) {
+      efkCtx.update(dt * 60 * efkSpeedVal);
+      efkCtx.setProjectionPerspective(30, efkGL.canvas.width/efkGL.canvas.height, 1, 1000);
+      efkCtx.setCameraLookAt(0,0,30, 0,0,0, 0,1,0);
+      efkCtx.draw();
+      efkRaf = requestAnimationFrame(tick);
+    } else {
+      efkHandles = []; efkRaf = null;
+      document.getElementById('efk-info').textContent = '재생 완료';
+    }
+  }
+  efkRaf = requestAnimationFrame(tick);
+}
+
+function efkStop() {
+  if(efkCtx && efkHandles.length) {
+    for(var i=0;i<efkHandles.length;i++) if(efkHandles[i]) efkHandles[i].stop();
+  }
+  efkHandles = [];
+  if(efkRaf) { cancelAnimationFrame(efkRaf); efkRaf = null; }
+  if(efkGL) { efkGL.clearColor(0,0,0,0); efkGL.clear(efkGL.COLOR_BUFFER_BIT|efkGL.DEPTH_BUFFER_BIT); }
+}
+
+function efkSpeed(val, btn) {
+  efkSpeedVal = val;
+  var btns = document.querySelectorAll('#efk-preview-section .efk-controls button');
+  btns.forEach(function(b){ b.classList.remove('speed-active'); });
+  if(btn) btn.classList.add('speed-active');
+}
+
+// Auto-play on select change
+document.getElementById('efk-anim-select').addEventListener('change', function(){
+  if(this.value) efkPlay();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// UNIFIED PREVIEW (Reach + Area combined with hover splash)
+// ═══════════════════════════════════════════════════════════════
+var uniHover = null; // {dx,dy} of hovered reach cell
+
+function drawUnified() {
+  var cv = document.getElementById('unified-canvas');
+  if(!cv) return;
+  var UNI_N = 15; // 15x15 grid
+  var ts = Math.floor(cv.width / UNI_N);
+  cv.height = UNI_N * ts;
+  cv.width = UNI_N * ts;
+  var c = cv.getContext('2d');
+  var half = Math.floor(UNI_N/2);
+  c.clearRect(0,0,cv.width,cv.height);
+
+  // Grid lines
+  c.strokeStyle='#1a2035'; c.lineWidth=0.5;
+  for(var i=0;i<=UNI_N;i++){
+    c.beginPath();c.moveTo(i*ts,0);c.lineTo(i*ts,UNI_N*ts);c.stroke();
+    c.beginPath();c.moveTo(0,i*ts);c.lineTo(UNI_N*ts,i*ts);c.stroke();
+  }
+
+  // Reach tiles
+  var ec = EL_COLORS[state.element]||'#3a88d5';
+  state.reach.coords.forEach(function(co){
+    var px=(half+co.dx)*ts, py=(half+co.dy)*ts;
+    if(px>=0&&px<UNI_N*ts&&py>=0&&py<UNI_N*ts){
+      c.fillStyle=ec+'33'; c.fillRect(px+1,py+1,ts-2,ts-2);
+      c.strokeStyle=ec+'66'; c.lineWidth=0.5; c.strokeRect(px+1,py+1,ts-2,ts-2);
+    }
+  });
+
+  // If hovering a reach cell, show area splash at that position
+  if(uniHover && state.area.length) {
+    state.area.forEach(function(co){
+      var rx = half + uniHover.dx + co.dx;
+      var ry = half + uniHover.dy + co.dy;
+      if(rx>=0&&rx<UNI_N&&ry>=0&&ry<UNI_N){
+        c.fillStyle='#ffe04a55';
+        c.fillRect(rx*ts+1,ry*ts+1,ts-2,ts-2);
+      }
+    });
+  }
+
+  // Area tiles (at center for reference)
+  state.area.forEach(function(co){
+    // Only show if NOT hovering (to avoid clutter)
+    if(!uniHover) {
+      var px=(half+co.dx)*ts, py=(half+co.dy)*ts;
+      if(px>=0&&px<UNI_N*ts&&py>=0&&py<UNI_N*ts){
+        c.fillStyle='#ff880033'; c.fillRect(px+1,py+1,ts-2,ts-2);
+        c.strokeStyle='#ff880066'; c.lineWidth=0.5; c.strokeRect(px+1,py+1,ts-2,ts-2);
+      }
+    }
+  });
+
+  // Center marker
+  var cx2=half*ts+ts/2, cy2=half*ts+ts/2;
+  c.fillStyle='#3a88d5'; c.font='bold '+Math.round(ts*0.5)+'px sans-serif';
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillText('★', cx2, cy2);
+
+  // Hover indicator
+  if(uniHover){
+    var hx=(half+uniHover.dx)*ts, hy=(half+uniHover.dy)*ts;
+    c.strokeStyle='#fff'; c.lineWidth=1.5;
+    c.strokeRect(hx+1,hy+1,ts-2,ts-2);
+  }
+}
+
+// Unified canvas hover handler
+(function(){
+  var cv = document.getElementById('unified-canvas');
+  if(!cv) return;
+  cv.addEventListener('mousemove', function(e){
+    var UNI_N=15, ts=Math.floor(cv.width/UNI_N), half=Math.floor(UNI_N/2);
+    var rect=cv.getBoundingClientRect();
+    var gx=Math.floor((e.clientX-rect.left)/ts)-half;
+    var gy=Math.floor((e.clientY-rect.top)/ts)-half;
+    if(hasCoord(state.reach.coords,gx,gy)){
+      uniHover={dx:gx,dy:gy};
+    } else {
+      uniHover=null;
+    }
+    drawUnified();
+  });
+  cv.addEventListener('mouseleave', function(){ uniHover=null; drawUnified(); });
+})();
+
+// Direction rotation helper
+function rotateTile(t, dir) {
+  switch(dir){
+    case 8: return {dx:t.dx, dy:t.dy};       // up (no rotation)
+    case 6: return {dx:-t.dy, dy:t.dx};       // right (90° CW)
+    case 2: return {dx:-t.dx, dy:-t.dy};      // down (180°)
+    case 4: return {dx:t.dy, dy:-t.dx};       // left (90° CCW)
+    default: return {dx:t.dx, dy:t.dy};
+  }
+}
+
+function drawDirPreviews() {
+  var canvases = document.querySelectorAll('.dir-cv');
+  canvases.forEach(function(cv){
+    var dir = parseInt(cv.dataset.dir);
+    var N = 9, ts = Math.floor(cv.width/N);
+    cv.height = N*ts; cv.width = N*ts;
+    var ctx = cv.getContext('2d');
+    var half = Math.floor(N/2);
+    ctx.clearRect(0,0,cv.width,cv.height);
+
+    // Grid
+    ctx.strokeStyle='#1a2035'; ctx.lineWidth=0.3;
+    for(var i=0;i<=N;i++){
+      ctx.beginPath();ctx.moveTo(i*ts,0);ctx.lineTo(i*ts,N*ts);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(0,i*ts);ctx.lineTo(N*ts,i*ts);ctx.stroke();
+    }
+
+    // Rotated reach
+    var ec = EL_COLORS[state.element]||'#3a88d5';
+    state.reach.coords.forEach(function(co){
+      var rot = rotateTile(co, dir);
+      var px=(half+rot.dx)*ts, py=(half+rot.dy)*ts;
+      if(px>=0&&px<N*ts&&py>=0&&py<N*ts){
+        ctx.fillStyle=ec+'44'; ctx.fillRect(px,py,ts,ts);
+      }
+    });
+
+    // Rotated area (at first reach cell for preview)
+    if(state.reach.coords.length>0 && state.area.length>0){
+      var firstReach = rotateTile(state.reach.coords[0], dir);
+      state.area.forEach(function(co){
+        var rotA = state.options.rotate ? rotateTile(co, dir) : co;
+        var rx=half+firstReach.dx+rotA.dx, ry=half+firstReach.dy+rotA.dy;
+        if(rx>=0&&rx<N&&ry>=0&&ry<N){
+          ctx.fillStyle='#ff880055'; ctx.fillRect(rx*ts,ry*ts,ts,ts);
+        }
+      });
+    }
+
+    // Center
+    var cx3=half*ts+ts/2, cy3=half*ts+ts/2;
+    ctx.fillStyle='#3a88d5'; ctx.font='bold '+Math.round(ts*0.6)+'px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('★', cx3, cy3);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -881,7 +1323,7 @@ function renderParams() {
   }
   if(p.type==='hit'){
     h += '<div class="param-row"><label></label><span style="color:var(--dim);font-size:9px;">효과범위 → 그리드 에디터의 "효과범위" 탭에서 편집</span></div>';
-    h += numRow('anim','애니메이션ID',0,999,p.anim||1);
+    h += animSelectRow('anim','애니메이션',p.anim||1);
     h += radioRow('targetTeam','대상',{enemy:'적',ally:'아군',all:'전체'},p.targetTeam||'enemy');
     h += checkRow('heal','회복(힐)',p.heal||false);
     h += rangeRow('bonusDamage','보너스뎀',0,2,0.1,p.bonusDamage||0);
@@ -968,6 +1410,35 @@ function onCondSel(sel){
   if(sel.value==='__custom'){ ci.style.display=''; ci.focus(); return; }
   ci.style.display='none';
   setParamText('if',sel.value);
+}
+
+function animSelectRow(key, label, curId) {
+  var h = '<div class="param-row"><label>' + label + '</label>';
+  h += '<select onchange="onAnimSelect(this)" style="width:160px;">';
+  h += '<option value="0">없음 (0)</option>';
+  for(var i=1; i<animDB.length; i++){
+    var a = animDB[i];
+    if(!a || !a.effectName) continue;
+    h += '<option value="'+i+'"'+(i===curId?' selected':'')+'>['+ i +'] '+ esc(a.name||a.effectName) +'</option>';
+  }
+  h += '</select>';
+  h += '<button onclick="efkPlayFromParam()" style="font-size:9px;padding:2px 6px;" title="프리뷰 재생">▶</button>';
+  h += '</div>';
+  return h;
+}
+
+function onAnimSelect(sel) {
+  var id = parseInt(sel.value) || 0;
+  setParamNum('anim', id);
+  syncEfkSelect(id);
+}
+
+function efkPlayFromParam() {
+  if(state.selPhase < 0) return;
+  var p = state.phases[state.selPhase];
+  if(!p || !p.anim) return;
+  syncEfkSelect(p.anim);
+  efkPlay();
 }
 
 function setParam(key,val,btn){
@@ -1351,6 +1822,9 @@ function init(){
   drawGrid();
   renderPhases();
   regen();
+  loadAnimDB();
+  drawUnified();
+  drawDirPreviews();
   // Listen for postMessage (popup mode)
   window.addEventListener('message',function(e){
     if(e.data&&e.data.type==='srpgSkillLoad'){

@@ -120,6 +120,9 @@
             console.log("[SRPG] Battle mode:", this._battleMode, "Ambush:", this._battleModeParams.ambush);
 
             this._collectUnits();
+
+            // 파티 슬롯 → 실제 액터 바인딩
+            this._resolvePartySlots();
             if (this._units.length === 0) {
                 console.warn("[SRPG] No units found!");
                 this._battleActive = false;
@@ -150,6 +153,50 @@
         },
 
         // ─── 기습 적용 ───
+        // ─── 파티 슬롯 → 실제 $gameParty 멤버 바인딩 ───
+        _resolvePartySlots() {
+            const slotUnits = this._units.filter(u => u.partySlot > 0)
+                .sort((a, b) => a.partySlot - b.partySlot);
+            if (slotUnits.length === 0) return;
+
+            // $gameParty.members()에서 현재 파티원 가져오기
+            const members = $gameParty ? $gameParty.members().slice() : [];
+
+            // 기습 판정: 아군이 기습당하는 경우 슬롯 배정을 셔플
+            const ambush = this._battleModeParams ? this._battleModeParams.ambush : null;
+            const ambushTeam = ambush ? Number(ambush) : 0;
+            const playerAmbushed = ambushTeam > 0 && !SrpgAlliance.isPlayerTeam(ambushTeam);
+
+            if (playerAmbushed && members.length > 1) {
+                // Fisher-Yates 셔플
+                for (let i = members.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [members[i], members[j]] = [members[j], members[i]];
+                }
+                console.log("[SRPG] Party slots shuffled (ambush)");
+            }
+
+            for (const su of slotUnits) {
+                const idx = su.partySlot - 1; // 1-based → 0-based
+                if (idx >= 0 && idx < members.length) {
+                    const actor = members[idx];
+                    su._bindActorData(actor.actorId());
+                    // Game_Actor 인스턴스에서 레벨 동기화
+                    su.level = actor.level || 1;
+                    console.log("[SRPG] Slot " + su.partySlot + " → Actor " + su.actorId + " (" + (su.name || "?") + ")");
+                } else {
+                    // 파티원 수 부족 → 슬롯 비활성화
+                    su._dead = true;
+                    su.hp = 0;
+                    if (su.event) {
+                        su.event.setTransparent(true);
+                        su.event.setThrough(true);
+                    }
+                    console.log("[SRPG] Slot " + su.partySlot + " deactivated (no party member)");
+                }
+            }
+        },
+
         _applyAmbush() {
             const ambush = this._battleModeParams.ambush;
             if (!ambush || ambush === "none") return;

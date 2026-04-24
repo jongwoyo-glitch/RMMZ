@@ -191,7 +191,8 @@
     'srpgProjFrames', 'srpgProjFrameSpeed', 'srpgProjSpeed', 'srpgProjScale',
     'srpgProjRotate', 'srpgProjTrail', 'srpgProjTrailAlpha',
     'srpgProjImpactAnim', 'srpgProjImpactSe',
-    'srpgArcHeight', 'srpgCameraPan', 'srpgScatterRadius', 'srpgWarningDuration',
+    'srpgArcHeight', 'srpgArcLaunchSpeed', 'srpgArcFlightSpeed', 'srpgArcFallSpeed',
+    'srpgCameraPan', 'srpgScatterRadius', 'srpgWarningDuration',
     'srpgBeamStart', 'srpgBeamMid', 'srpgBeamEnd',
     'srpgBeamDuration', 'srpgBeamWidth', 'srpgHitCount', 'srpgHitInterval'
   ];

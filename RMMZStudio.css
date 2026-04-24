@@ -3,6 +3,11 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        input, textarea, select, [contenteditable] {
+            -webkit-user-select: text;
+            user-select: text;
         }
 
         body {
@@ -11,6 +16,11 @@
             color: #e0e0e0;
             height: 100vh;
             overflow: hidden;
+            padding-top: max(env(safe-area-inset-top, 0px), 20px);
+            overscroll-behavior: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         #appRoot {
@@ -727,6 +737,11 @@
             flex: 1;
             overflow: hidden;
             cursor: crosshair;
+            touch-action: none;
+        }
+        /* iPad: remove 300ms tap delay on palettes, allow scroll */
+        .tile-palette, .sidebar {
+            touch-action: manipulation;
         }
         #mapCanvasWrap.panning {
             cursor: grabbing !important;
@@ -1224,6 +1239,20 @@
         .srpg-range-editor .sre-override button{padding:2px 8px;font-size:10px;background:#0f3460;border:1px solid #16213e;color:#e0e0e0;border-radius:3px;cursor:pointer}
         .srpg-range-editor .sre-override button:hover{background:#1a1a2e;border-color:#e74c6f}
         .srpg-range-editor.sre-readonly canvas{cursor:default;opacity:.5}
+        .srpg-range-editor .sre-type-toggle{display:inline-flex;gap:0;border:1px solid #16213e;border-radius:4px;overflow:hidden;margin-left:8px}
+        .srpg-range-editor .sre-type-toggle button{padding:4px 14px;font-size:11px;font-weight:bold;border:none;background:#0f3460;color:#888;cursor:pointer;transition:all .2s;min-height:32px}
+        .srpg-range-editor .sre-type-toggle button.active{background:#e55050;color:#fff}
+        .srpg-range-editor .sre-type-toggle button:not(.active):hover{background:#1a1a2e;color:#e0e0e0}
+        .srpg-range-editor .sre-options{display:flex;gap:14px;margin-bottom:10px;font-size:11px;color:#e0e0e0;flex-wrap:wrap}
+        .srpg-range-editor .sre-options label{display:flex;align-items:center;gap:4px;cursor:pointer;min-height:28px}
+        .srpg-range-editor .sre-options input[type="checkbox"]{width:16px;height:16px;cursor:pointer}
+        .srpg-range-editor .sre-tools .sre-btn-reach{border-color:#3388ff55}
+        .srpg-range-editor .sre-tools .sre-btn-area{border-color:#e5505055}
+        .srpg-range-editor .sre-tools .sre-tool-sep{color:#555;font-size:12px;display:flex;align-items:center;padding:0 2px}
+        .srpg-range-editor .sre-tools button{min-height:28px;min-width:44px}
+        .srpg-range-editor .sre-unified-wrap{margin-top:10px;padding:8px;background:#111320;border:1px solid #16213e;border-radius:4px}
+        .srpg-range-editor .sre-unified-wrap h4{font-size:11px;color:#aaa;margin:0 0 6px;text-align:center}
+        .srpg-range-editor .sre-unified-wrap canvas{display:block;margin:0 auto;border:1px solid #16213e;border-radius:3px;cursor:crosshair}
 
         /* ─── 가호(원국) 섹션 ─── */
         .gaho-pillars{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
@@ -1305,4 +1334,4 @@
         .gaho-dm-preset{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid #2e3448;background:#161a24;color:#aaa}
         .gaho-dm-preset:hover{border-color:#d4a843;color:#d4a843}
         .gaho-dm-gen-btn{width:100%;padding:8px;margin-top:10px;background:linear-gradient(135deg,#0f3460,#1a1a2e);border:1px solid #d4a843;border-radius:6px;color:#d4a843;font-size:12px;font-weight:700;letter-spacing:3px;cursor:pointer}
-        .gaho-dm-gen-btn:hover{background:linear-gradient(135deg,#1a1a2e,#0f3460)}
+        .gaho-dm-gen-btn:hover{background:linear-gr

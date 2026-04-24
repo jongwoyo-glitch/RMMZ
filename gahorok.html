@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>가호록 v11</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700;900&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --wood:#4a7c59;--fire:#c44536;--earth:#b5893a;--metal:#7a8b99;--water:#3a7bd5;
+  --bg:#0c0e14;--bg2:#12151e;--card:#161a24;
+  --bdr:#222738;--bdr2:#2e3448;
+  --txt:#e8e4d9;--dim:#8a8778;--fnt:#444;
+  --gold:#d4a843;--gdim:rgba(212,168,67,.1);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif;min-height:100vh;}
+.ct{max-width:420px;margin:0 auto;padding:0 12px 60px;}
+.hdr{text-align:center;padding:24px 0 16px;}
+.hdr-t{font-family:'Noto Serif KR',serif;font-weight:900;font-size:11px;letter-spacing:6px;color:var(--gold);opacity:.5;}
+.hdr-n{font-family:'Noto Serif KR',serif;font-weight:700;font-size:24px;margin-top:5px;}
+.hdr-i{font-size:11px;color:var(--dim);margin-top:4px;}
+.hdr-s{font-size:9px;color:var(--dim);margin-top:2px;opacity:.6;}
+.name-labels{font-size:8px;color:var(--fnt);margin-top:2px;letter-spacing:1px;}
+.name-labels span{margin:0 4px;}
+.badge{display:inline-block;font-size:8px;padding:2px 7px;border-radius:3px;background:var(--gdim);color:var(--gold);font-weight:700;margin-top:3px;}
+.synopsis{font-size:10px;color:var(--dim);line-height:1.7;padding:10px 12px;margin:6px 0 0;border-left:2px solid var(--bdr2);text-align:left;animation:fadeIn .6s ease both;}
+.syn-hl{color:var(--txt);font-weight:600;}
+.syn-el{font-weight:600;}
+.syn-h{color:#c47a9e;}
+.tog{display:flex;margin:14px 0 4px;background:var(--bg2);border-radius:7px;padding:2px;border:1px solid var(--bdr);}
+.tog-b{flex:1;text-align:center;padding:6px 0;font-size:10px;font-weight:500;color:var(--dim);border-radius:5px;cursor:pointer;}
+.tog-b.on{background:var(--card);color:var(--txt);box-shadow:0 1px 6px rgba(0,0,0,.3);}
+.tabs{display:flex;margin:14px 0 0;border-bottom:1px solid var(--bdr);}
+.tab{flex:1;text-align:center;padding:8px 0;font-size:11px;font-weight:500;color:var(--dim);cursor:pointer;position:relative;}
+.tab.on{color:var(--gold);}
+.tab.on::after{content:'';position:absolute;bottom:-1px;left:22%;right:22%;height:2px;background:var(--gold);border-radius:1px;}
+.tc{display:none;}.tc.on{display:block;}
+.stit{font-family:'Noto Serif KR',serif;font-size:12px;color:var(--gold);text-align:center;letter-spacing:3px;margin:18px 0 4px;}
+.ssub{font-size:9px;color:var(--dim);text-align:center;margin-bottom:12px;}
+.col-heads{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:3px;}
+.col-h{text-align:center;font-size:10px;color:var(--dim);font-weight:500;letter-spacing:1px;}
+
+.saju-table{width:100%;border-collapse:separate;border-spacing:0;border-radius:14px;overflow:hidden;border:2px solid var(--bdr2);background:var(--card);margin-bottom:10px;}
+.saju-table tr:first-child td{border-bottom:1px solid var(--bdr);}
+.saju-table td{width:25%;padding:4px;vertical-align:middle;position:relative;}
+.row-label{position:absolute;top:3px;left:4px;font-size:6px;letter-spacing:1px;color:var(--fnt);font-weight:500;z-index:2;}
+
+/* ===== FRAME ===== */
+.frame{
+  position:relative;border-radius:10px;
+  border:2px solid var(--bdr);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  transition:all .45s cubic-bezier(.22,1,.36,1);overflow:hidden;
+  /* ALL frames same size */
+  margin:2px;
+  padding:14px 4px;
+}
+.fr-emoji{font-size:24px;line-height:1;transition:all .45s;filter:saturate(.25) brightness(.55);}
+.fr-name{font-family:'Noto Serif KR',serif;font-size:11px;font-weight:700;margin-top:3px;color:var(--dim);transition:all .45s;text-align:center;line-height:1.2;}
+.fr-sub{font-size:7px;color:#fff;-webkit-text-stroke:.5px var(--el-dark);paint-order:stroke fill;margin-top:1px;transition:all .45s;}
+
+/* 양: faint radial default + text styling */
+.frame.yang{background:radial-gradient(circle at center, var(--el-soft) 0%, transparent 55%),var(--bg2);}
+.frame.yang .fr-name{color:#fff;-webkit-text-stroke:1px var(--el-dark);paint-order:stroke fill;}
+.frame.yang .fr-emoji{filter:saturate(.35) brightness(.6) drop-shadow(0 0 2px var(--el-soft));}
+/* 음: ring pushed to edges, dimmed to match yang */
+.frame.yin{background:radial-gradient(circle at center, transparent 65%, var(--el-soft) 95%),var(--bg2);}
+.frame.yin .fr-name{color:#fff;-webkit-text-stroke:1px var(--el-dark);paint-order:stroke fill;}
+.frame.yin .fr-emoji{filter:saturate(.3) brightness(.55);}
+
+/* ===== ACT: strong gradients + full saturation ===== */
+.frame.act{
+  box-shadow:0 0 12px var(--el-glow);
+}
+.frame.act .fr-emoji{filter:saturate(1.1) brightness(1.05);}
+/* act 양: center→corners X강하게 */
+.frame.act.yang{background:
+  linear-gradient(135deg, transparent 10%, var(--el-hot) 50%, transparent 90%),
+  linear-gradient(45deg, transparent 10%, var(--el-hot) 50%, transparent 90%),
+  var(--bg2);}
+.frame.act.yang .fr-emoji{filter:saturate(1.2) brightness(1.1) drop-shadow(0 0 10px var(--el-hot));}
+.frame.act.yang .fr-name{-webkit-text-stroke:1.2px var(--el-dark);}
+/* act 음: corners→center 강하게 */
+.frame.act.yin{background:
+  linear-gradient(135deg, var(--el-hot) 0%, transparent 45%),
+  linear-gradient(225deg, var(--el-hot) 0%, transparent 45%),
+  linear-gradient(315deg, var(--el-hot) 0%, transparent 45%),
+  linear-gradient(45deg, var(--el-hot) 0%, transparent 45%),
+  var(--bg2);}
+.frame.act.yin .fr-emoji{filter:saturate(1.1) brightness(1);}
+
+/* ===== MID: soft gradients ===== */
+.frame.mid{
+  box-shadow:0 0 6px var(--el-glow);
+}
+.frame.mid .fr-emoji{filter:saturate(.65) brightness(.8);}
+/* mid 양: 원형 from center, 은은 */
+.frame.mid.yang{background:radial-gradient(circle at center, var(--el-soft) 0%, transparent 65%),var(--bg2);}
+.frame.mid.yang .fr-emoji{filter:saturate(.7) brightness(.85) drop-shadow(0 0 3px var(--el-soft));}
+/* mid 음: 테두리에 가까운 링, 양과 유사 밝기 */
+.frame.mid.yin{background:radial-gradient(circle at center, transparent 60%, var(--el-soft) 90%),var(--bg2);}
+.frame.mid.yin .fr-emoji{filter:saturate(.6) brightness(.8);}
+
+
+/* ===== LOCKED ===== */
+.frame.locked{border:1.5px dashed var(--fnt);background:var(--bg2)!important;margin:8px;padding:10px 4px;}
+.frame.locked .fr-emoji{font-size:16px;filter:blur(3px) saturate(0)!important;}
+.frame.locked .fr-name{filter:blur(3px);color:var(--fnt)!important;-webkit-text-stroke:0!important;}
+.frame.locked .fr-sub{visibility:hidden;}
+.fr-lock{position:absolute;font-size:14px;opacity:.2;}
+
+/* Support */
+.sup{margin:0 0 12px;padding:9px 10px;background:var(--card);border:1px solid var(--bdr);border-radius:9px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;}
+.sup-chip{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;}
+.sup-link{font-size:11px;font-weight:500;}
+.sup-desc{width:100%;text-align:center;font-size:9px;color:var(--dim);margin-top:3px;line-height:1.4;}
+.pm-g{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:12px;}
+.pm-c{text-align:center;padding:3px;}.pm-l{font-size:9px;color:var(--gold);font-weight:500;}.pm-d{font-size:7px;color:var(--dim);margin-top:1px;line-height:1.3;}
+.div{height:1px;background:linear-gradient(90deg,transparent,var(--bdr),transparent);margin:2px 0 16px;}
+.el-ch{display:flex;justify-content:space-between;align-items:flex-end;height:120px;padding:0 6px;margin-bottom:6px;}
+.el-w{display:flex;flex-direction:column;align-items:center;flex:1;height:100%;justify-content:flex-end;}
+.el-bar{width:24px;border-radius:4px 4px 2px 2px;position:relative;min-height:3px;}
+.el-v{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;}
+.el-l{margin-top:5px;font-size:9px;font-weight:500;}
+.bw{background:linear-gradient(180deg,var(--wood),#2d4d35);}.bf{background:linear-gradient(180deg,var(--fire),#6d2219);}.be{background:linear-gradient(180deg,var(--earth),#6d511e);}.bm{background:linear-gradient(180deg,var(--metal),#3d464d);}.ba{background:linear-gradient(180deg,#3a7bd5,#1a3a6a);}
+.st-g{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:18px;}
+.st-c{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px;}
+.st-l{font-size:8px;color:var(--dim);letter-spacing:1px;margin-bottom:3px;}
+.st-v{font-family:'Noto Serif KR',serif;font-size:18px;font-weight:700;}
+.st-bg{height:2px;background:rgba(255,255,255,.06);border-radius:1px;margin-top:5px;overflow:hidden;}
+.st-f{height:100%;border-radius:1px;}
+.cpt{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:12px;margin-top:18px;}
+.cpt-t{font-size:10px;font-weight:700;margin-bottom:8px;}
+.cpt-r{display:flex;align-items:center;gap:7px;padding:6px 0;}.cpt-r+.cpt-r{border-top:1px solid rgba(255,255,255,.04);}
+.cpt-i{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;}
+.cpt-i.p{background:rgba(92,184,122,.12);color:#5cb87a;}.cpt-i.n{background:rgba(196,69,54,.12);color:#c44536;}
+.cpt-x{font-size:10px;color:var(--dim);line-height:1.3;}.cpt-x strong{color:var(--txt);font-weight:500;}
+/* ===== PERSONALITY PARAMS ===== */
+.prm-hdr{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;}
+.prm-hdr .stit{margin:0;}
+.prm-info-btn{width:20px;height:20px;border-radius:50%;border:1px solid var(--bdr2);background:var(--bg2);color:var(--dim);font-size:10px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;}
+.prm-info-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gdim);}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .25s ease;}
+.modal-box{background:var(--card);border:1px solid var(--bdr2);border-radius:14px;max-width:380px;width:100%;max-height:90vh;overflow-y:auto;padding:18px 14px;position:relative;}
+.modal-close{position:absolute;top:10px;right:12px;font-size:18px;color:var(--dim);cursor:pointer;background:none;border:none;line-height:1;}
+.modal-close:hover{color:var(--txt);}
+.modal-title{font-family:'Noto Serif KR',serif;font-size:13px;color:var(--gold);text-align:center;letter-spacing:3px;margin-bottom:4px;}
+.modal-sub{font-size:9px;color:var(--dim);text-align:center;margin-bottom:14px;}
+.penta-wrap{display:flex;justify-content:center;margin-bottom:10px;}
+.modal-legend{display:flex;gap:12px;justify-content:center;margin-bottom:10px;}
+.modal-leg-item{display:flex;align-items:center;gap:4px;font-size:8px;color:var(--dim);}
+.modal-leg-line{width:16px;height:2px;border-radius:1px;}
+.modal-tbl{width:100%;border-collapse:collapse;margin-top:8px;}
+.modal-tbl th{font-size:8px;color:var(--dim);font-weight:500;padding:4px 3px;border-bottom:1px solid var(--bdr);text-align:left;}
+.modal-tbl td{font-size:9px;padding:4px 3px;border-bottom:1px solid rgba(255,255,255,.03);}
+.modal-tbl .ss-name{font-weight:700;color:var(--gold);}
+.modal-tbl .ss-ax{color:var(--txt);}
+.modal-tbl .ss-ex{color:var(--dim);font-size:8px;}
+.prm-sec{animation:fadeIn .5s ease both;}
+.prm-group{background:rgba(255,255,255,.02);border:1px solid var(--bdr);border-radius:10px;padding:10px 8px 4px;margin-top:10px;}
+.prm-group-title{font-family:'Noto Serif KR',serif;font-size:10px;color:var(--gold);text-align:center;letter-spacing:3px;margin-bottom:2px;opacity:.7;}
+.prm-group-sub{font-size:7px;color:var(--dim);text-align:center;margin-bottom:8px;}
+.prm-row-wrap{display:flex;align-items:flex-start;gap:6px;margin-bottom:2px;}
+.prm-row-bar{flex:0 0 52%;}
+.prm-row{display:flex;align-items:center;gap:0;}
+.prm-lbl{width:26px;font-size:6px;font-weight:700;letter-spacing:.3px;line-height:1.2;flex-shrink:0;}
+.prm-lbl.l{text-align:right;padding-right:3px;color:var(--fire);}
+.prm-lbl.r{text-align:left;padding-left:3px;color:var(--water);}
+.prm-track{flex:1;height:7px;background:var(--bg2);border-radius:4px;position:relative;border:1px solid var(--bdr);overflow:visible;}
+.prm-mid{position:absolute;left:50%;top:-1px;bottom:-1px;width:1px;background:var(--bdr2);z-index:1;}
+.prm-fill{position:absolute;top:1px;bottom:1px;border-radius:3px;transition:all .6s cubic-bezier(.22,1,.36,1);}
+.prm-fill.over{background:linear-gradient(90deg,transparent,var(--fire));right:50%;border-radius:3px 0 0 3px;}
+.prm-fill.under{background:linear-gradient(90deg,var(--water),transparent);left:50%;border-radius:0 3px 3px 0;}
+.prm-dot{position:absolute;top:50%;width:5px;height:5px;border-radius:50%;background:var(--gold);border:1px solid var(--bg);transform:translate(-50%,-50%);z-index:3;box-shadow:0 0 4px rgba(212,168,67,.4);transition:left .6s cubic-bezier(.22,1,.36,1);}
+.prm-row-info{flex:1;padding-top:0px;min-width:0;}
+.prm-title{font-size:8px;font-weight:600;letter-spacing:.3px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;}
+.prm-axis{font-size:6px;color:var(--dim);letter-spacing:.5px;line-height:1.2;}
+.prm-subs{display:flex;gap:4px;margin:1px 26px 4px 26px;justify-content:center;}
+.prm-sub{font-size:6px;letter-spacing:.3px;opacity:.7;}
+.prm-sub.over-sub{color:var(--fire);}
+.prm-sub.under-sub{color:var(--water);}
+.prm-tag-wrap{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:8px;}
+.prm-tag{font-size:8px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--gdim);color:var(--gold);letter-spacing:.5px;}
+.prm-arche-wrap{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:6px;}
+.prm-arche{font-size:8px;font-weight:600;padding:3px 8px;border-radius:5px;letter-spacing:.5px;border:1px solid rgba(212,168,67,.25);background:rgba(212,168,67,.06);color:#d4c090;}
+.prm-note{font-size:8px;color:var(--dim);text-align:center;margin-top:6px;line-height:1.4;}
+/* ===== SINSAL TAGS ===== */
+.ss-sec-hdr{margin-top:14px;}
+#sinsal-sec{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-top:6px;min-height:20px;animation:fadeIn .5s ease both;}
+.ss-tag{font-size:9px;font-weight:600;padding:3px 8px;border-radius:5px;background:rgba(255,255,255,.04);color:var(--dim);border:1px solid var(--bdr);letter-spacing:.5px;transition:all .3s;}
+.ss-tag.ss-strong{background:rgba(212,168,67,.08);color:var(--gold);border-color:rgba(212,168,67,.3);}
+.ss-tag.ss-extreme{background:rgba(196,69,54,.1);color:#e8a090;border-color:rgba(196,69,54,.35);box-shadow:0 0 8px rgba(196,69,54,.15);}
+.ss-star{font-size:7px;margin-left:2px;opacity:.7;}
+.ss-tag.ss-strong .ss-star{color:var(--gold);opacity:1;}
+.ss-tag.ss-extreme .ss-star{color:#c44536;opacity:1;}
+.ss-empty{font-size:8px;color:var(--dim);text-align:center;padding:8px 0;}
+/* ===== DESIGN MODAL ===== */
+.dm-section{margin-bottom:14px;}
+.dm-label{font-size:9px;color:var(--dim);margin-bottom:6px;letter-spacing:1px;}
+.dm-el-row{display:flex;gap:6px;justify-content:center;}
+.dm-el-btn{width:44px;height:44px;border-radius:10px;border:2px solid var(--bdr);background:var(--bg2);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-direction:column;}
+.dm-el-btn span{font-size:7px;margin-top:1px;}
+.dm-el-btn.on{border-color:var(--gold);background:var(--gdim);box-shadow:0 0 10px rgba(212,168,67,.15);}
+.dm-gdr-row{display:flex;gap:8px;justify-content:center;margin-top:4px;}
+.dm-gdr-btn{padding:6px 18px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg2);color:var(--dim);font-size:11px;cursor:pointer;transition:all .2s;}
+.dm-gdr-btn.on{border-color:var(--gold);color:var(--gold);background:var(--gdim);}
+.dm-slider-row{margin-bottom:14px;}
+.dm-slider-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;}
+.dm-slider-hdr .dm-ax{font-size:10px;font-weight:700;color:var(--txt);}
+.dm-slider-hdr .dm-ax-sub{font-size:7px;color:var(--dim);}
+.dm-bar-wrap{display:flex;align-items:center;gap:6px;}
+.dm-bar-btn{width:32px;height:32px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg2);color:var(--dim);font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none;transition:all .1s;}
+.dm-bar-btn:active{background:var(--gdim);color:var(--gold);border-color:var(--gold);}
+.dm-bar-track{flex:1;height:14px;background:var(--bg2);border-radius:7px;position:relative;border:1px solid var(--bdr);overflow:hidden;}
+.dm-bar-mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--bdr2);z-index:2;}
+.dm-bar-fill-over{position:absolute;top:2px;bottom:2px;right:50%;border-radius:5px 0 0 5px;background:linear-gradient(90deg,transparent,var(--fire));transition:width .2s;}
+.dm-bar-fill-under{position:absolute;top:2px;bottom:2px;left:50%;border-radius:0 5px 5px 0;background:linear-gradient(90deg,var(--water),transparent);transition:width .2s;}
+.dm-bar-labels{display:flex;justify-content:space-between;margin-top:1px;}
+.dm-bar-labels span{font-size:7px;color:var(--dim);}
+.dm-slider-row input[type=range]{display:none;}
+.dm-total{text-align:center;font-size:9px;color:var(--dim);margin-bottom:10px;}
+.dm-total b{color:var(--gold);}
+.dm-preset-row{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;}
+.dm-preset{font-size:8px;padding:4px 10px;border-radius:5px;border:1px solid var(--bdr);background:var(--bg2);color:var(--dim);cursor:pointer;transition:all .2s;letter-spacing:.5px;}
+.dm-preset:hover,.dm-preset.on{border-color:var(--gold);color:var(--gold);background:var(--gdim);}
+.dm-gen-btn{display:block;width:100%;padding:10px;margin-top:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#d4a843,#b08930);color:#0c0e14;font-size:12px;font-weight:700;font-family:'Noto Serif KR',serif;letter-spacing:3px;cursor:pointer;transition:all .2s;}
+.dm-gen-btn:hover{box-shadow:0 0 16px rgba(212,168,67,.3);}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.saju-table,.sup,.el-ch,.st-g,.cpt,.prm-sec{animation:fadeIn .5s ease both;}
+</style>
+</head>
+<body>
+<div class="ct">
+  <div class="tog"><div class="tog-b" onclick="setMode('player')" id="mp">플레이어</div><div class="tog-b on" onclick="setMode('npc')" id="mn">NPC</div><div class="tog-b" onclick="randomNpc()" id="mr">🎲</div><div class="tog-b" onclick="showDesignModal()" id="md">🔧 설계</div></div>
+  <div class="hdr"><div class="hdr-t">가 호 록</div><div class="hdr-n" id="cn"></div><div class="hdr-i" id="ci"></div><div class="hdr-s" id="cs"></div><div class="badge" id="cb"></div><div class="badge" id="cr" style="display:none;background:rgba(74,124,89,.15);color:#8a8778;margin-left:4px;"></div></div>
+  <div class="synopsis" id="synopsis"></div>
+  <div class="tabs"><div class="tab on" onclick="stab('gaho',this)">가호</div><div class="tab" onclick="stab('stat',this)">전투</div><div class="tab" onclick="stab('compat',this)">궁합</div><div class="tab" onclick="stab('appear',this)">외형</div></div>
+  <div class="tc on" id="t-gaho">
+    <div class="stit">사 주 가 호</div><div class="ssub">성좌(추구점) · 주신(기질)</div>
+    <div class="col-heads"><div class="col-h">시주</div><div class="col-h">일주</div><div class="col-h">월주</div><div class="col-h">년주</div></div>
+    <table class="saju-table"><tbody><tr id="rg"></tr><tr id="rj"></tr></tbody></table>
+    <div class="prm-hdr"><div class="stit">기 질 분 석</div><button class="prm-info-btn" onclick="showPentaModal()" title="십성 계산 원리">?</button></div><div class="ssub">사주에서 도출된 15가지 성격 파라미터</div>
+    <div id="prm-sec"></div>
+    <div id="penta-modal"></div>
+    <div class="ss-sec-hdr"><div class="stit" style="margin-top:14px;">신 살 특 성</div><div class="ssub">사주 조합에서 도출된 특수 기질 태그</div></div>
+    <div id="sinsal-sec"></div>
+    <div id="sup-card"></div>
+    <div class="pm-g"><div class="pm-c"><div class="pm-l">시주</div><div class="pm-d">하급자<br>대하는 방식</div></div><div class="pm-c"><div class="pm-l">일주</div><div class="pm-d">나의<br>핵심 성향</div></div><div class="pm-c"><div class="pm-l">월주</div><div class="pm-d">가족이<br>끼친 영향</div></div><div class="pm-c"><div class="pm-l">년주</div><div class="pm-d">문화권·가문<br>영향</div></div></div>
+    <div class="div"></div>
+  </div>
+  <div class="tc" id="t-stat"><div class="stit" style="margin-top:14px;">전 투 스 탯</div><div class="st-g" id="stg"></div></div>
+  <div class="tc" id="t-appear">
+    <div class="stit">외 형 파 생</div><div class="ssub">원국에서 도출된 외형 특성 · NAI 태그</div>
+    <div id="appear-sec"></div>
+    <div style="margin-top:12px;padding:10px;background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:6px;">머리 길이 (수동 선택)</div>
+      <div id="hair-len-sel" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+    <div style="margin-top:12px;padding:10px;background:#0a0b10;border:1px solid var(--bdr);border-radius:10px;position:relative;">
+      <div style="font-size:9px;color:var(--dim);margin-bottom:6px;">NAI 프롬프트 (복사용)</div>
+      <div id="nai-prompt" style="font-family:monospace;font-size:11px;color:var(--gold);word-break:break-all;line-height:1.6;"></div>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('nai-prompt').textContent).then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='복사',1200)})" style="position:absolute;top:8px;right:8px;padding:3px 10px;font-size:10px;background:var(--gold);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:bold;">복사</button>
+    </div>
+  </div>
+
+  <div class="tc" id="t-compat"><div class="cpt" style="margin-top:14px;"><div class="cpt-t">⚡ 파티 궁합</div><div class="cpt-r"><div class="cpt-i p">↑</div><div class="cpt-x"><strong>카이론 (참나무)</strong><br>목생화</div></div><div class="cpt-r"><div class="cpt-i n">↓</div><div class="cpt-x"><strong>린 (물병)</strong><br>수극화</div></div></div></div>
+</div>
+<div id="design-modal"></div>
+<script>
+const GEN={wood:'fire',fire:'earth',earth:'metal',metal:'water',water:'wood'};
+const OVR={wood:'earth',fire:'metal',earth:'water',metal:'wood',water:'fire'};
+const EN={wood:'목',fire:'화',earth:'토',metal:'금',water:'수'};
+const EC={wood:'#4a7c59',fire:'#c44536',earth:'#b5893a',metal:'#7a8b99',water:'#3a7bd5'};
+const EC_COMP={wood:'#7c4a6d',fire:'#36a5c4',earth:'#3a6eb5',metal:'#99887a',water:'#d58e3a'};
+const EDK={wood:'#1e3522',fire:'#4a1510',earth:'#4a3010',metal:'#2a3238',water:'#1a3a6a'};
+const GE={'참나무':'🌳','화분':'🌱','태양':'☀️','등불':'🕯️','산맥':'⛰️','쟁기':'🌾','칼날':'🗡️','끌':'💎','파도':'🌊','물병':'💧'};
+const JE={'노크탄':'🌙','그란디르':'🪨','프레간':'⚔️','플로렌':'🌸','레그나스':'👑','벨리스':'🔮','솔란':'✨','큐라':'💚','트릭센':'💰','스펠라':'🎭','가디엔':'⚖️','레바':'🎊'};
+const GV={'참나무':'추진력·리더십','화분':'유연·적응력','태양':'열정·카리스마','등불':'집중·집요함','산맥':'포용·안정','쟁기':'돌봄·실리','칼날':'결단·의지','끌':'감수성·심미안','파도':'자유·대범함','물병':'통찰·직감'};
+const JD={'노크탄':'밤과 비밀','그란디르':'대지와 농경','프레간':'전쟁과 무용','플로렌':'사랑과 봄','레그나스':'왕권과 통치','벨리스':'마법과 지식','솔란':'태양과 여행','큐라':'치유와 가정','트릭센':'상업과 도둑','스펠라':'예술과 장인','가디엔':'수호와 심판','레바':'바다와 축제'};
+const LC={gen:'#5cb87a',ovr:'#c44536',same:'#d4a843',drain:'#b5893a',ctr:'#c44536'};
+const GAN_YY={'참나무':true,'태양':true,'산맥':true,'칼날':true,'파도':true,'화분':false,'등불':false,'쟁기':false,'끌':false,'물병':false};
+const JI_YY={'노크탄':true,'프레간':true,'레그나스':true,'솔란':true,'트릭센':true,'가디엔':true,'그란디르':false,'플로렌':false,'벨리스':false,'큐라':false,'스펠라':false,'레바':false};
+
+function rel(a,b){if(!a||!b)return null;if(a===b)return'same';if(GEN[a]===b)return'gen';if(OVR[a]===b)return'ovr';if(GEN[b]===a)return'drain';if(OVR[b]===a)return'ctr';return null;}
+function h2r(h,a){return`rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${a})`;}
+
+const npc={name:'발트슈타인 아이린',surname:'발트슈타인',firstname:'아이린',info:'Lv.34 · 파도자리 · B랭크 · ♀ · 류안인',badge:'길드원',gender:'f',race:'human',
+  p:[{g:{n:'등불',e:'fire',tid:'丁'},j:{n:'벨리스',e:'fire',tid:'巳'}},{g:{n:'파도',e:'water',tid:'壬'},j:{n:'솔란',e:'fire',tid:'午'}},{g:{n:'칼날',e:'metal',tid:'庚'},j:{n:'레그나스',e:'earth',tid:'辰'}},{g:{n:'화분',e:'wood',tid:'乙'},j:{n:'플로렌',e:'wood',tid:'卯'}}],
+  el:{wood:15,fire:35,earth:15,metal:20,water:15},st:{ap:7,speed:68,hp:245,power:52,precision:71,resist:38}};
+const pc={name:'(플레이어)',surname:'',firstname:'(플레이어)',info:'Lv.12 · ???자리 · D랭크',badge:'신참',gender:'m',race:'human',
+  p:[{g:{n:'???',e:null,lk:true},j:{n:'???',e:null,lk:true}},{g:{n:'태양',e:'fire',tid:'丙'},j:{n:'???',e:null,lk:true}},{g:{n:'???',e:null,lk:true},j:{n:'프레간',e:'wood',tid:'寅'}},{g:{n:'???',e:null,lk:true},j:{n:'???',e:null,lk:true}}],
+  el:{wood:20,fire:40,earth:0,metal:0,water:0},st:{ap:5,speed:55,hp:180,power:40,precision:45,resist:30}};
+const SL={ap:{l:'행동력(AP)',m:12},speed:{l:'속도',m:100},hp:{l:'체력',m:500},power:{l:'위력',m:100},precision:{l:'정밀',m:100},resist:{l:'저항',m:100}};
+
+let mode='npc';let currentData=npc;
+// ═══ 인종/종족 외형 아키타입 ═══
+const ETHNO={
+  osela:{name:'오셀라인',elem:'earth',skin:'짙은 갈~흑갈색',skinNai:'dark skin, dark-skinned',hairCol:'흑색',hairColNai:'black hair',hairType:'밀착 곱슬',hairTypeNai:'afro, coily hair',eyeCol:'짙은 갈색',eyeColNai:'dark brown eyes',extra:''},
+  ryuan:{name:'류안인',elem:'wood',skin:'밝은 황색',skinNai:'east asian, pale skin',hairCol:'흑색',hairColNai:'black hair',hairType:'직모',hairTypeNai:'straight hair',eyeCol:'흑갈색',eyeColNai:'dark eyes, brown eyes',extra:''},
+  helia:{name:'헬리아인',elem:'fire',skin:'매우 밝음',skinNai:'fair skin, light skin',hairCol:'금발~밝은 갈색',hairColNai:'blonde hair',hairType:'웨이브',hairTypeNai:'wavy hair',eyeCol:'청색/회색',eyeColNai:'blue eyes',extra:''},
+  rugen:{name:'루겐인',elem:'metal',skin:'밝음/주근깨',skinNai:'pale skin, freckles',hairCol:'적발',hairColNai:'red hair',hairType:'웨이브~곱슬',hairTypeNai:'wavy hair',eyeCol:'녹색',eyeColNai:'green eyes',extra:'freckles'},
+  nahar:{name:'나하르인',elem:'water',skin:'올리브/황갈',skinNai:'olive skin',hairCol:'흑갈색',hairColNai:'dark hair',hairType:'웨이브~곱슬',hairTypeNai:'wavy hair, curly hair',eyeCol:'황금/호박색',eyeColNai:'golden eyes, amber eyes',extra:''}
+};
+const RACE_APPEAR={
+  elf:{name:'엘프',skin:'창백한 백색',skinNai:'pale white skin, ethereal',hairCol:'은백~흑색',hairColNai:'silver hair',hairType:'직모',hairTypeNai:'straight hair, silky hair',eyeCol:'녹색/호박색',eyeColNai:'green eyes',extra:'pointed ears'},
+  orc:{name:'오크',skin:'짙은 적갈색',skinNai:'dark reddish brown skin',hairCol:'흑색',hairColNai:'black hair',hairType:'밀착 곱슬/짧음',hairTypeNai:'short hair, coily hair',eyeCol:'호박/적색',eyeColNai:'amber eyes, red eyes',extra:'tusks'},
+  ogre:{name:'오거',skin:'회갈~짙은 색',skinNai:'grayish brown skin',hairCol:'흑색',hairColNai:'black hair',hairType:'곱슬',hairTypeNai:'curly hair',eyeCol:'황색/갈색',eyeColNai:'yellow eyes',extra:'large build'},
+  dwarf:{name:'드워프',skin:'청동/황갈색',skinNai:'bronze skin, tan skin',hairCol:'갈색~적갈색',hairColNai:'brown hair, auburn hair',hairType:'두꺼운 웨이브',hairTypeNai:'thick wavy hair',eyeCol:'회갈색',eyeColNai:'hazel eyes',extra:'short, stocky'},
+  darkelf:{name:'다크엘프',skin:'재색/어두운 회색',skinNai:'dark grey skin, ashen skin',hairCol:'백색/은색',hairColNai:'white hair, silver hair',hairType:'직모~웨이브',hairTypeNai:'straight hair',eyeCol:'보라/청색',eyeColNai:'purple eyes, violet eyes',extra:'pointed ears'}
+};
+
+const ELEM_TO_ETHNO={wood:'ryuan',fire:'helia',earth:'osela',metal:'rugen',water:'nahar'};
+function getAppearArchetype(d){
+  if(!d.race||d.race==='human'){
+    const yearGanE=d.p&&d.p[3]&&d.p[3].g&&!d.p[3].g.lk?d.p[3].g.e:null;
+    const ethId=yearGanE?ELEM_TO_ETHNO[yearGanE]:'helia';
+    return{type:'ethno',id:ethId,data:ETHNO[ethId]};
+  }
+  return{type:'race',id:d.race,data:RACE_APPEAR[d.race]||RACE_APPEAR.elf};
+}
+
+function setMode(m){mode=m;document.getElementById('mn').className=m==='npc'?'tog-b on':'tog-b';document.getElementById('mp').className=m==='player'?'tog-b on':'tog-b';render(m==='npc'?npc:pc);}
+function generateSynopsis(d){
+  const sec=document.getElementById('synopsis');
+  if(!sec)return;
+  const pr=calcParams(d);
+  if(!pr||pr.total===0){sec.innerHTML='';return;}
+  const {counts,total}=pr;
+  const b=total/5;
+  const el=d.el||{};
+  const gdr=d.gender||'m';
+  const dayEl=d.p[1].g.e;
+  const dayGan=d.p[1].g;
+  const sentences=[];
+  
+  // === 1. Identity + 십성 (connected) ===
+  const gIcon=gdr==='m'?'남성':'여성';
+  const idPart=`<span class="syn-el" style="color:${EC[dayEl]}">${dayGan.n}</span>자리의 ${d.race?getAppearArchetype(d).data.name+' ':''} ${gIcon}`;
+  const sipTraits=[];
+  const axP={bigup:['고집이 세고 독립적인','순종적이고 협조적인'],
+    express:['외향적이고 표현이 풍부한','내성적이고 과묵한'],
+    percept:['현실 감각이 뛰어난','이상주의적이고 꿈이 많은'],
+    discip:['자기 규율이 철저한','자유분방한'],
+    reflect:['신중하고 계획적인','즉흥적이고 본능에 충실한']};
+  Object.keys(axP).forEach(k=>{
+    const v=counts[k];
+    if(v>=3) sipTraits.push(axP[k][0]);
+    else if(v===0) sipTraits.push(axP[k][1]);
+  });
+  if(sipTraits.length>0){
+    const conn=['이며 ','데다 ',' 동시에 '];
+    if(sipTraits.length===1){
+      sentences.push(`${idPart}으로, <span class="syn-hl">${sipTraits[0]}</span> 성격이다.`);
+    } else if(sipTraits.length===2){
+      sentences.push(`${idPart}으로, <span class="syn-hl">${sipTraits[0]}</span>이며 <span class="syn-hl">${sipTraits[1]}</span> 성격이다.`);
+    } else {
+      const last=sipTraits.pop();
+      sentences.push(`${idPart}으로, <span class="syn-hl">${sipTraits.join('</span>고 <span class="syn-hl">')}</span> 데다 <span class="syn-hl">${last}</span> 성격이다.`);
+    }
+  } else {
+    sentences.push(`${idPart}. 뚜렷한 극단이 없는 균형 잡힌 인물이다.`);
+  }
+  
+  // === 2. 오행 nature + deficiency (connected) ===
+  const elArr=Object.entries(el).sort((a,b)=>b[1]-a[1]);
+  const topEl=elArr[0];const botEl=elArr[elArr.length-1];
+  const elT={wood:'자비롭고 성장을 추구하는',fire:'열정적이고 카리스마가 넘치는',earth:'안정적이고 신뢰감 있는',metal:'냉철하고 결단력 있는',water:'지혜롭고 적응력이 뛰어난'};
+  const elL={wood:'공감 능력이 부족한',fire:'열정이 부족한',earth:'정서적으로 불안정한',metal:'우유부단한',water:'융통성이 없는'};
+  const hasTop=topEl&&topEl[1]>30;const hasBot=botEl&&botEl[1]<5;
+  if(hasTop&&hasBot){
+    sentences.push(`본성은 <span class="syn-el" style="color:${EC[topEl[0]]}">${elT[topEl[0]]}</span> 편이지만, ${elL[botEl[0]]} 면도 있다.`);
+  } else if(hasTop){
+    sentences.push(`본성은 <span class="syn-el" style="color:${EC[topEl[0]]}">${elT[topEl[0]]}</span> 편이다.`);
+  } else if(hasBot){
+    sentences.push(`전반적으로 ${elL[botEl[0]]} 편이다.`);
+  }
+  
+  // === 3. H-traits (connected with 고/며) ===
+  const hVals=calcHParams(counts,total,el);
+  const hP=[];
+  if(hVals.chastity<=1) hP.push('정조관념이 희박하');
+  else if(hVals.chastity>=5) hP.push('정조관념이 굳건하');
+  if(hVals.morality<=1) hP.push('도덕적 금기를 즐기');
+  else if(hVals.morality>=5) hP.push('도덕적 선을 철저히 지키');
+  if(hVals.resist<=1) hP.push('쾌락에 극도로 약하');
+  else if(hVals.resist>=5) hP.push('쾌락에 쉽게 흔들리지 않');
+  if(hVals.submit>=5) hP.push('강한 지배욕을 가지');
+  else if(hVals.submit<=1) hP.push('복종에서 쾌감을 느끼');
+  if(hVals.sadism>=5) hP.push('타고난 가학 성향이 있');
+  else if(hVals.sadism<=1) hP.push('타고난 피학 성향이 있');
+  if(hP.length===1) sentences.push(`<span class="syn-h">${hP[0]}는</span> 편이다.`);
+  else if(hP.length===2) sentences.push(`<span class="syn-h">${hP[0]}고 ${hP[1]}는</span> 편이다.`);
+  else if(hP.length>2){const last=hP.pop();sentences.push(`<span class="syn-h">${hP.join('며, ')}고, ${last}는</span> 편이다.`);}
+  
+  // === 4. Archetypes ===
+  const ARC=[
+    {name:'배신자 기질',cond:{bigup:'h',percept:'h',discip:'l'}},{name:'야심가',cond:{bigup:'h',express:'h',percept:'h'}},
+    {name:'충성의 칼',cond:{bigup:'l',discip:'h',percept:'l'}},{name:'의리파',cond:{discip:'h',percept:'l'}},
+    {name:'타고난 지휘관',cond:{bigup:'h',express:'h',discip:'h'}},{name:'그림자 참모',cond:{bigup:'l',express:'l',percept:'h',reflect:'h'}},
+    {name:'사기꾼',cond:{express:'h',percept:'h',discip:'l'}},{name:'은둔 현자',cond:{express:'l',percept:'l',reflect:'h'}},
+    {name:'자유영혼',cond:{discip:'l',reflect:'l'}},{name:'고독한 늑대',cond:{bigup:'h',express:'l'}},
+    {name:'불꽃 돌진형',cond:{bigup:'h',discip:'l',reflect:'l'}},
+  ];
+  const matched=[];
+  ARC.forEach(a=>{let ok=true;Object.entries(a.cond).forEach(([k,r])=>{if(r==='h'&&counts[k]<3)ok=false;if(r==='l'&&counts[k]>0)ok=false;});if(ok)matched.push(a.name);});
+  
+  // === 5. Sinsal ===
+  const sinDesc={
+    '위기의 은인':{1:'위기에 도와줄 누군가가 있다',2:'위기마다 귀인이 나타난다',3:'하늘이 보낸 수호자가 곁에 있다'},
+    '책벌레':{1:'책과 친한 편이다',2:'학문에 상당한 재능이 있다',3:'타고난 학자형 인재다'},
+    '살벌한 승부사':{1:'승부욕이 있다',2:'승부에 거는 집념이 강하다',3:'이기기 위해 수단을 가리지 않는다'},
+    '날카로움':{1:'감이 좋다',2:'칼날 같은 직감이 있다',3:'꿰뚫어보는 눈을 가졌다'},
+    '치명적 매력':{1:'은근한 매력이 있다',2:'묘한 색기가 있다',3:'치명적 매력의 소유자다'},
+    '숨은 행운아':{1:'자신도 모르게 위험을 피한다',2:'몰래 돌아오는 행운이 있다',3:'본인도 모르게 복이 따른다'},
+    '귀한 인연':{1:'좋은 인연이 올 수 있다',2:'평생의 반려를 만날 상이다',3:'하늘이 맺어준 인연을 만난다'},
+    '자수성가':{1:'자기 힘으로 일어서는 편이다',2:'맨손으로 기반을 다진다',3:'타고난 자수성가형이다'},
+    '타고난 식복':{1:'먹는 복이 있다',2:'어딜 가든 굶지 않는다',3:'타고난 식복이다'},
+    '럭키가이':{1:'은근히 운이 좋다',2:'유독 운이 좋다',3:'매사에 운이 따른다'},
+    '천재 괴짜':{1:'남다른 구석이 있다',2:'비범한 머리와 괴짜 기질이 있다',3:'천재성과 광기가 공존한다'},
+    '외과의 손':{1:'손재주가 있다',2:'정밀한 손놀림의 소유자다',3:'신의 손이라 불릴 재능이 있다'},
+    '빛나는 외모':{1:'외모가 준수하다',2:'눈에 띄는 외모다',3:'보는 이를 멈추게 하는 외모다'},
+    '쉬운 이혼':{1:'결혼에 파란이 있을 수 있다',2:'한 사람과 오래 가기 어렵다',3:'결혼 유지가 극히 어렵다'},
+    '인싸 체질':{1:'사교성이 있다',2:'어디서든 금방 어울린다',3:'타고난 인싸다'},
+    '파견 전문':{1:'타지 생활에 적성이 있다',2:'고향보다 밖에서 빛난다',3:'이국 땅에서 운명을 찾을 상이다'},
+    '예술혼':{1:'예술적 감수성이 있다',2:'예술적 재능이 뚜렷하다',3:'타고난 예술가다'},
+    '혼자가 좋아':{1:'혼자 있는 시간을 좋아한다',2:'고독을 즐길 줄 안다',3:'근본적으로 혼자인 사람이다'},
+    '질긴 악연':{1:'풀기 어려운 인연이 있다',2:'끊어도 끊기지 않는 악연이 있다',3:'숙명적 악연에 묶여 있다'},
+    '제6감':{1:'직감이 좋다',2:'보이지 않는 것을 느낀다',3:'초자연적 직감의 소유자다'},
+    '타고난 리더':{1:'리더 기질이 있다',2:'사람들이 자연히 따른다',3:'천부적 통솔력을 타고났다'},
+    '타고난 예술가':{1:'예술적 기질이 있다',2:'창작에 비범하다',3:'예술 분야의 천재다'},
+    '타고난 흑막':{1:'뒤에서 조율하는 능력이 있다',2:'배후 조종에 재능이 있다',3:'모든 판을 뒤에서 짠다'},
+    '천생 의사':{1:'돌보는 데 소질이 있다',2:'치유의 손길을 가졌다',3:'타고난 의료인이다'},
+    '천생 홀아비':{1:'여성운이 다소 약하다',2:'여성과의 인연이 박하다',3:'평생 독신의 상이 짙다'},
+    '천생 과부':{1:'남성운이 다소 약하다',2:'남성과의 인연이 박하다',3:'평생 독신의 상이 짙다'}
+  };
+  const sinsalTags=calcSinsal(d);
+  const sinParts=[];
+  if(sinsalTags){
+    Object.entries(sinsalTags).sort((a,b)=>b[1]-a[1]).slice(0,4).forEach(([n,lv])=>{
+      const d2=sinDesc[n];if(d2) sinParts.push(d2[Math.min(lv,3)]);
+    });
+  }
+  
+  // === Combine 4+5: archetypes + sinsal ===
+  const uniqueSin=[...new Set(sinParts)];
+  
+  // Korean connective forms
+  function stemReplace(s,pairs,ndaSuf,defSuf){
+    for(const [from,to] of pairs){
+      if(s.endsWith(from)) return s.slice(0,-from.length)+to;
+    }
+    // Handle ㄴ다 ending verbs: 어울린다→어울리+는데
+    if(s.endsWith('다')&&s.length>=2){
+      const pc=s.charCodeAt(s.length-2);
+      if(pc>=0xAC00&&pc<=0xD7A3){
+        const jong=(pc-0xAC00)%28;
+        if(jong===4){// ㄴ as jongseong
+          return s.slice(0,-2)+String.fromCharCode(pc-4)+ndaSuf;
+        }
+      }
+    }
+    if(s.endsWith('다')) return s.slice(0,-1)+defSuf;
+    return s;
+  }
+  const NDE=[['있다','있는데'],['좋다','좋은데'],['강하다','강한데'],['약하다','약한데'],['박하다','박한데'],
+    ['뛰어나다','뛰어난데'],['따른다','따르는데'],['빛난다','빛나는데'],
+    ['한다','하는데'],['된다','되는데'],['이다','인데']];
+  const MYS=[['있다','있으면서'],['좋다','좋으면서'],['강하다','강하면서'],['약하다','약하면서'],['박하다','박하면서'],
+    ['뛰어나다','뛰어나면서'],['따른다','따르면서'],['빛난다','빛나면서'],
+    ['한다','하면서'],['된다','되면서'],['이다','이면서']];
+  const IGO=[['있다','있고'],['좋다','좋고'],['강하다','강하고'],['약하다','약하고'],['박하다','박하고'],
+    ['뛰어나다','뛰어나고'],['따른다','따르고'],['빛난다','빛나고'],
+    ['한다','하고'],['된다','되고'],['이다','이고']];
+  function toNunde(s){return stemReplace(s,NDE,'는데','ㄴ데');}
+  function toMyeon(s){return stemReplace(s,MYS,'면서','면서');}
+  function toIgo(s){return stemReplace(s,IGO,'고','고');}
+  const connFns=[toNunde,toMyeon,toIgo];
+  
+  function joinSin(arr){
+    if(arr.length===0) return '';
+    if(arr.length===1) return arr[0]+'.';
+    if(arr.length===2) return toNunde(arr[0])+' '+arr[1]+'.';
+    if(arr.length===3) return toNunde(arr[0])+' '+arr[1]+'. '+arr[2]+'.';
+    // 4개: 2+2, 각 쌍마다 다른 연결어
+    return toNunde(arr[0])+' '+arr[1]+'. '+toMyeon(arr[2])+' '+arr[3]+'.';
+  }
+  
+  if(matched.length>0){
+    const aStr=matched.length===1?`전형적인 <span class="syn-hl">${matched[0]}</span>이다.`
+      :`<span class="syn-hl">${matched.join('</span>이자 <span class="syn-hl">')}</span> 유형이다.`;
+    sentences.push(aStr);
+  }
+  if(uniqueSin.length>0) sentences.push(joinSin(uniqueSin.slice(0,4)));
+  
+  sec.innerHTML=sentences.join(' ');
+}
+
+function render(d){currentData=d;document.getElementById('cn').innerHTML=d.surname?'<span style="font-size:14px;color:var(--dim);font-weight:400;">'+d.surname+'</span> <span>'+d.firstname+'</span>':(d.firstname||d.name);document.getElementById('ci').innerHTML=(d.surname?'<div class="name-labels"><span style="color:var(--dim);">성 ↑</span><span style="color:var(--txt);opacity:.5;">이름 ↑</span></div>':'')+'<div>'+d.info+'</div>';document.getElementById('cs').textContent=d.sub||'';document.getElementById('cb').textContent=d.badge;var _rb=document.getElementById('cr');if(_rb){_rb.textContent=d.race?getAppearArchetype(d).data.name:'';_rb.style.display=d.race?'inline-block':'none';}generateSynopsis(d);buildTable(d);renderSupport(d);renderStats(d);renderParams(d);renderSinsal(d);renderAppearance(d);}
+
+function buildTable(d){
+  const rg=document.getElementById('rg'),rj=document.getElementById('rj');rg.innerHTML='';rj.innerHTML='';
+  // detections
+  const gjd=d.p.map((p,i)=>(!p.g.lk&&!p.j.lk&&p.g.e&&p.j.e&&p.g.e===p.j.e));
+  const pilR=d.p.map((p,i)=>(!p.g.lk&&!p.j.lk)?rel(p.j.e,p.g.e):null);
+  const supSame=(!d.p[2].j.lk&&!d.p[1].g.lk&&d.p[2].j.e&&d.p[1].g.e&&d.p[2].j.e===d.p[1].g.e);
+  const byoG=new Set(),byoJ=new Set();
+  for(let i=0;i<3;i++){
+    if(!d.p[i].g.lk&&!d.p[i+1].g.lk&&d.p[i].g.e&&d.p[i+1].g.e&&d.p[i].g.e===d.p[i+1].g.e){byoG.add(i);byoG.add(i+1);}
+    if(!d.p[i].j.lk&&!d.p[i+1].j.lk&&d.p[i].j.e&&d.p[i+1].j.e&&d.p[i].j.e===d.p[i+1].j.e){byoJ.add(i);byoJ.add(i+1);}
+  }
+
+  d.p.forEach((p,i)=>{
+    // === State logic ===
+    // act: 간여지동, 병존, 기둥내상생, 월지동류
+    // 기본(mid): 나머지 전부
+
+    // GAN state
+    let gSt='mid';
+    if(p.g.lk) gSt='locked';
+    else if(gjd[i]||byoG.has(i)||pilR[i]==='gen'||(i===1&&supSame)) gSt='act';
+
+    const gtd=document.createElement('td');
+    const gY=p.g.lk?true:(GAN_YY[p.g.n]!==undefined?GAN_YY[p.g.n]:true);
+    const gf=mkF(p.g.n,p.g.e,gY,true,gSt);
+    gtd.appendChild(gf);rg.appendChild(gtd);
+
+    // JI state
+    let jSt='mid';
+    if(p.j.lk) jSt='locked';
+    else if(gjd[i]||byoJ.has(i)||(i===2&&supSame)) jSt='act';
+
+    const jtd=document.createElement('td');
+    const jY=p.j.lk?true:(JI_YY[p.j.n]!==undefined?JI_YY[p.j.n]:true);
+    const jf=mkF(p.j.n,p.j.e,jY,false,jSt);
+    jtd.appendChild(jf);rj.appendChild(jtd);
+  });
+}
+
+function mkF(name,elem,isYang,isGan,state){
+  const f=document.createElement('div');f.className='frame';
+  if(state==='locked'){f.classList.add('locked');f.innerHTML='<div class="fr-emoji">❓</div><div class="fr-name">???</div><div class="fr-lock">🔒</div>';return f;}
+  const c=EC[elem],dk=EDK[elem];
+  f.classList.add(isYang?'yang':'yin');
+  if(state==='act')f.classList.add('act');
+  else if(state==='mid')f.classList.add('mid');
+
+  // Bright variants for consistent gradient visibility across all elements
+  const bright={wood:'#6aad7d',fire:'#e8665a',earth:'#daa84e',metal:'#a0b4c2',water:'#5a9de8'};
+  const bc=bright[elem]||c;
+  f.style.setProperty('--el-color',c);f.style.setProperty('--el-dark',dk);
+  f.style.setProperty('--el-soft',h2r(bc,.22));f.style.setProperty('--el-strong',h2r(bc,.4));
+  f.style.setProperty('--el-hot',h2r(bc,.55));f.style.setProperty('--el-glow',h2r(bc,.25));
+  const bdrA=state==='act'?.55:.2;
+  f.style.borderColor=h2r(bc,bdrA);
+
+  const emoji=isGan?(GE[name]||'⭐'):(JE[name]||'🌐');
+  const sub=isGan?(GV[name]||EN[elem]):(JD[name]||'기질');
+  f.innerHTML=`<div class="fr-emoji">${emoji}</div><div class="fr-name">${isGan?name+'자리':name}</div><div class="fr-sub">${sub}</div>`;
+  return f;
+}
+
+function renderSupport(d){
+  const c=document.getElementById('sup-card');c.innerHTML='';
+  if(d.p[2].j.lk||d.p[1].g.lk)return;
+  if(d.p[2].j.e!==d.p[1].g.e)return;
+  const wj=d.p[2].j,ig=d.p[1].g;
+  c.innerHTML=`<div class="sup"><div class="sup-chip" style="background:${h2r(EC[wj.e],.12)};color:${EC[wj.e]}">${JE[wj.n]||''} ${wj.n}</div><div class="sup-link" style="color:var(--gold)">══</div><div class="sup-chip" style="background:${h2r(EC[ig.e],.12)};color:${EC[ig.e]}">${GE[ig.n]||''} ${ig.n}자리</div><div class="sup-desc">월지와 일간이 같은 기운 — 동류 강화</div></div>`;
+}
+function renderElements(d){const c=document.getElementById('elch');c.innerHTML='';['wood','fire','earth','metal','water'].forEach(e=>{const v=d.el[e],h=Math.max((v/50)*100,3),w=document.createElement('div');w.className='el-w';w.innerHTML=`<div class="el-bar b${e[0]}" style="height:${h}px">${v>0?`<div class="el-v" style="color:${EC[e]}">${v}%</div>`:''}</div><div class="el-l" style="color:${EC[e]}">${EN[e]}</div>`;c.appendChild(w);});}
+function renderStats(d){const g=document.getElementById('stg');g.innerHTML='';Object.entries(d.st).forEach(([k,v])=>{const s=SL[k],pct=Math.min((v/s.m)*100,100),c=document.createElement('div');c.className='st-c';c.innerHTML=`<div class="st-l">${s.l}</div><div class="st-v">${v}</div><div class="st-bg"><div class="st-f" style="width:${pct}%;background:var(--gold)"></div></div>`;g.appendChild(c);});}
+function stab(id,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.tc').forEach(t=>t.classList.remove('on'));el.classList.add('on');document.getElementById('t-'+id).classList.add('on');}
+const GANS_Y=[{n:'참나무',e:'wood',tid:'甲'},{n:'태양',e:'fire',tid:'丙'},{n:'산맥',e:'earth',tid:'戊'},{n:'칼날',e:'metal',tid:'庚'},{n:'파도',e:'water',tid:'壬'}];
+const GANS_N=[{n:'화분',e:'wood',tid:'乙'},{n:'등불',e:'fire',tid:'丁'},{n:'쟁기',e:'earth',tid:'己'},{n:'끌',e:'metal',tid:'辛'},{n:'물병',e:'water',tid:'癸'}];
+const JIS_Y=[{n:'노크탄',e:'water',tid:'子'},{n:'프레간',e:'wood',tid:'寅'},{n:'레그나스',e:'earth',tid:'辰'},{n:'솔란',e:'fire',tid:'午'},{n:'트릭센',e:'metal',tid:'申'},{n:'가디엔',e:'earth',tid:'戌'}];
+const JIS_N=[{n:'그란디르',e:'earth',tid:'丑'},{n:'플로렌',e:'wood',tid:'卯'},{n:'벨리스',e:'fire',tid:'巳'},{n:'큐라',e:'earth',tid:'未'},{n:'스펠라',e:'metal',tid:'酉'},{n:'레바',e:'water',tid:'亥'}];
+const RNAMES_M=['카이론','도란','베르크','토르스','갈란','에밀','노아','젠','빅터','한스','루시엔','다리안','아르노','셀릭','그레이','로넌','칼렌','드미트리','에드릭','펠릭스','하르트','이고르','율리안','코르넬','레반','마르코','니클라스','오릭','파벨','라우리','시그문트','탈보르','울릭','발렌','볼프','자크','알렉','브리안','캐스퍼','디에고','에른스트','프란츠','가브리엘','헥토르','이반','야코브','쿠르트','루카스','마티아스','나단','오스카','필립','라파엘','스벤','타데우스','우고','비올','빌헬름','크세르','유리','제노','아모스','바르톨','케이넌','다겐','엘리오','피온','그위딘','헤이든','일리아','요나스','키릴','라즈로','무라트','네빌','오르한','프리모','렌하르트','사울','티무르','아드리안','바스티안','클레멘트','데니스','엘리어트','파비안','구스타프','헨릭','이사크','제레미','콘스탄틴','레온','마르첼','니콜라이','올리버','페터','퀸틴','로만','세바스찬','토비아스','움베르토','빈첸트','볼프람','자비에','이반','아담','보리스','카를','다비드','에곤','플로리안','게르만','휴고','잉고','야센','클라우스','로렌츠','막스','노르베르트','오토','파트리크','라인하르트','슈테판','테오','울프','바딤','발터','제벡','아킴','블라제','체드릭','도미니크','에두아르','프레드릭','길베르트','하랄드','일리아스','요하임','카스파르','로타르','마누엘','넬슨','오스발트','폴','루돌프','지크프리드','트리스탄','우도','비탈리','빌프리드','잔더','알론소','베네딕트','콘라트','드라건','에버하르트','프리드리히','고트프리드','하인츠','이그나츠','아달베르트','벤노','카시미르','디트마르','에겐','프리도린','게르트','하이모','인골프','요스트','카를하인츠','란프랑크','만프레드','노르드윈','오스머','프란코','라이문트','지그발트','투도르','울브레히트','발데마르','벤첼','아이발트','바르톨드','크리스토프','디틀레프','에크하르트','프리드헬름','고트힐프','헬무트','아이쿠트','발리크','잔타르크','데니즈','에르돈','파투르','괴크한','일한','카얀','마히르','네자트','오눌','셀리크','투그룰','우프크','야샤르','부르한','자페르','에르칸','페르하트','알퐁스','바티스트','코랑탱','디디에','에므릭','페르낭','가스파르','조스','케뱅','로이크','마엘','나탕','올리비에','퓌에르','세바스티앵','티에리','위르뱅','뱅상','이브','시릴','아르칠','바그라트','기오르기','이라클리','칼리스트','라샤','노다르','오타르','샬바','타마즈','아비람','보아즈','도론','에후드','기돈','이타이','케렌','리오르','네리아','오페르','아난드','발라지','찬드란','데바','엘란고','하리쉬','카르티크','마니칸단','프라딥','라구','아리스토','코르넬리우스','에우제니오','플라비오','가이우스','이시도르','칸디두스','레온티우스','네스토르','옥타비우스','프로스페로','실바누스','테오도릭','울피아누스','아우구스트','발렌티누스','카시우스','데키무스','에밀리우스','파비우스','그라키우스','호라티우스','이그나티우스','유스투스','카이사리우스','루키우스','마르시우스','나르시수스','옵티무스','피우스'];
+const RNAMES_F=['린','세레나','아쉬','엘마','미라','피엔','크레아','올가','레이나','실비아','나디아','로제','아이린','베아트릭스','셀린','디아나','엘레나','프레야','가브리엘라','헬레나','이렌','율리아','카테리나','루시아','마르가','니나','오필리아','파울라','라헬','소피아','타마라','울리카','비비안','빌마','제니아','아멜리아','브리짓','클라라','다리아','에스텔','플로라','기젤','하나','이졸데','야나','칼리스타','레오노라','마르타','나탈리','오드리','펠리시아','레기나','사빈','테아','우르슐라','발레리아','빌헬미나','제노비아','안나벨','로즈먼드','크리스틴','데보라','에바','파티마','그레첸','힐다','이네스','요한나','카밀라','라우라','모니카','노라','페넬로페','리타','실케','아가사','베르타','코라','에르나','피오나','아델리나','비앙카','코넬리아','도로테아','엘리사벳','프란치스카','게르트루드','하이케','이르마','요제파','카롤리나','레나','마틸다','노에미','올리비아','페트라','로자문데','자비나','테레사','울라','비르기트','빌트루드','제노비아','안토니아','베네딕타','카를로타','다마리스','에디트','프리다','그레타','헤르미네','인게보르크','야스민','크리스타','로렐라이','마리안느','나타샤','오틸리에','파울리네','로미','시빌레','타이스','우테','빅토리아','빌헬미네','자라','아그네스','브리기테','세실리아','도나타','엘비라','프랑수아즈','가비','헤르타','이자벨','줄리아','카르멘','루이제','막달레나','네피타','오르솔라','파르미다','레베카','수산네','트리시아','울리케','비올레타','벤델라','자피라','아이다','베로니카','콘스탄체','디아나','엘로이즈','필로메나','게노베바','헬가','이오안나','유디트','카티아','아달하이드','베네딕테','샤를로테','에밀리','프리데리케','게르린데','하이드룬','일제','요하나','쿤니군데','레온티네','마레이케','오틸리아','로즈비타','지글린데','트라우데','발부르가','지빌레','발레스카','카롤라','아이수','빌게','잔수','에세르','귀네쉬','해티제','이실','라일라','메르베','오즈게','셀다','투바','야즈','부르쿠','제이넵','딜레크','에스라','파토쉬','네빌레','카멜리아','아드리엔','블랑딘','코린','델핀','에밀리엔','기슬렌','이네','주스틴','릴리안','나딘','오세안','폴렌','로잘린','실비','위르쉴','잔틴','알릭스','베레니스','카미유','디안','아나','바이아','디나','에카','가야네','이아','케테반','라리','나나','루수단','아비가일','바트야','갈릿','에프라트','하다스','이릿','야파','리모르','미리','시갈','아누샤','발라','찬드리카','데비','간가마니','하리프리야','인디라니','카르판가','마니메갈라이','프리야','아우렐리아','코르넬리아','에우제니아','플라비아','가이아','이시도라','줄리아나','레온티아','네스토리아','옥타비아','프로스페리나','레지나','실바니아','테오도라','울피아나','아우구스타','발렌티나','카시아','데키마','에밀리아나','파비아나','그라키아','호라티아','이그나티아','유스티나','루키아','마르시아','나르시사','옵티마','피아','하이케','인게보르크','야스민','로렐라이','마리안느','오틸리에','파울리네','로미','타이스','우테','빌헬미네','자라','아그네스','브리기테','세실리아','엘비라','가비','이자벨','줄리아','카르멘','루이제','막달레나','수산네','울리케','비올레타','필로메나','게노베바','이오안나','유디트','카티아'];
+const SURNAMES=['발트슈타인','콘라드','에르겐','뮐러','아이헨','렌베르크','드라그미르','보로딘','코르사코프','하이네만','타르한','에센바이','카라코룸','사이한','칼미크','튀르겐','바야르','쿠르간','알타이','드 몽포르','드 라크루아','보몽','발루아','로셰','페리에','라퐁텐','오를레앙','부르봉','니콜라시빌리','바그라티','차바다제','카헤티','구리엘리','투시시빌리','이메레티','므츠헤타','루스타벨리','아비탈','벤 야코프','하다르','엘리온','미즈라히','벤 아모스','나훔','코헨','레비','나이르','셸반','무루간','안부','탄가라주','쿤드라','필라이','아루무감','라마찬드란','체티아르','마니카바사감','블랙우드','아이언포지','스톤헬름','레드번','윈터펠드','그레이혼','실버레인','골드윈','오크쉴드','룬크비스트','토르발드','호른비','크로우리','스톰가드','호프만','피셔','슈미트','쿤체','겔러','바이스','헤르첸베르크','란트슈타인','쾰른','마이어','베르크만','아쉔브레너','프라이하이트','린덴탈','로젠가르텐','슈타인브뤼크','칸쿠르간','아시랄리','오즈베이','크즐타쉬','카라한','귈텐','아크소이','데미르치','보즈쿠르트','외즈튀르크','드 부르고뉴','드 생피에르','포르셰','기요','마르텡','뒤발','르블랑','샹보르','베르트랑','파브르','사아카시빌리','조르다니아','체레텔리','카차라바','미케라제','안시마니','다디아니','굴루아','아쉬케나지','벤 다비드','골드만','실버만','로젠탈','아리엘리','야코비','마이몬','벤 시몬','엘리아후','벤카테시','수브라마니안','크리슈나무르티','라구나단','스리니바산','비스와나탄','자야락쉬미','무투크리슈난','드 메디치','본 비스마르크','로드리게스','맥라우드','오브라이언','피츠제럴드','반 호이텐','달베르토','요르겐센','에릭손','프레데릭센','안데르센','크라우제','리히터','쉬뢰더','바그너','카우프만','프린츠','할러','로엔슈타인','그뤼네발트','쉴러','브란트','악커만','달베르크','에쉔바흐','프라이부르크','고트발트','하르덴베르크','라이프치히','마르부르크','슈바르첸베르크','이을디즈','타쉬켄트','에르젠','코자한','볼란트','외즈칸','도루크','카라벡','구무쉬','일디림','사바시','투란','울루다그','야으즈','아라슨','샤힌바이','보즈야지','에르바칸','카라소이','길란','드 발레트','모리아르','뒤퐁','르포르','뇌빌','포티에','리볼레','두메르그','클레르몽','가이야르','드 빌뇌브','프레보','루세','샤토브리앙','보나파르트','마르샬','드 투르빌','드 소시르','뒤봐','르루','아바시제','바르쿨라제','치크바이아','에리스타비','게데바니시빌리','카르트벨리시빌리','라갈리제','므나토비','파르나바쉬빌리','사바르셰미제','타카이시빌리','추빈리시빌리','디미트리시빌리','판자비제','암일라흐바리','바르카이','벤 엘리에제르','다간','에즈라','기노사르','하레우베니','야페','모르겐슈테른','나본','오렌슈타인','펠레드','라빈','샤미르','자하비','아리','벤 갈','할레비','탈몬','이스라엘리','라하미','발라수브라마니안','찬드라세카란','엘랑고반','간가다란','하리하란','잔디라세카란','카르티케얀','마니반난','나라야나스와미','라자고팔란','사라바나무투','우다야쿠마르','벨루치','야다반','제가디산','카루나니디','무투크마란','파수파티','산카란','데시칸','드 아르간티아','폰 라이흐슈타인','드 루미에르','폰 도너슈탁','반 하르트겐','피츠윌리엄','맥커스크','드 라 로슈포','반 아이크','폰 브라운슈바이크','디 로렌초','반 로이','드 몽테스키외','데 카스트로','폰 에센바흐','오코너','맥그리거','맥도날드','오브라이언','피츠제럴드','드 보르자','반 데르 베르흐','르 블랑','디 마조','데 실바'];
+// ═══ 종족별 이름 풀 ═══
+const RNAMES_ELF_M=['알다르','아르티시','아이딘','벨렉','온다르','크질','몽구시','초두','사야트','에렌','도르준','솔란갈','타미르','칸딘','벌렌','추둑','아르질란','부얀','차가치','도르지','에릭','호발리그','일기','쿤젝','메르겐','노얀','올추','수게','텡기르','우르겐','쉬레프','바자르','아다르','벨렉올','체디','달라이','에르진','곰보','케직','이르벡','사르그','투만','우란','알라시','바산','데게','에르겐','홍구르','카라','르주','맘바','노무','옥투','사인','텔렉','울루그','쿠르부스','칸','아이수','초르가','두르겐','밀란','비시크질','셀게','아트라간','바아타르','초르','딩마','엘베그','간졸','흐렐','이단','잔치프','쿤가','르와','멘두','노르부','옥자르','셀렝','타쉬','우르첸','벡투르','챠간','두구르','에르덴','간딜라크','흐불란','인제','자르갈','코글','르가그','몽겐','노르솔','오이둡','사인바야르','테뮤진','우건','바야르사이한','체링','도르겐바야르','에르덴바트','간볼드','흐를바타르','잘산','쿤첸','르겐체크','몽케','눌산','오을두','사르날','투멘체크','우르안카이','바야르갈','추루','댐벡','에르킨','곰보자프','홍고르','잉구쉬','카다르','르하그바','문게쉬','나르수','오킬','아라간','빌릭','차가르','돌라안','에르겐','간촉','흐르간','일비스','자란','코글라','르타르','만나이','놉찬','오을간','사간','톱추','우라이','벡치','차리크','둔마','에릭벡','간토르','흐르발','잉찬','줄투','코르슈','르벡','만찬','노얀벡','오르한','사얀벡','텡겐','우르살','벡산','추르','둠부르','에른','간벡','흐르첸','잉칸','줄찬','쿠를루','르젠','만토르','노르첸','옥토르','사르벡','테무르벡','우얀','바르산','추르벡','둥구르','에르칸','갈찬','흐르무','잔벡','코르찬','르살','만무','노얀찬','오르벡','살찬','텡그리','울란벡','바르찬','초르벡','둥벡','에르살','갈무','흐르벡','잘벡','콜찬','르찬','몽구르','노르벡','옥벡','삼찬','텡찬','울벡','바르벡','추르산','둥찬','에르벡','갈벡','흐르찬','잠벡','쿤벡','르무','몽벡','눌벡','오르찬','삼벡','텡벡','울찬','반벡','촐벡','둘벡','엘벡','감벡','훌벡','잘찬','쿠르벡','르벡찬','몽찬','눌찬','옥찬','삼무','투벡','울무','반찬','촐찬','둘찬','엘찬','감찬','훌찬','잘무','쿤찬','르무찬','몽무','눌무','오르무','살무','투찬','울르'];
+const RNAMES_ELF_F=['알딘아이','아르자나','아이키스','사야나','아일라나','치미스','벨렉마','체첵','우르기','돈마','쿤둥','아야스','아이수','부야나','차야나','쉴레크마','안가나','볼마','당기나','에네','후레마','이르기트','콘구레','노강마','오르란마','수게마','타니스','우르마','솔롱고','카다','알탄체첵','아이한','아르줄란','벨레크키스','체첵마','달린','에르진마','곤체크','케직마','이르벡키스','사르글마','투만키스','울란','알라시마','바야르마','디나','에키','홀가','카라키스','로르마','사이나','투키스','우르수','체르겐','달라이키스','에니키스','이르기트마','수만키스','노강키스','올란','파이자','체치르마','하인마','아르야','아르준키스','발마','초르곤','딩가','에를리키스','간줄마','흐렐마','잉기르','잔치프키스','쿤가마','르와키스','멘두키스','노르부마','옥자르마','셀렝키스','타쉬마','우르첸마','벡투르마','찬마','두르마','엔흐마','간딜락키스','이르겐','자르갈마','콩구르키스','르가그마','나란투야','오이둡마','사란','테무르마','울지마','바야르마','체링키스','돌로르마','에르덴키스','간체첵','흐스렌','잘산마','쿤데마','르겐마','몽케키스','눌산마','오을두키스','사르날마','투멘마','우르간마','바야르키스','추루마','딩기르마','에를렌마','간볼마','홍고르키스','인기르마','카달마','르하그마','문게마','나르수마','오킬마','사야르마','투완마','울란마','벡마','초롱마','두르첸키스','아라간마','빌릭마','차가르마','돌라안마','에르겐마','간촉마','흐르간마','일비스마','자란키스','코글라마','르타르마','만나이마','놉찬마','오을간마','사간마','톱추마','우라이마','벡치마','차리크마','둔마키스','에릭마','간토르마','흐르발마','잉찬마','줄투마','코르슈마','르벡마','만찬마','노얀키스','오르한마','사얀마','텡겐마','우르살마','벡산마','추르마','둠부르마','에른마','간벡마','흐르첸마','잉칸마','줄찬마','쿠를루마','르젠마','만토르마','노르첸마','옥토르마','사르벡마','테무르마','우얀마','바르산마','추르키스','둥구르마','에르칸마','갈찬마','흐르무마','잔벡마','코르찬마','르살마','만무마','노얀찬마','오르벡마','살찬마','텡그리마','울란키스','바르찬마','초르키스','둥벡마','에르살마','갈무마','흐르벡마','잘벡마','콜찬마','르찬마','몽구르마','노르벡마','옥벡마','삼찬마','텡찬마','울벡마','바르벡마','추르산마','둥찬마','에르벡마','갈벡마','흐르찬마','잠벡마','쿤벡마','르무마','몽벡마','눌벡마','오르찬마','삼벡마','텡벡마','울찬마','반벡마','촐벡마','둘벡마','엘벡마','감벡마','훌벡마','잘찬마','쿠르벡마','르벡찬마','몽찬마','눌찬마','옥찬마','삼무마','투벡마','울무마','반찬마','촐찬마','둘찬마','엘찬마','감찬마','훌찬마','잘무마','쿤찬마','르무찬마'];
+const SURNAMES_ELF=['쿠울라르','오르작','살착','오윤나르','헤르텍','토주','다반','초두르','카라살','바즈올','샬릭','이르기트','몽구시','도그발','기릭','올레트','나이딘','호를루','이딕','수만','달라이','투마트','알라시','에르진','케직','이르벡','칸가이','아르자','차단','울루그','사르그','밀란','비시크질','곰보','셀겐','두르겐','카파르','옥타르','텡기스','울란','바야르','초르간','딩마트','에르덴','간졸라','흐렐락','잔치프','쿤첸','르와간','메르겐','노르솔','오이둡','셀렝겐','타쉬르','우르겐','벡살','사인갈','투멘','초루','두구르','엘베겐','간딜','흐불','인젠','자르간','콩구르','몽케르','눌만','사르날락','테무르트','울란갈','바르겐','케직살','도르준락','카라올','샤가이','비시크','토구스','아이술란','노무간','아라간라','빌릭라','차가르라','돌라안라','에르겐라','간촉라','흐르간라','일비스라','자란라','코글라라','르타르라','만나이라','놉찬라','오을간라','사간라','톱추라','우라이라','벡치라','차리크라','둔마라','에릭벡라','간토르라','흐르발라','잉찬라','줄투라','코르슈라','르벡라','만찬라','노얀벡라','오르한라','사얀벡라','텡겐라','우르살라','벡산라','추르라','둠부르라','에른라','간벡라','흐르첸라','잉칸라','줄찬라','쿠를루라','르젠라','만토르라','노르첸라','옥토르라','사르벡라','테무르벡라','우얀라','바르산라','추르벡라','둥구르라','에르칸라','갈찬라','흐르무라','잔벡라','코르찬라','르살라','만무라','노얀찬라','오르벡라','살찬라','텡그리라','울란벡라','바르찬라','초르벡라','둥벡라','에르살라','갈무라','흐르벡라','잘벡라','콜찬라','르찬라','몽구르라','노르벡라','옥벡라','삼찬라','텡찬라','울벡라','바르벡라'];
+const RNAMES_ORC_M=['버르하네','키다네','에프렘','테스팔뎃','하곳','비니암','세마에레','요하네스','다니엘','무살레','제르센아이','아벨','테클레','우엘디','야레드','메브라투','아마뉴엘','페살','가브리','이삭','카사이','레물','므르하','나크파','오키비트','로벨','셀라시','테워르데','우키비트','제미카엘','하비트','아르가위','아드하놈','바이루','체브레','다비트','에스티파노스','피크레','가네트','하브테','이드리스','칼레브','루카스','멩기스투','나이질','옥바즈기','파울로스','르다','센나이','타데세','움베르토','웰두','자우데','아콜루','바라키','데크멈하레','에페슨','프로스페르','그르마','하갈롬','이사야스','크리스토스','미카엘','넉파','안도미카엘','바라키','체르노트','데스카스','에파이','포살레','거르마','하브투','이삿','카사이','레무엘','메드하니','나즈레트','오크바미카','파울로','르다히','세겐','타데우스','우지엘','워키네','자카리아스','알레마요','버하누','체하이','다우이트','에르미아스','포실라','겔라예','하디','이르갈렘','칼레','레미','메크비브','나이질','오크바기오르기스','르스톰','세미르','타요','우르구','와이네','잠부르','아클로그','발데마르','첸바','데베라','에루','프레즈기','골간','하게레','인쿠안','케벤나','레우엘','밀키아스','네하시','옥비트','프로미스','레데멥타','세미하르','탐라트','우크바기르기스','와일데감','잔트리르','암하','보르하네','아브라함','바르후','체닐레','다구','에레스','포솔레','갈레','하브타','이사야','카레브','레불','멘가쉬','나가시','옥비트','사간','타레케','우케비트','와이루','자우데','안데미카','버하네쉬','칠롯','다미루','에프렘미카','프레시오','겐세르','하브레','이타미카','카립','레무카','멘살','나카시','옥바지','살렘','타데카','우르슈','와카시','자나미카','아무리','바줄루','체르칸','다쉬칸','에르간','프레칸','건디칸','하르칸','잉칸','카비루','레카미','멘치르','나비칸','옥시칸','살비칸','타리칸','우미칸','와리칸','자비칸','아리칸','바니칸','체비칸','다비칸','에비칸','프리칸','건비칸','하비칸','잉비칸','카칸','레칸','멘칸','나칸','옥칸','살칸','타칸','우칸','와칸','자칸','아칸','바칸','체칸','다칸','에칸','프칸','건칸','하칸','잉칸미','카루칸','레비칸','멘비칸','나르칸','옥르칸','살르칸','타르칸미','우르칸','와르칸','자르칸','아르칸미','바르칸','체르칸미','다르칸','에르칸미','프르칸','건르칸','하르칸미','잉르칸','카르칸미','레르칸','멘르칸','나비루'];
+const RNAMES_ORC_F=['셈하르','세나이트','요디트','하벤','리안','사바','아지브','메디나','엘사','디에나','루타','아스칼루','하르셋','티루워크','미스라크','아르세마','아다넥','바르카','치에레','델리나','에데트','피오리','가넷','히윗','이딜','쿠아르사','레티타','마리아','나자넷','리하나','사하르','위바이네시','아케데렛','바하르','체레넷','다닛','에메벳','피크르테','겐넷','하디스','이룸','칼사','레티벨','마리아','나이웨이','오데트','포지','르다이트','사디야','타데슨','우두이','와인','자히라','아쿠','베레켓','디나크','에일리','폴리','기르마이트','하거','이레쉬','쿠에','레무엘라','안데넷','바사트','체르네쉬','다기마위','에덴','포스카','겔라네쉬','하레게와인','이로브','카르니','레믈렘','멜라트','나에마','오르나','프리실라','르스테거뉴','셀람','타세우','우에로','워크네쉬','자이네브','아리아나','비리만','체하이네쉬','데스타','에르가네쉬','프레히워트','겔리라','하입토미','일럼','케레스토스','레미야','멘베레','나이마','오데쉬','르세그네쉬','세이둘라','탄세','우크비트','워르키네쉬','제네브','알마즈','비르투칸','첼로트','딜라나','에마마','포젠','가르슈','할리마','잉키르','칸디아','레아','므세렛','네하','오르서','레지나','사다','타드세','울리아','윌키아','제이넵','아디스','베자','치루','디네쉬','아데리카','바세나','체레넷미','다쉬카','에사마','포실나','갈라니','하쿠란','일구에','카사니','레마시','멜란','나에미','오레나','프레미','르사니','셀미','타예크','우로니','와르크시','자미카','아스미','비르카','첼미','딜카','에르미','프로미','겐미','하르미','잉미','칸미','레마미','멜미','나에미카','오르미','프리미','르시미','셀카미','타시미','우카미','와르미','잠미','아스카미','비르미','첼카미','딜미','에카미','포미','겐카미','하미','인미','칸카미','레르미','멘미','나비미','오카미','프시미','르미','세미','타미','우르미','위미','자미카미','아미카','바미카','체미','다미카','에미카','포카미','건미카','하미카','잉미카','카미카','레미카','멘미카','나미카','오미카','프미카','르미카','세미카','타미카','우미카','와미카','자칸미','아르미','바르미카','체르미카','다르미카','에르미카','포르미','건르미','하르미카','잉르미','카르미','레르미카','멘르미','나르미','오르미카','프르미카','르르미','살르미','타르미카','우르미카','와르미카','자르미카','아비루','바비루','체비루'];
+const SURNAMES_ORC=['테클레','하일레','게브레','월데','아스게돔','메하리','베르헤','키플롬','세마에레','데스타','아브라하','바리아','체르노스','드미수','에그지','핫세','인기다','카사','레제네','므간가','안데마리암','바리후','체르네트','에프렘','포실라스','가브레','하브테마리암','이사야','크리스토포로스','멩게샤','나이즈기','옥바미카엘','르다히','세브하투','타데세','우키비트','워쿠','자미카엘','알레마요','바루','안데브르한','바르후','체하이네','데스타렘','에프라임','포실레','겔라세','하브테실라시','이삽미카엘','카사예','레마','멩기사','나이즈기후','오크바셀라시','르다미카엘','세브레','타데세미카엘','우크바미카엘','와르쿠','자미카엘','알레미카엘','버하네미카엘','체르네미카엘','데스타미카엘','에프레미카엘','포실미카엘','겔라미카엘','하브테미카엘','이삽미카','카사예미카','레마미카','멩기사미카','나이즈기미카','옥바미카','르다미카','세브레미카','타데세미카','우크바미카','와르쿠미카','잠부르미카','안데리','바르후미','체닐레미','다구미','에레스미','포솔레미','갈레미','하브타미','이사야미','카레브미','레불미','멘가쉬미','나가시미','옥비트미','사간미','타레케미','우케비미','와이루미','자우데미','안데미카미','아브라함미','바서미','체르네미','다쉬미','에르간미','프레시오미','건디미','하르칸미카','잉칸미카','카비루미','레카미미','멘살미','나카시미','옥바지미','살렘미','타데카미','우르슈미','와카시미','자나미카미','아무리미','바줄루미','체르칸미','다쉬칸미','에르간미카','프레칸미','건디칸미','하르칸미미','잉칸미미','카비루미카','레카미미카','멘살미카','나카시미카','옥바지미카','살렘미카','타데카미카','우르슈미카','와카시미카','자나미미','아무리미카','바줄루미카','체르칸미미','다쉬칸미카','에르간미미','프레칸미카','건디칸미카','하르칸미미카','잉칸미미카','카비루미미','레카미미미','멘살미미','나카시미미','옥바지미미','살렘미미','타데카미미','우르슈미미','와카시미미','자나미미카','아무리미미','바줄루미미','체르칸미미카'];
+const RNAMES_OGRE_M=['코쿠','코피','코조','크와메','야오','에뎀','세뇨','코미','델리','에포','포사','아쿠','토그베','다도','크와쿠','피이','아볼로','비쿠','치쿠','둥코','에시','포리','가키','호데','이뉴','쿠시','라미','모르코','누쿠','오플레','시카','티코','아톡파','바녜','치쿠','독포','에발루','피아비','가토','헤노','코말라','르가','메이뉴','농고','옥팔리','사키','투투','우쿠','비예','우디','젤라','아윌레','보슈','드시','에데','페요','곤사','호네','이그보','쿠파','르크마','산고','토르','울레시','아캇시','바비','치치','다쿠','에제','파파','가잘레','호세','이크포','카부','로코','마시','눈고','오세이','사보','타타','우카','비쿠','워시','야브이','아크요','보키','츠르','데조','에네코','포비','가메리','히도','잉가','쿠오피','로에시','무에비','노에','오포쿠','시케','타카이','우메','비마','위다','야시','아메시','보아치','추르치','드리고','에파','포에비','가시르','호에시','잉쿠','크파','르미노','마시르','누에시','오파레','사르포','탈리','우포','보니','위에시','제크','아드주','보시코','치무','두포','에그베','프로피','가조','호쿠','잉비','카쿤','로그베','무노','놈비','오세루','사쿤비','투에','우지','보르포','위조','야쿤','아그노','불리','치에무','두고','에이즈','포지','가그베','호무','잉쿤','카치','로무','무사','녹비','오코','사구','투아비','우알리','보사','워쿤','야비','아도쿤','볼무','치르코','두에비','에초','포쿠','가르비','호에무','잉에비','카사이','로사','무비에','눈비','오무쿤','사에비','투에비','우에비','보에비','위에비','야에비','아에비','볼에비','치에비','두비에','에비무','포에비에','가에비','호비에','잉에쿤','카에비','로에비','무에비에','눌에비','오에비에','사에비에','투비에','우비에','보비에','위비에','야비에','아비에','볼비에','치비에','두에비에','에에비','포비에에','가비에','호비에에','잉비에','카비에','로비에에','무비에에','눈비에에','오비에에','사비에에','투비에에','우비에에','보비에에','위비에에','야비에에','아크레에','보로에','치에에','두에에','에에에','포에에','가에에','호에에','잉에에','카에에','로에에','무에에','눌에에','오에에','사에에','투에에','우에에','보에에','위에에','야에에','아무에','보무에','치무에','두무에'];
+const RNAMES_OGRE_F=['아피','아마','지파','에시남','아코수아','아벤나','에포아','아윌라','시카','나나','아주아','델라','셀롬','마쿠','아클레','아도','보시','치쿠아','두잔','에피','포와','가제','호르시','이예와','쿠쿠아','로르나','마미','뉴뉴','오페미','세시','투이','우나','아크페','바미','치나','독시','에카','피요','가르시','헬리','이제','쿠르마','루치','모에','날라','오페마','사라피나','투윌레','우코','비에시','우에카','제피','아비바','보르요','드지고','에시아','페르메','가를라','호에디','일세','쿠시카','렘마','시에카','톨리','아크요시','바미시','치치에','다구라','에제와','파파이','가잘마','호시야','이쿠에','카부마','로코시','마시마','눈가','오세마','사보라','타타이','우카마','비쿠에','워시마','야부시','아클마','보키에','치르마','데지','에네마','포비야','가메라','히마','잉가라','쿠오마','로에마','무에마','노에시','오포쿠아','시카이','타카마','우메시','비마아','위다마','야시에','아마시','보치아','추라','드리마','에파시','포에마','가마시','호마에','잉구마','크파이','르미나','마시아','누에마','오파마','사르마','탈리에','우포시','보니아','위에마','제쿠아','아크레시','보아마','치르키','다무나','아드주마','보시코마','치무마','두포마','에그베마','프로피마','가조마','호쿠마','잉비마','카쿤마','로그베마','무노마','놈비마','오세루마','사쿤비마','투에마','우지마','보르포마','위조마','야쿤마','아그노마','불리마','치에무마','두고마','에이즈마','포지마','가그베마','호무마','잉쿤마','카치마','로무마','무사마','녹비마','오코마','사구마','투아비마','우알리마','보사마','워쿤마','야비마','아도쿤마','볼무마','치르코마','두에비마','에초마','포쿠마','가르비마','호에무마','잉에비마','카사이마','로사마','무비에마','눈비마','오무쿤마','사에비마','투에비마','우에비마','보에비마','위에비마','야에비마','아에비마','볼에비마','치에비마','두비에마','에비무마','포에비마','가에비마','호비에마','잉에쿤마','카에비마','로에비마','무에비에마','눌에비마','오에비에마','사에비에마','투비에마','우비에마','보비에마','위비에마','야비에마','아비에마','볼비에마','치비에마','두에비에마','에에비마','포비에에마','가비에마','호비에에마','잉비에마','카비에마','로비에에마','무비에에마','눈비에에마','오비에에마','사비에에마','투비에에마','우비에에마','보비에에마','위비에에마','야비에에마','아크레에마','보로에마','치에에마','두에에마','에에에마','포에에마','가에에마','호에에마','잉에에마','카에에마','로에에마','무에에마','눌에에마','오에에마','사에에마','투에에마','우에에마','보에에마'];
+const SURNAMES_OGRE=['아메가','아드지','아글로','아블로','도도','아그보','토가','에비','쿠부','뉴이두','압라쿠','보아텡','다이니','에숨','피아감','가빌리','호르지','카쿠','로디','에사나','아물레','보아시','체푸','다크포','에그블라','포에','간시','호르메','카넌가','라비','마노카','노르비','오푸','사쿠','테비','아마쿠','보아포','치부','데그바이','에페','아그보글리아','보아코','치쿠에시','다보르','에그블라포','포에비야','가시릭','호르시르','이그보시','카쿠에','로키에','마시에','눈가시','오푸에','사카시','타가에','우시키','보에시','위키에','야브에','아카시에','보아쿠에','치르비에','다쿠시','에그랄','포비에시','가시타','호에시마','잉크에시','카르시에','로비에','마쿠에시','눈가마','오세에시','사에시','타르비에','우에시마','보르비에','위크에시','저르비에','아드주라','보시코라','치무라','두포라','에그베라','프로피라','가조라','호쿠라','잉비라','카쿤라','로그베라','무노라','놈비라','오세루라','사쿤비라','투에라','우지라','보르포라','위조라','야쿤라','아그노라','불리라','치에무라','두고라','에이즈라','포지라','가그베라','호무라','잉쿤라','카치라','로무라','무사라','녹비라','오코라','사구라','투아비라','우알리라','보사라','워쿤라','야비라','아도쿤라','볼무라','치르코라','두에비라','에초라','포쿠라','가르비라','호에무라','잉에비라','카사이라','로사라','무비에라','눈비라','오무쿤라','사에비라','투에비라','우에비라','보에비라','위에비라','야에비라','아에비라','볼에비라','치에비라','두비에라','에비무라','포에비에라','가에비라','호비에라','잉에쿤라','카에비라','로에비라','무에비에라','눌에비라','오에비에라','사에비에라','투비에라','우비에라','보비에라','위비에라','야비에라'];
+const RNAMES_DWARF_M=['라벨로','안드리','라코토','탄텔리','하야','마헤리','라이니','솔로','라자','토볼라','피에르','난텐아이나','헤리','티아나','라베','마하로','아리벨로','보토','디나','파힌치','하제나','이자이','조로','카목','란드리','미칼','나토','오니','라보','소안드로','탄드리','벨로마','아리니보','보아낼로','디마','파히자','지미','하린조','이반드리','조아리','카모','란자나','마하벨로','나리보','올리비에','파스칼','라이보','사무엘','탄자','바오','젤로','아르마','보안토','디디에','파히타','지로','하리볼라','이안토','조엘','칼라마','란드리아소','미셸','나일','라이나','안디','보아자','디디에르','파노','지유','하조','이아리보','조나','칼레파','란투','마하야','나리보아','올가','파히','라미','사모엘','티라카','보아이','잔드리','아시만드라','베르틸','도미닉','파리히','하인고','이반','조반니','카디','란조','마미솔로','노알리','오니','파라하','라자카','살라마','타히시','보아히','찬드라','다무','에릭','피쉬','가지','하니','이아보','조시','킴바','라이코','마네사','노아리','오르사','파히니','라조아','사하','타쿤바','보아히나','지니','알라인','브루노','클리망','다리우스','에르베','파비앙','제라르','안리','아리솔로','보아니','치아노','디미','파노아리','지오라','하니보','이보안드리','조카','칼로','란디마','마히안드리','나리솔로','올라','파히솔로','라미아리','사토안드리','티안나','보아이솔로','잔디아리','아시마리','벨로마리','도미솔로','파히마리','지미안드리','하조안드리','이반솔로','조반마리','카디안드리','란조마리','마미안드리','노알솔로','오니마리','파라솔로','라자안드리','살라마리','타히안드리','보아히솔로','찬드리안드리','다무안드리','에릭솔로','피쉬안드리','가지마리','하니안드리','이아보안드리','조시마리','킴바안드리','라이코마리','마네사안드리','노아리마리','오르사안드리','파히니안드리','라조아마리','사하안드리','타쿤바안드리','보아히나안드리','지니안드리','알라인안드리','브루노안드리','클리망안드리','다리우스안드리','에르베안드리','파비앙안드리','제라르안드리','안리안드리','아리마리','보아안드리','치아안드리','디미안드리','파노솔로','지오솔로','하니솔로','이보솔로','조카솔로','칼로솔로','란디솔로','마히솔로','나리안드리','올라안드리','파히안드리이','라미솔로','사토솔로','티안솔로','보아솔로','잔디솔로','아시솔로','벨로솔로','도미안드리','파히마솔로','지미솔로','하조솔로','이반안드리','조반솔로','카디솔로','란조솔로','마미솔로','노알안드리','오니솔로','파라안드리','라자솔로','살라솔로','타히솔로','보아히안드리','찬드솔로','다무솔로','에릭안드리','피쉬솔로','가지솔로','하니마리안드리','이아보솔로','조시솔로','킴바솔로','라이코솔로','마네솔로','노아리솔로','오르사솔로','파히니솔로','라조솔로아'];
+const RNAMES_DWARF_F=['파라','미알리','보아히라나','타히나','란토','라소아','볼라나','니리나','하니트라','사로나','라바','마할라','피알리아나','노로','아이나','토조','안자라','빈타','도와나','에니','피디아','하신타','이알리나','조로아','칼라','란자나','모아','나타샤','라소아나','사흐라','톨로트라','볼라히타','안드리아','보아한기','디나라','파하자','지지','하리나','이바','조아라','칼리','란자나','마하보','나일라','올리비안','파울린','라이니아','사비나','타미나','바올라','젤리','안자리','보라니','디마솔라','파하노','지아라','하리보야','이렌','조세피나','카밀라','란자니','미라','나히라','라히마','안디아나','보아자나','디아만디나','파노아','지율리','하조아','이아리보아','조나타나','칼레파나','란투아나','마하야나','나리보아나','올간타','파히아나','라미라','사모엘라','티라카나','보아이나','잔드리아나','아시만드라나','보리아나','도미니카','파리히나','하인고나','이자벨라','조반나','카디아나','란조아나','마미솔로아','노알리나','오니아나','파라하나','라자카나','살라만드라','타히시나','보아히나','찬드라나','다무아나','에릭카','피쉬나','가지아나','하니타','이보아나','조시아나','킴발라','라이코아나','마네사나','노아리나','오르사나','파히니나','라조아나','사하나','타쿤바나','보아히나나','지니아나','알린','브리지트','클레망틴','다리아','에르빈','파비엔','제랄딘','안지','아리솔로아나','보아니나','치아노나','디미나','파노아나','지오라나','하니보나','이보안드리나','조카나','칼로나','란디마나','마히안드리나','나리솔로나','올라나','파히솔로나','라미아리나','사토안드리나','티안나나','보아이솔로나','잔디아리나','아시마리나','벨로마리나','도미솔로나','파히마리나','지미안드리나','하조안드리나','이반솔로나','조반마리나','카디안드리나','란조마리나','마미안드리나','노알솔로나','오니마리나','파라솔로나','라자안드리나','살라마리나','타히안드리나','보아히솔로나','찬드리안드리나','다무안드리나','에릭솔로나','피쉬안드리나','가지마리나','하니안드리나','이아보안드리나','조시마리나','킴바안드리나','라이코마리나','마네사안드리나','노아리마리나','오르사안드리나','파히니안드리나','라조아마리나','사하안드리나','타쿤바안드리나','보아히나안드리나','지니안드리나','알라인안드리나','브루노안드리나','클리망안드리나','다리우스안드리나','에르베안드리나','파비앙안드리나','제라르안드리나','안리안드리나','아리마리나','보아안드리나','치아안드리나','디미안드리나','파노솔로나','지오솔로나','하니솔로나','이보솔로나','조카솔로나','칼로솔로나','란디솔로나','마히솔로나','나리안드리나','올라안드리나','파히안드리나이','라미솔로나','사토솔로나','티안솔로나','보아솔로나','잔디솔로나','아시솔로나','벨로솔로나','도미안드리나','파히마솔로나','지미솔로나','하조솔로나','이반안드리나','조반솔로나','카디솔로나','란조솔로나','마미솔로나','노알안드리나','오니솔로나','파라안드리나','라자솔로나','살라솔로나','타히솔로나','보아히안드리나','찬드솔로나','다무솔로나','에릭안드리나','피쉬솔로나','가지솔로나'];
+const SURNAMES_DWARF=['라주엘리나','안드리아만자토','라자피','라코토말라라','라베마난자라','라베','라나이보','란드리아','마하로','라밀리존','란드리아니리나','라볼로마나','라코토벨로','라자오나리벨로','라베마나나','마하조','라코토손','라발리마나나','토나이나','안드리아나','라벨로아리보','안드리안토아니나','라자피만드리','라코토베','라보아한기','라이니보','란토아리나','마하파트라','라밀리아리손','토볼라니리나','안드리아나리보','라보도나이나','라코토아리소아','라자오벨리나','라하리만가','마하리보','안드리아만디아','란드리아니보','타히리','안자카','라벨로니아이나','안드리안타히나','라자피솔로','라코토아리자카','라보아히나','라이니아리보','란토아리보','마하파히나','라밀리아리자카','토볼라아리보','안드리아니아이나','라보돈타히나','라코토아리니리나','라자오벨로니아이나','라하리아리보','마하리니아이나','안드리아만디아리보','란드리아니아이나','타히리아리보','안자카아리보','라벨로마난자라','안드리안토마난자라','라자피마난자라','라코토벨로마난자라','라보아히마난자라','라이니마난자라','란토마난자라','마하파마난자라','라밀리마난자라','토볼라마난자라','안드리마난자라','라보도마난자라','라코토마난자라','라자오마난자라','라하리마난자라','마하리마난자라','안드리아마난자라','란드리마난자라','타히리마난자라','안자카마난자라','라벨로솔로','안드리안토솔로','라자피솔로마리','라코토벨로솔로','라보아히솔로','라이니솔로','란토솔로','마하파솔로','라밀리솔로','토볼라솔로','안드리솔로','라보도솔로','라코토솔로','라자오솔로','라하리솔로','마하리솔로','안드리아솔로','란드리솔로','타히리솔로','안자카솔로','라벨로마리','안드리안토마리','라자피마리','라코토벨로마리','라보아히마리','라이니마리','란토마리','마하파마리','라밀리마리','토볼라마리','안드리마리','라보도마리','라코토마리','라자오마리','라하리마리','마하리마리','안드리아마리','란드리마리','타히리마리','안자카마리','라벨로아리','안드리안토아리','라자피아리','라코토벨로아리','라보아히아리','라이니아리','란토아리','마하파아리','라밀리아리','토볼라아리','안드리아리','라보도아리','라코토아리','라자오아리','라하리아리','마하리아리','안드리아아리','란드리아리','타히리아리','안자카아리','라벨로니','안드리안토니','라자피니','라코토벨로니','라보아히니','라이니니','란토니','마하파니','라밀리니','토볼라니','안드리니','라보도니','라코토니','라자오니','라하리니','마하리니','안드리아니','란드리니','타히리니','안자카니'];
+const RNAMES_DELF_M=['악실','아기줄','아마야스','이디르','우셈','유구르텐','즈단','지리','아마스탄','이그더르','잇리','아나루즈','와라르니','아메즈와르','아크셀','이주르','아그발루','바디스','다센','가야','이켄','마신','우다드','아데르피','바라그센','페르하트','이두스','이줄','카달리','마지겐','세프리우','윈루즈','아마이아스','바라젠','다하르','에름리','파루크','가일란','이그르','카달','라메드','마그센','나우리','오팔','시가젤','타베르가','우르힐','윈마스','야쿠젠','아젤','벨카셈','다리만','에달','파데르','갈센','하르젠','일카이','쿠이데르','마크센','눔리','오카만','시하르','타멜두르트','웬지르','아구르젤','발마즈','다르가즈','에밀센','파루잔','구르살','하르카센','일마즈','주헤르','카리텐','르무드','마크리젤','누르딘','오카르','시파오','타마즈루','우르마즈','윈젤','야세프','젬리','아크무드','바르젤','다위드','에밀리스','파이살','가센','하미드','이브라히','주마','카센리','르미드','마시니','누르','옥살','시드리','타마지트','우르비','윈무드','야센','젬무드','아네자르','발리드','다센릭','에미르','파쿠르','갈센','하르쿠스','일카르','줄마젤','카란두','르무젤','마기드','누르자르','오가르센','시프린','타만젤','우르젤','위나젤','야구르','제다르','아게르잠','벨가센','다하르젤','에르주크','아마돌','발리젠','다르벨','에크렘','파르잔','갈무젠','하르질','일마젠','줄마르','카르젠','르무젤리','마기젠','누르잘','오가르잘','시프린젠','타만잘','우르젤리','위나잘','야구르잘','제다르잘','아게르잘','벨가잘','다하르잘','에르주크잘','아센리드','발리나스','다가르센','에밀젤','파루살','갈센무','하르쿠잘','일카르잘','줄마겐','카란젠','르무걸','마기젤','누르가르','오가르겐','시프겐','타만겐','우르겔','위나겐','야구겐','제다겐','아게겐','벨가겐','다하겐','에르겐무','아마도젠','발리도젠','다르도젠','에크도젠','파르도젠','갈무도젠','하르도젠','일마도젠','줄마도젠','카르도젠','르무도젠','마기도젠','누르도젠','오가도젠','시프도젠','타만도젠','우르도젠','위나도젠','야구도젠','제다도젠','아게도젠','벨가도젠','다하도젠','에르도젠','아센도젠','발리도','다가도','에밀도','파루도','갈센도','하르쿠도','일카도','줄마도','카란도','르무걸도','마기걸도','누르가도','오가걸도','시프걸도','타만걸도','우르걸도','위나걸도','야구걸도','제다걸도','아게걸도','벨가걸도','다하걸도','에르걸도','아마걸도','발리걸도','다르걸도','에크걸도','파르걸도','갈무걸도','하르걸도','일마걸도','줄마걸도','카르걸도','르무두젠','마기두젠','누르두젠','오가두젠','시프두젠','타만두젠','우르두젠','위나두젠','야구두젠','제다두젠','아게두젠','벨가두젠','다하두젠','에르두젠'];
+const RNAMES_DELF_F=['티지리','틸렐리','타클리트','타니나','티파우트','다미아','타젠켓','움알레르','타프라라','누미디아','타마즈가','타엘라트','탈디기트','체첼지','시만','카히나','알지아','데히아','가야','이토','루인자','맬리카','자이나라','바키타','타이디르트','울타실라','타셀디트','틴히난','사쿠라','디이야','타구르산트','타젤라이트','아마즈알','벨카','다자','엘리마','파텐','갈리아','히조르','주라','루이자','말리카','누아라','사피아','타루사','우이니가','와르디아','야스민','제르파','아세나트','불루자','칸드라','디아','에리야','피라스','글리나','히르사','인트','줄리카','카와','타이나','라일라','메르잔','누미샤','아구르젤트','발마즈트','다르가지트','에밀센트','파루잔트','구르사트','하르카센트','일마지트','주헤르트','카리텐트','르무다트','마크리젤트','누르딘트','오카르트','시파오트','타마즈루트','우르마지트','윈젤트','야세파트','젬리트','아크무다트','바르젤트','다위다트','에밀리스트','파이살트','가센트','하미다트','잉가트','주마트','카센리트','르미다트','마시니트','타마지투','누르트','옥살트','시드라트','우르비트','윈무다트','야센트','젬무다트','아네자르트','발리다트','다센릭트','에미르트','파쿠르트','갈센트','하르쿠스트','일카르트','줄마젤트','카란두트','르무젤트','마기다트','누르자르트','오가르센트','시프린트','타만젤트','우르젤트','위나젤트','야구르트','제다르트','아게르잠트','벨가센트','다하르젤트','에르주크트','아마도트','발리젠트','다르벨트','에크렘트','파르잔트','갈무젠트','하르질트','일마젠트','줄마르트','카르젠트','르무젤트','마기젠트','누르잘트','오가르잘트','시프린젠트','타만잘트','우르젤트','위나잘트','야구르잘트','제다르잘트','아게르잘트','벨가잘트','다하르잘트','에르주크잘트','아센리드트','발리나스트','다가르센트','에밀젤트','파루살트','갈센무트','하르쿠잘트','일카르잘트','줄마겐트','카란젠트','르무걸트','마기젤트','누르가르트','오가르겐트','시프겐트','타만겐트','우르겔트','위나겐트','야구겐트','제다겐트','아게겐트','벨가겐트','다하겐트','에르겐무트','아마도젠트','발리도젠트','다르도젠트','에크도젠트','파르도젠트','갈무도젠트','하르도젠트','일마도젠트','줄마도젠트','카르도젠트','르무도젠트','마기도젠트','누르도젠트','오가도젠트','시프도젠트','타만도젠트','우르도젠트','위나도젠트','야구도젠트','제다도젠트','아게도젠트','벨가도젠트','다하도젠트','에르도젠트','아센도젠트','발리도트','다가도트','에밀도트','파루도트','갈센도트','하르쿠도트','일카도트','줄마도트','카란도트','르무걸도트','마기걸도트','누르가도트','오가걸도트','시프걸도트','타만걸도트','우르걸도트','위나걸도트','야구걸도트','제다걸도트','아게걸도트','벨가걸도트','다하걸도트','에르걸도트','아마걸도트','발리걸도트','다르걸도트','에크걸도트','파르걸도트','갈무걸도트','하르걸도트','일마걸도트','줄마걸도트','카르걸도트','르무두젠트','마기두젠트','누르두젠트','오가두젠트','시프두젠트','타만두젠트','우르두젠트','위나두젠트','야구두젠트','제다두젠트','아게두젠트','벨가두젠트'];
+const SURNAMES_DELF=['아이트 우드','아이트 셈랄','아이트 인드리','아그 앨리','아그 인타','아이트 와라인','아이트 무그라드','우 마시드','아그 아젤','인 갈란','아이트 아리','아이트 야히아','아이트 이라텐','아그 알리','우 바슬라미','아이트 부야이','아이트 즈멘체르','아그 시디','우 트가르트','인 아만주르','아이트 바라카','아이트 하메드','아그 엘모크타르','우 벨카셈','아이트 수사','인 아다넬','아이트 칸드리','아그 모하메드','아이트 투젠트','우 라즈가','아이트 에브달라','아그 시르마','아이트 일리','우 이타스','인 타마네','아이트 우르히르','아그 마시넬','아이트 에르키','우 아메드','인 헬루','아이트 우르카','아이트 메르주크','아그 에밀센','우 파루잔','인 구르살','아이트 하르카센','아이트 일마즈','아그 주헤르','우 카리텐','인 르무드','아이트 마크리젤','아이트 누르딘','아그 오카르','우 시파오','인 타마즈루','아이트 우르마즈','아이트 윈젤','아그 야세프','우 젬리','인 아크무드','아이트 바르젤','아이트 다위드','아그 에밀리스','우 파이살','인 가센','아이트 하미드','아이트 이브라히','아그 주마','우 카센리','인 르미드','아이트 마시니','아이트 누르','아그 옥살','우 시드리','인 타마지트','아이트 우르비','아이트 윈무드','아그 야센','우 젬무드','인 아네자르','아이트 아마돌','아이트 발리젠','아그 다르벨','우 에크렘','인 파르잔','아이트 갈무젠','아이트 하르질','아그 일마젠','우 줄마르','인 카르젠','아이트 르무젤','아이트 마기젠','아그 누르잘','우 오가르잘','인 시프린젠','아이트 타만잘','아이트 우르젤','아그 위나잘','우 야구르잘','인 제다르잘','아이트 아센리드','아이트 발리나스','아그 다가르센','우 에밀젤','인 파루살','아이트 갈센무','아이트 하르쿠잘','아그 일카르잘','우 줄마겐','인 카란젠','아이트 르무걸','아이트 마기젤','아그 누르가르','우 오가르겐','인 시프겐','아이트 타만겐','아이트 우르겔','아그 위나겐','우 야구겐','인 제다겐','아이트 아마도젠','아이트 발리도젠','아그 다르도젠','우 에크도젠','인 파르도젠','아이트 갈무도젠','아이트 하르도젠','아그 일마도젠','우 줄마도젠','인 카르도젠','아이트 르무도젠','아이트 마기도젠','아그 누르도젠','우 오가도젠','인 시프도젠','아이트 타만도젠','아이트 우르도젠','아그 위나도젠','우 야구도젠','인 제다도젠','아이트 아게도젠','아이트 벨가도젠','아그 다하도젠','우 에르도젠','인 아센도젠','아이트 발리도르','아그 다가도르','우 에밀도르','인 파루도르','아이트 갈센도르','아이트 하르쿠도르','아그 일카도르','우 줄마도르','인 카란도르','아이트 르무걸도르','아이트 마기걸도르','아그 누르가도르','우 오가걸도르','인 시프걸도르','아이트 타만걸도르'];
+
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+// === ORVIA CALENDAR & SAJU ENGINE ===
+const ORVIA_YEAR=1219;
+const GANS_ALL=[GANS_Y[0],GANS_N[0],GANS_Y[1],GANS_N[1],GANS_Y[2],GANS_N[2],GANS_Y[3],GANS_N[3],GANS_Y[4],GANS_N[4]];
+const JIS_ALL=[JIS_Y[0],JIS_N[0],JIS_Y[1],JIS_N[1],JIS_Y[2],JIS_N[2],JIS_Y[3],JIS_N[3],JIS_Y[4],JIS_N[4],JIS_Y[5],JIS_N[5]];
+// Races: yearJiIdx = fixed year 지지 index (null = normal cycle)
+const RACES={
+  human:{name:'인간',ageRatio:1,yearJiIdx:null,minAge:16,maxAge:45},
+  elf:{name:'엘프',ageRatio:0.1,yearJiIdx:null,minAge:160,maxAge:400,// 木: 양=인(2),음=묘(3) — 천간 음양 따름
+    yearJiFn:function(yGanIdx){return yGanIdx%2===0?2:3;}},
+  orc:{name:'오크',ageRatio:2.0,yearJiIdx:null,minAge:8,maxAge:30,
+    yearJiFn:function(yGanIdx){return yGanIdx%2===0?6:5;}},// 火: 양=오(6),음=사(5)
+  ogre:{name:'오거',ageRatio:0.4,yearJiIdx:null,minAge:40,maxAge:150,
+    yearJiFn:function(yGanIdx){// 土: 양=진(4)/술(10),음=축(1)/미(7) 랜덤
+      if(yGanIdx%2===0) return Math.random()<0.5?4:10;
+      return Math.random()<0.5?1:7;}},
+  dwarf:{name:'드워프',ageRatio:0.67,yearJiIdx:null,minAge:24,maxAge:65,
+    yearJiFn:function(yGanIdx){return yGanIdx%2===0?8:9;}},// 金: 양=신(8),음=유(9)
+  darkelf:{name:'다크엘프',ageRatio:0.1,yearJiIdx:null,minAge:160,maxAge:400,
+    yearJiFn:function(yGanIdx){return yGanIdx%2===0?0:11;}}// 水: 양=자(0),음=해(11)
+};
+function isLeap(y){return(y%4===0&&y%100!==0)||y%400===0;}
+function dimOf(y,m){return[31,isLeap(y)?29:28,31,30,31,30,31,31,30,31,30,31][m-1];}
+function absDay(y,m,d){
+  const y1=y-1;
+  let days=y1*365+Math.floor(y1/4)-Math.floor(y1/100)+Math.floor(y1/400);
+  const md=[31,isLeap(y)?29:28,31,30,31,30,31,31,30,31,30,31];
+  for(let i=0;i<m-1;i++) days+=md[i];
+  return days+d;
+}
+function calcSajuFromDate(year,month,day,hour,race){
+  const raceData=RACES[race||'human']||RACES.human;
+  // 년주: year1=갑자 → (year-1)%60
+  const yIdx=(year-1)%60;
+  const yG=GANS_ALL[yIdx%10];
+  const yJ=raceData.yearJiFn?JIS_ALL[raceData.yearJiFn(yIdx%10)]:JIS_ALL[yIdx%12];
+  // 일주: absoluteDay1=갑자 → (absDay-1)%60
+  const ad=absDay(year,month,day);
+  const dIdx=(ad-1)%60;
+  const dG=GANS_ALL[dIdx%10];
+  const dJ=JIS_ALL[dIdx%12];
+  // 월주: 년상기월법
+  const mJiIdx=(month+1)%12;// 1월=인(2),2월=묘(3)...11월=자(0),12월=축(1)
+  const mGanStart=((yIdx%10)%5)*2+2;
+  const mGanIdx=(mGanStart+month-1)%10;
+  const mG=GANS_ALL[mGanIdx];
+  const mJ=JIS_ALL[mJiIdx];
+  // 시주: 일상기시법
+  const hJiIdx=hour%12;// 0=자시,1=축시...11=해시
+  const hGanStart=((dIdx%10)%5)*2;
+  const hGanIdx=(hGanStart+hJiIdx)%10;
+  const hG=GANS_ALL[hGanIdx];
+  const hJ=JIS_ALL[hJiIdx];
+  // pillars: [시,일,월,년]
+  return {
+    p:[{g:hG,j:hJ},{g:dG,j:dJ},{g:mG,j:mJ},{g:yG,j:yJ}],
+    birth:{year,month,day,hour}
+  };
+}
+
+function randomNpc(){
+  const gdr=Math.random()>.5?'m':'f';
+  // Random race (weighted)
+  const raceRoll=Math.random();
+  let race;
+  if(raceRoll<0.50) race='human';
+  else if(raceRoll<0.62) race='elf';
+  else if(raceRoll<0.74) race='orc';
+  else if(raceRoll<0.82) race='ogre';
+  else if(raceRoll<0.92) race='dwarf';
+  else race='darkelf';
+  const raceData=RACES[race];
+  // Name generation (race-aware)
+  const _mPool={elf:RNAMES_ELF_M,orc:RNAMES_ORC_M,ogre:RNAMES_OGRE_M,dwarf:RNAMES_DWARF_M,darkelf:RNAMES_DELF_M};
+  const _fPool={elf:RNAMES_ELF_F,orc:RNAMES_ORC_F,ogre:RNAMES_OGRE_F,dwarf:RNAMES_DWARF_F,darkelf:RNAMES_DELF_F};
+  const _sPool={elf:SURNAMES_ELF,orc:SURNAMES_ORC,ogre:SURNAMES_OGRE,dwarf:SURNAMES_DWARF,darkelf:SURNAMES_DELF};
+  const _fn=pick(gdr==='m'?(_mPool[race]||RNAMES_M):(_fPool[race]||RNAMES_F));
+  const _sn=Math.random()<0.65?pick(_sPool[race]||SURNAMES):'';
+  const nm=_sn?_sn+' '+_fn:_fn;const _surname=_sn;const _firstname=_fn;
+  // Random birth date
+  const minAge=raceData.minAge;
+  const maxAge=raceData.maxAge;
+  const age=Math.floor(Math.random()*(maxAge-minAge+1))+minAge;
+  const bYear=ORVIA_YEAR-age;
+  const bMonth=Math.floor(Math.random()*12)+1;
+  const bDay=Math.floor(Math.random()*dimOf(bYear,bMonth))+1;
+  const bHour=Math.floor(Math.random()*12);
+  const saju=calcSajuFromDate(bYear,bMonth,bDay,bHour,race);
+  const pils=saju.p;
+  const elc={wood:0,fire:0,earth:0,metal:0,water:0};
+  pils.forEach(p=>{elc[p.g.e]+=12.5;elc[p.j.e]+=12.5;});
+  const appAge=Math.floor(age*raceData.ageRatio);
+  const lv=Math.floor(Math.random()*45)+5;
+  const ranks=['F','E','D','C','B','A','S'];
+  const rk=ranks[Math.min(Math.floor(lv/7),6)];
+  const gIcon=gdr==='m'?'♂':'♀';
+  const ageStr=appAge!==age?`${appAge}세(실제 ${age}세)`:`${age}세`;
+  const rd={name:nm,surname:_surname,firstname:_firstname,
+    info:`Lv.${lv} · ${pils[1].g.n}자리 · ${rk}랭크 · ${gIcon} · ${race==='human'?(ETHNO[ELEM_TO_ETHNO[pils[3].g.e]]||{name:'인간'}).name:raceData.name}`,
+    sub:`${bYear}년 ${bMonth}월 ${bDay}일생 · ${ageStr}`,
+    badge:'길드원',gender:gdr,race:race,
+    p:pils,el:elc,birth:saju.birth,appAge:appAge,
+    st:{ap:3+Math.floor(Math.random()*8),speed:30+Math.floor(Math.random()*60),hp:120+Math.floor(Math.random()*280),power:20+Math.floor(Math.random()*70),precision:20+Math.floor(Math.random()*70),resist:15+Math.floor(Math.random()*60)}};
+  mode='npc';
+  document.getElementById('mn').className='tog-b on';
+  document.getElementById('mp').className='tog-b';
+  render(rd);
+}
+// === 십성 (Ten Gods) calculation ===
+// Reverse maps: what controls X, what feeds X
+const CTRL={wood:'metal',fire:'water',earth:'wood',metal:'fire',water:'earth'};
+const FEED={wood:'water',fire:'wood',earth:'fire',metal:'earth',water:'metal'};
+
+const PARAM_AXES=[
+  {id:'bigup',name:'주체성',sipsung:'비겁',over:'고집',under:'순종',desc:'나와 같은 기운',
+   overSubs:['독립심','집착도','자존심'],underSubs:['포용력','협조성','의존도'],
+   titles:['지조없는 철새','줏대없는 팔랑귀','개인 심리상담사','적당한 주체성','자기주장 강한편','흔들림 없는 뚝심','고집불통 황소']},
+  {id:'express',name:'사교성',sipsung:'식상',over:'외향',under:'내향',desc:'내가 낳는 기운',
+   overSubs:['사교성','표현력','과시욕'],underSubs:['관찰력','경계심','자기은폐'],
+   titles:['타고난 은둔자','혼자가 제일 좋아','수줍은 친구','적당한 사교성','성격좋은 친구','타고난 파티피플','무대위의 지배자']},
+  {id:'percept',name:'현실감각',sipsung:'재성',over:'현실',under:'망상',desc:'내가 다스리는 기운',
+   overSubs:['실리감각','탐욕','계산력'],underSubs:['상상력','순수함','몰입도'],
+   titles:['꿈 속에 갇힌 자','생각 속에 표류중','풍부한 상상력','돈만 세면 됐죠','계산적인 사람','넘치는 사업가 정신','타고난 회계사']},
+  {id:'discip',name:'자기절제',sipsung:'관성',over:'경직',under:'방탕',desc:'나를 다스리는 기운',
+   overSubs:['책임감','강박도','인내력'],underSubs:['적응력','쾌락추구','즉흥대응'],
+   titles:['풀려버린 자물쇠','거절은 어려워','유혹에 약한 사람','적당한 절제력','단호한 사람','진짜 독한놈','고난길의 수도승']},
+  {id:'reflect',name:'계획성',sipsung:'인성',over:'신중',under:'즉흥',desc:'나를 낳는 기운',
+   overSubs:['분석력','의심도','계획성'],underSubs:['직감력','대담함','반사신경'],
+   titles:['타고난 사고뭉치','일단 움직이고봐','즉흥적인 사람','첫 시작이 반이다','체계적인 사람','과도한 준비성','스스로도 불신']}
+];
+
+// === 오행 기질 5축 (Five Element Personality) ===
+const ELEM_AXES=[
+  {id:'wood',name:'공감능력',element:'木',over:'자비',under:'냉담',
+   overSubs:['자비심','성장욕','개척정신'],underSubs:['무관심','냉담함','이기심'],
+   titles:['싸이코패스','나부터 살아야죠','차가운 사람','보통의 사람','정말 착한 사람','모두의 아버지/어머니','살아있는 성인']},
+  {id:'fire',name:'몰입능력',element:'火',over:'열정',under:'냉소',
+   overSubs:['열정','표현력','카리스마'],underSubs:['무기력','냉소','무감동'],
+   titles:['굳이 그걸 왜?','사그라든 열정','소극적인 사람','보통의 적극성','적극적인 사람','끝 없는 열정','하얗게 불태웠어']},
+  {id:'earth',name:'정서안정',element:'土',over:'안정',under:'불안',
+   overSubs:['안정감','신뢰감','포용력'],underSubs:['불안정','변덕','뿌리없음'],
+   titles:['심각한 공황장애','불안 장애','정서불안','보통의 안정감','안정된 사람','품어주는 사람','태산같은 군자']},
+  {id:'metal',name:'판단력',element:'金',over:'결단',under:'우유부단',
+   overSubs:['결단력','정의감','냉철함'],underSubs:['우유부단','원칙없음','줏대없음'],
+   titles:['중증 결정장애','갈팡질팡 갈대','우유부단한 사람','보통의 판단력','날카로운 사람','오차없는 칼날','살아있는 계산기']},
+  {id:'water',name:'학습능력',element:'水',over:'지혜',under:'둔감',
+   overSubs:['지혜','적응력','전략성'],underSubs:['둔감','경직사고','융통성없음'],
+   titles:['생각없는 둔재','공부는 귀찮아','눈치없는 사람','보통의 학습력','교수님의 애제자','천생 철학자','살아있는 대현자']}
+];
+
+function renderElemPersonality(d){
+  const sec=document.getElementById('elem-prm-sec');
+  if(!sec) return;
+  sec.innerHTML='';
+  const el=d.el;
+  if(!el) return;
+  
+  // Average = 20%, map to 0-6 title index
+  // 0%→0, 10%→1, 15%→2, 20%→3, 30%→4, 40%→5, 50%+→6
+  function toLevel(pct){
+    if(pct<=2) return 0;
+    if(pct<=8) return 1;
+    if(pct<=16) return 2;
+    if(pct<=24) return 3;
+    if(pct<=34) return 4;
+    if(pct<=44) return 5;
+    return 6;
+  }
+  
+  ELEM_AXES.forEach(ax=>{
+    const pct=el[ax.id]||0;
+    const lv=toLevel(pct);
+    const balanced=20; // average
+    const deviation=pct-balanced;
+    
+    // Bar position: 50% = center, left = over, right = under
+    let barPct=50;
+    if(balanced>0){
+      barPct=50-((pct-balanced)/Math.max(balanced,1))*35;
+      barPct=Math.max(5,Math.min(95,barPct));
+    }
+    
+    let fillHtml='';
+    if(barPct<48){
+      fillHtml=`<div class="prm-fill over" style="width:${50-barPct}%;background:linear-gradient(90deg,transparent,${EC[ax.id]})"></div>`;
+    } else if(barPct>52){
+      fillHtml=`<div class="prm-fill under" style="width:${barPct-50}%"></div>`;
+    }
+    
+    const row=document.createElement('div');
+    row.className='prm-row';
+    row.innerHTML=`
+      <div class="prm-lbl l" style="color:${EC[ax.id]}">${ax.over}</div>
+      <div class="prm-track">
+        <div class="prm-mid"></div>
+        ${fillHtml}
+        <div class="prm-dot" style="left:${barPct}%;background:${EC[ax.id]}"></div>
+      </div>
+      <div class="prm-lbl r">${ax.under}</div>`;
+    sec.appendChild(row);
+    
+    const axLabel=document.createElement('div');
+    axLabel.className='prm-axis';
+    axLabel.textContent=`${ax.name} · ${ax.element} · ${pct}%`;
+    sec.appendChild(axLabel);
+    
+    // Title
+    const titleDiv=document.createElement('div');
+    titleDiv.className='prm-title';
+    titleDiv.style.color=Math.abs(deviation)>5?(deviation>0?EC[ax.id]:'var(--water)'):'var(--dim)';
+    titleDiv.textContent=`"${ax.titles[lv]}"`;
+    sec.appendChild(titleDiv);
+    
+    // Sub-traits
+    const absD=Math.abs(deviation);
+    const subsDiv=document.createElement('div');
+    subsDiv.className='prm-subs';
+    if(absD>5){
+      const isOverLean=deviation>0;
+      const subs=isOverLean?ax.overSubs:ax.underSubs;
+      const cls=isOverLean?'over-sub':'under-sub';
+      const intensity=Math.min(absD/25,1);
+      subs.forEach((s,si)=>{
+        const sp=document.createElement('span');
+        sp.className=`prm-sub ${cls}`;
+        if(isOverLean) sp.style.color=EC[ax.id];
+        const subOp=Math.max(0,Math.min(1,intensity-(si*0.15)));
+        sp.style.opacity=subOp.toFixed(2);
+        sp.textContent=s;
+        if(subOp>0.05) subsDiv.appendChild(sp);
+      });
+    }
+    sec.appendChild(subsDiv);
+  });
+}
+
+function getSipsung(dayEl, targetEl){
+  if(!dayEl||!targetEl) return null;
+  if(targetEl===dayEl) return 'bigup';
+  if(GEN[dayEl]===targetEl) return 'express';
+  if(OVR[dayEl]===targetEl) return 'percept';
+  if(CTRL[dayEl]===targetEl) return 'discip';
+  if(FEED[dayEl]===targetEl) return 'reflect';
+  return null;
+}
+
+function calcParams(d){
+  const dayEl=d.p[1].g.e;
+  if(!dayEl) return null;
+  const counts={bigup:0,express:0,percept:0,discip:0,reflect:0};
+  let total=0;
+  // check all 8 slots, skip 일간 itself (p[1].g)
+  d.p.forEach((pil,i)=>{
+    // 천간
+    if(!(i===1)){ // skip 일간
+      if(!pil.g.lk && pil.g.e){
+        const s=getSipsung(dayEl,pil.g.e);
+        if(s){counts[s]++;total++;}
+      }
+    }
+    // 지지 (all pillars including 일지)
+    if(!pil.j.lk && pil.j.e){
+      const s=getSipsung(dayEl,pil.j.e);
+      if(s){counts[s]++;total++;}
+    }
+  });
+  return {counts,total,dayEl};
+}
+
+// ============================================================
+// === 신살 (神殺) Calculation Engine ===
+// ============================================================
+const JI_ORDER='子丑寅卯辰巳午未申酉戌亥';
+const SAMHAP={子:'water',丑:'metal',寅:'fire',卯:'wood',辰:'water',巳:'metal',午:'fire',未:'wood',申:'water',酉:'metal',戌:'fire',亥:'wood'};
+// 12신살 배치표: [겁,재,천,지,도화,월,망신,장성,반안,역마,육해,화개]
+const SS12T={fire:'亥子丑寅卯辰巳午未申酉戌',metal:'寅卯辰巳午未申酉戌亥子丑',water:'巳午未申酉戌亥子丑寅卯辰',wood:'申酉戌亥子丑寅卯辰巳午未'};
+const SS12N=['물불 안 가림','위기관리','몽상가','길잡이','인싸 체질','파란만장','무대체질','장군감','철두철미','파견 전문','트러블 메이커','혼자가 좋아'];
+
+// 천을귀인 테이블
+const CHEONUL={甲:'丑未',乙:'子申',丙:'亥酉',丁:'亥酉',戊:'丑未',己:'子申',庚:'寅午',辛:'寅午',壬:'巳卯',癸:'巳卯'};
+// 문창귀인
+const MUNCHANG={甲:'巳',乙:'午',丙:'申',丁:'酉',戊:'申',己:'酉',庚:'亥',辛:'子',壬:'寅',癸:'卯'};
+// 양인살 (양간만)
+const YANGIN={甲:'卯',丙:'午',戊:'午',庚:'酉',壬:'子'};
+// 비인살 (양간만, 양인의 충)
+const BIIN={甲:'酉',丙:'子',戊:'子',庚:'卯',壬:'午'};
+// 홍염살
+const HONGYEOM={甲:'午',乙:'申',丙:'寅',丁:'未',戊:'辰',己:'辰',庚:'戌',辛:'酉',壬:'子',癸:'申'};
+// 암록
+const AMROK={甲:'午',乙:'申',丙:'酉',丁:'亥',戊:'子',己:'寅',庚:'卯',辛:'巳',壬:'午',癸:'巳'};
+// 금여
+const GEUMYEO={甲:'辰',乙:'巳',丙:'未',丁:'申',戊:'酉',己:'戌',庚:'亥',辛:'子',壬:'丑',癸:'寅'};
+// 건록
+const GEONROK={甲:'寅',乙:'卯',丙:'巳',丁:'午',戊:'巳',己:'午',庚:'申',辛:'酉',壬:'亥',癸:'子'};
+// 복성귀인
+const BOKSUNG={甲:'寅丑',乙:'子亥',丙:'酉亥',丁:'酉亥',戊:'申',己:'未',庚:'午巳',辛:'午巳',壬:'卯寅',癸:'卯寅'};
+// 천복귀인
+const CHEONBOK={甲:'寅子',乙:'丑卯',丙:'寅子',丁:'亥',戊:'申',己:'未',庚:'午',辛:'巳',壬:'辰',癸:'丑卯'};
+// 현침살 (글자 형태 기반)
+const HYEONCHIM='甲乙辛壬';
+// 괴강살 일주
+const GOEGANG=['庚辰','庚戌','壬辰','壬戌'];
+// 백호살 일주
+const BAEKHO=['甲辰','乙巳','丙申','丁酉','戊寅','己卯','庚午','辛未','壬戌','癸亥'];
+// 육수 일주
+const YUKSU=['丙午','丁未','戊子','己丑','庚寅','辛卯'];
+// 고란살 일주
+const GORAN=['乙巳','丁巳','辛亥','戊申','壬寅','戊午','壬子','丙午'];
+// 원진 짝
+const WONJIN=[['子','未'],['丑','午'],['寅','巳'],['卯','辰'],['申','亥'],['酉','戌']];
+// 귀문관 짝 (인접기둥)
+const GWIMUN=[['寅','未'],['卯','辰'],['巳','戌'],['午','亥'],['酉','寅'],['子','未']];
+// 삼기 천간 조합
+const SAMGI={천상:'甲戊庚',인중:'乙丙丁',지하:'辛壬癸'};
+// 고신/과숙 (방합 기반)
+const GOSIN={亥:'寅',子:'寅',丑:'寅',寅:'巳',卯:'巳',辰:'巳',巳:'申',午:'申',未:'申',申:'亥',酉:'亥',戌:'亥'};
+const GWASUK={亥:'戌',子:'戌',丑:'戌',寅:'丑',卯:'丑',辰:'丑',巳:'辰',午:'辰',未:'辰',申:'未',酉:'未',戌:'未'};
+
+function calcSinsal(d){
+  const tags={};// {name: level}
+  function add(name){tags[name]=(tags[name]||0)+1;}
+  
+  // helpers
+  const gTids=d.p.map(p=>p.g.tid||null); // [년간,일간,월간,시간] — but order is [시,일,월,년]
+  const jTids=d.p.map(p=>p.j.tid||null);
+  const dayG=gTids[1]; // 일간
+  const dayJ=jTids[1]; // 일지
+  const yearJ=jTids[3]; // 년지
+  const monthJ=jTids[2]; // 월지
+  const allJ=jTids.filter(Boolean); // 모든 지지
+  const dayPillar=dayG+dayJ;
+  
+  if(!dayG||!dayJ) return tags;
+  
+  // --- A. 일간 기준 단순 룩업 ---
+  allJ.forEach(j=>{
+    if(CHEONUL[dayG]&&CHEONUL[dayG].includes(j)) add('위기의 은인');
+    if(MUNCHANG[dayG]===j) add('책벌레');
+    if(YANGIN[dayG]===j) add('살벌한 승부사');
+    if(BIIN[dayG]===j) add('날카로움');
+    if(HONGYEOM[dayG]===j) add('치명적 매력');
+    if(AMROK[dayG]===j) add('숨은 행운아');
+    if(GEUMYEO[dayG]===j) add('귀한 인연');
+    if(GEONROK[dayG]===j) add('자수성가');
+    if(BOKSUNG[dayG]&&BOKSUNG[dayG].includes(j)) add('타고난 식복');
+    if(CHEONBOK[dayG]&&CHEONBOK[dayG].includes(j)) add('럭키가이');
+  });
+  
+  // 현침살 (천간 형태)
+  if(HYEONCHIM.includes(dayG)) add('날카로움');
+  
+  // --- B. 일주 조합 ---
+  if(GOEGANG.includes(dayPillar)) add('천재 괴짜');
+  if(BAEKHO.includes(dayPillar)) add('외과의 손');
+  if(YUKSU.includes(dayPillar)) add('빛나는 외모');
+  if(GORAN.includes(dayPillar)) add('쉬운 이혼');
+  
+  // --- C. 12신살 (삼합 기반) ---
+  const refJs=[dayJ,yearJ].filter(Boolean);
+  refJs.forEach(refJ=>{
+    const samhap=SAMHAP[refJ];
+    if(!samhap||!SS12T[samhap]) return;
+    const row=SS12T[samhap];
+    allJ.forEach(j=>{
+      const idx=row.indexOf(j);
+      if(idx>=0&&j!==refJ) add(SS12N[idx]);
+    });
+  });
+  
+  // --- D. 월지 기반 ---
+  if(monthJ){
+    // 천의성: 월지 바로 앞 지지
+    const mIdx=JI_ORDER.indexOf(monthJ);
+    if(mIdx>=0){
+      const medJ=JI_ORDER[(mIdx-1+12)%12];
+      let hasMed=false;
+      allJ.forEach((j,i)=>{if(i!==2&&j===medJ) hasMed=true;});// 월지 자신 제외
+      if(hasMed){
+        add('천생 의사');
+        // 천문성 서브태그: 戌-亥 조합
+        if((monthJ==='亥'&&medJ==='戌')||(monthJ==='子'&&medJ==='亥')) add('예언자');
+      }
+    }
+  }
+  
+  // --- E. 복합 조건 ---
+  // 원진살
+  WONJIN.forEach(pair=>{
+    if(allJ.includes(pair[0])&&allJ.includes(pair[1])) add('질긴 악연');
+  });
+  
+  // 귀문관살 (인접 기둥: 월-일 또는 일-시)
+  const adjPairs=[[monthJ,dayJ],[dayJ,jTids[0]]];// [월지-일지, 일지-시지]
+  adjPairs.forEach(([a,b])=>{
+    if(!a||!b) return;
+    GWIMUN.forEach(pair=>{
+      if((a===pair[0]&&b===pair[1])||(a===pair[1]&&b===pair[0])) add('제6감');
+    });
+  });
+  
+  // 삼기 (3연속 천간)
+  const g3s=[[gTids[3],gTids[2],gTids[1]],[gTids[2],gTids[1],gTids[0]]];// 년월일, 월일시
+  Object.entries(SAMGI).forEach(([type,seq])=>{
+    g3s.forEach(g3=>{
+      if(!g3[0]||!g3[1]||!g3[2]) return;
+      const fwd=g3[0]+g3[1]+g3[2];
+      const rev=g3[2]+g3[1]+g3[0];
+      if(fwd===seq||rev===seq){
+        if(type==='천상') add('타고난 리더');
+        if(type==='인중') add('타고난 예술가');
+        if(type==='지하') add('타고난 흑막');
+      }
+    });
+  });
+  
+  // --- F. 방합 기반 (성별 구분) ---
+  const gdr=d.gender||'m';
+  [dayJ,yearJ].filter(Boolean).forEach(refJ=>{
+    allJ.forEach(j=>{
+      if(j===refJ) return;
+      if(gdr==='m'&&GOSIN[refJ]===j) add('천생 홀아비');
+      if(gdr==='f'&&GWASUK[refJ]===j) add('천생 과부');
+    });
+  });
+  
+  return tags;
+}
+
+function renderSinsal(d){
+  const el=document.getElementById('sinsal-sec');
+  if(!el) return;
+  el.innerHTML='';
+  const tags=calcSinsal(d);
+  if(!tags||Object.keys(tags).length===0){
+    el.innerHTML='<div class="ss-empty">감지된 신살 없음</div>';
+    return;
+  }
+  // sort by level desc
+  const sorted=Object.entries(tags).sort((a,b)=>b[1]-a[1]);
+  sorted.forEach(([name,lv])=>{
+    const star='★'.repeat(Math.min(lv,3));
+    const dim=lv>=3?'ss-extreme':lv>=2?'ss-strong':'';
+    const tag=document.createElement('span');
+    tag.className=`ss-tag ${dim}`;
+    tag.innerHTML=`${name} <span class="ss-star">${star}</span>`;
+    el.appendChild(tag);
+  });
+}
+
+// H-personality axes (derived from 십성+오행)
+const H_AXES=[
+  {id:'chastity',name:'정조관념',
+   over:'일편단심',under:'개방적',
+   overSubs:['정조의식','거부감','결벽'],underSubs:['자유연애','경계없음','무차별'],
+   titlesF:['많을수록 더 좋아','좋은게 좋은거지','과거 없는 사람 없다','바람은 피면 안되는 것','당신이 제일 좋아','죽어야만 헤어진다','죽어도 당신뿐'],
+   titlesM:['많을수록 더 좋아','좋은게 좋은거지','과거 없는 사람 없다','바람은 피면 안되는 것','당신이 제일 좋아','죽어야만 헤어진다','죽어도 당신뿐']},
+  {id:'morality',name:'도덕성',
+   over:'양심적',under:'막가파',
+   overSubs:['죄책감','자기검열','윤리관'],underSubs:['무양심','합리화','이기심'],
+   titlesF:['안되는 거라서 더 좋아','기분 좋으면 그만이야','한번 정도는 궁금해','궁금하지만 꺼림칙해','모든 금기는 이유가 있다','금기는 지켜야 한다','안되는 건 안되는 것'],
+   titlesM:['안되는 거라서 더 좋아','기분 좋으면 그만이야','한번 정도는 궁금해','궁금하지만 꺼림칙해','모든 금기는 이유가 있다','금기는 지켜야 한다','안되는 건 안되는 것']},
+  {id:'resist',name:'쾌락내성',
+   over:'철벽',under:'민감',
+   overSubs:['둔감','자제력','무반응'],underSubs:['과민','몰입','자극갈구'],
+   titlesF:['자지 없으면 안돼','쾌감이 최고야','자꾸만 생각나','기분 좋으면 좋아요','흔들리지 않는 정신','강철의 의지','쾌감 면역'],
+   titlesM:['보지 없으면 안돼','쾌감이 최고야','자꾸만 생각나','기분 좋으면 좋아요','흔들리지 않는 정신','강철의 의지','쾌감 면역']},
+  {id:'submit',name:'지배성향',
+   over:'지배',under:'피지배',
+   overSubs:['통제욕','소유욕','주도'],underSubs:['수용','의존','자기포기'],
+   titlesF:['충실한 육변기','이끌어줘','적극적이진 않음','과하지만 않으면 좋아','내 말대로 해','타고난 주인님','도도한 여왕님'],
+   titlesM:['패배자 베타메일','리드해줘...','살살 따라감','과하지만 않으면 좋아','내 말대로 해','타고난 주인님','수컷 알파메일']},
+  {id:'sadism',name:'가학성향',
+   over:'가학',under:'피학',
+   overSubs:['가학쾌감','잔인함','지배적고통'],underSubs:['피학쾌감','자기학대','고통의존'],
+   titlesF:['타고난 암퇘지','때려줘 밟아줘 욕해줘','아픈데 짜릿해','아픈건 그다지','깨달아버린 손맛','괴롭힘의 미학','타고난 고문가'],
+   titlesM:['타고난 숫퇘지','때려줘 밟아줘 욕해줘','아픈데 짜릿해','아픈건 그다지','깨달아버린 손맛','괴롭힘의 미학','타고난 고문가']}
+];
+
+function calcHParams(sipCounts,total,elPcts){
+  const sc=sipCounts,el=elPcts;
+  const b=total/5;// balanced
+  // Normalize: each returns 0-6 level
+  function clamp06(v){return Math.max(0,Math.min(6,Math.round(v)));}
+  // 정조관념 = 율기↑ + 金↑ + 인식↓ 
+  const chastity=3 + (sc.discip-b)/b*1.2 + (el.metal-20)/20*0.8 + (b-sc.percept)/b*0.7;
+  // 도덕성 = 木↑ + 율기↑ + 인식↓
+  const morality=3 + (el.wood-20)/20*1.0 + (sc.discip-b)/b*0.8 + (b-sc.percept)/b*0.7;
+  // 쾌락내성 = 사유↑ + 율기↑ + 水↓ + 火↓
+  const resist=3 + (sc.reflect-b)/b*1.0 + (sc.discip-b)/b*0.8 + (20-el.water)/20*0.5 + (20-el.fire)/20*0.5;
+  // 지배성향: 주체↑ + 土↓ = 지배적
+  const submit=3 + (sc.bigup-b)/b*1.5 + (20-el.earth)/20*1.0;
+  // 가학성향 = 주체↑ + 인식 현실↑ + 사유 즉흥↓ + 金↑ + 火↑
+  const sadism=3 + (sc.bigup-b)/b*0.8 + (sc.percept-b)/b*0.6 + (b-sc.reflect)/b*0.5 + (el.metal-20)/20*0.6 + (el.fire-20)/20*0.4;
+  return {chastity:clamp06(chastity),morality:clamp06(morality),resist:clamp06(resist),submit:clamp06(submit),sadism:clamp06(sadism)};
+}
+
+// Shared row renderer
+function renderAxisRow(container,ax,lv,maxLv,deviation,dotColor,compColor){
+  const pct=50-deviation*35;
+  const cPct=Math.max(5,Math.min(95,pct));
+  const overCol=dotColor||'var(--fire)';
+  const underCol=compColor||'var(--water)';
+  let fillHtml='';
+  if(cPct<48) fillHtml=`<div class="prm-fill over" style="width:${50-cPct}%;background:linear-gradient(90deg,transparent,${overCol})"></div>`;
+  else if(cPct>52) fillHtml=`<div class="prm-fill under" style="width:${cPct-50}%;background:linear-gradient(90deg,${underCol},transparent)"></div>`;
+  
+  const titleIdx=Math.max(0,Math.min(ax.titles.length-1,
+    maxLv<=6?Math.round(3+deviation*3):Math.round(3+deviation*(deviation>=0?2:3))
+  ));
+  const isOverDir=deviation>0;
+  const titleColor=Math.abs(deviation)>0.1?(isOverDir?overCol:underCol):'var(--dim)';
+  
+  // Build sub-traits HTML inline
+  let subsHtml='';
+  if(ax.overSubs){
+    const subs=isOverDir?ax.overSubs:ax.underSubs;
+    const subCol=isOverDir?overCol:underCol;
+    subsHtml=`<div class="prm-subs">${subs.map(s=>`<span class="prm-sub" style="color:${subCol}">${s}</span>`).join('')}</div>`;
+  }
+  
+  const wrap=document.createElement('div');
+  wrap.className='prm-row-wrap';
+  wrap.innerHTML=`
+    <div class="prm-row-bar">
+      <div class="prm-row">
+        <div class="prm-lbl l" style="color:${overCol}">${ax.over}</div>
+        <div class="prm-track"><div class="prm-mid"></div>${fillHtml}
+          <div class="prm-dot" style="left:${cPct}%;background:${isOverDir?overCol:Math.abs(deviation)>0.1?underCol:'var(--gold)'}"></div>
+        </div>
+        <div class="prm-lbl r" style="color:${underCol}">${ax.under}</div>
+      </div>
+      ${subsHtml}
+    </div>
+    <div class="prm-row-info">
+      <div class="prm-title" style="color:${titleColor}">"${ax.titles[titleIdx]}"</div>
+      <div class="prm-axis">${ax.name}${ax.sipsung?' · '+ax.sipsung:''}${ax.element?' · '+ax.element:''}</div>
+    </div>`;
+  container.appendChild(wrap);
+}
+
+function renderParams(d){
+  const sec=document.getElementById('prm-sec');
+  sec.innerHTML='';
+  const result=calcParams(d);
+  if(!result||result.total===0){
+    sec.innerHTML='<div class="prm-note">잠긴 슬롯이 많아 분석 불가</div>';
+    return;
+  }
+  const {counts,total}=result;
+  const balanced=total/5;
+  
+  // === GROUP 1: 십성 5축 ===
+  const g1=document.createElement('div');g1.className='prm-group';
+  g1.innerHTML='<div class="prm-group-title">십 성 기 질</div><div class="prm-group-sub">행동 패턴 · 관계 구조</div>';
+  PARAM_AXES.forEach(ax=>{
+    const v=counts[ax.id];
+    const dev=(v-balanced)/Math.max(balanced,1);
+    renderAxisRow(g1,ax,v,7,dev,null);
+  });
+  sec.appendChild(g1);
+  
+  // === GROUP 2: 오행 5축 ===
+  const el=d.el||{};
+  const g2=document.createElement('div');g2.className='prm-group';
+  g2.innerHTML='<div class="prm-group-title">오 행 기 질</div><div class="prm-group-sub">본질 에너지 · 오상</div>';
+  ELEM_AXES.forEach(ax=>{
+    const pct=el[ax.id]||0;
+    function toLevel(p){if(p<=2)return 0;if(p<=8)return 1;if(p<=16)return 2;if(p<=24)return 3;if(p<=34)return 4;if(p<=44)return 5;return 6;}
+    const lv=toLevel(pct);
+    const dev=(pct-20)/20;
+    renderAxisRow(g2,ax,lv,6,dev,EC[ax.id],EC_COMP[ax.id]);
+  });
+  sec.appendChild(g2);
+  
+  // === GROUP 3: 성행위 기질 ===
+  const hVals=calcHParams(counts,total,el);
+  const gdr=d.gender||'m';
+  const g3=document.createElement('div');g3.className='prm-group';
+  g3.innerHTML=`<div class="prm-group-title">성 행 위 기 질</div><div class="prm-group-sub">십성×오행에서 파생 · ${gdr==='m'?'♂':'♀'}</div>`;
+  H_AXES.forEach(ax=>{
+    const lv=hVals[ax.id];
+    const dev=(lv-3)/3;
+    const resolved={name:ax.name,over:ax.over,under:ax.under,overSubs:ax.overSubs,underSubs:ax.underSubs,
+      titles:gdr==='f'?ax.titlesF:ax.titlesM};
+    renderAxisRow(g3,resolved,lv,6,dev,'#c47a9e');
+  });
+  sec.appendChild(g3);
+  
+  // === Tags + Archetypes ===
+  const tags=[];
+  PARAM_AXES.forEach(ax=>{
+    const v=counts[ax.id];
+    if(v>=3) tags.push(ax.over);
+    if(v===0) tags.push(ax.under);
+  });
+  if(tags.length>0){
+    const tw=document.createElement('div');tw.className='prm-tag-wrap';
+    tags.forEach(t=>{const tg=document.createElement('span');tg.className='prm-tag';tg.textContent=t;tw.appendChild(tg);});
+    sec.appendChild(tw);
+  }
+  
+  const c=counts;
+  const ARCHETYPES=[
+    {name:'배신자 기질',cond:{bigup:'h',percept:'h',discip:'l'},icon:'🗡️'},
+    {name:'야심가',cond:{bigup:'h',express:'h',percept:'h'},icon:'👑'},
+    {name:'충성의 칼',cond:{bigup:'l',discip:'h',percept:'l'},icon:'🛡️'},
+    {name:'의리파',cond:{discip:'h',percept:'l'},icon:'🤝'},
+    {name:'타고난 지휘관',cond:{bigup:'h',express:'h',discip:'h'},icon:'⚔️'},
+    {name:'그림자 참모',cond:{bigup:'l',express:'l',percept:'h',reflect:'h'},icon:'📋'},
+    {name:'사기꾼',cond:{express:'h',percept:'h',discip:'l'},icon:'🎪'},
+    {name:'자기희생형',cond:{bigup:'l',percept:'l',reflect:'h'},icon:'💫'},
+    {name:'은둔 현자',cond:{express:'l',percept:'l',reflect:'h'},icon:'📿'},
+    {name:'자유영혼',cond:{discip:'l',reflect:'l'},icon:'🌊'},
+    {name:'사고뭉치',cond:{express:'h',discip:'l',reflect:'l'},icon:'💥'},
+    {name:'철벽 관료',cond:{percept:'h',discip:'h'},icon:'🏛️'},
+    {name:'낭만주의자',cond:{percept:'l',discip:'l'},icon:'🌹'},
+    {name:'냉혈한',cond:{bigup:'h',percept:'h',reflect:'l'},icon:'🧊'},
+    {name:'고독한 늑대',cond:{bigup:'h',express:'l'},icon:'🐺'},
+    {name:'무대 위의 왕',cond:{bigup:'h',express:'h',discip:'l'},icon:'🎭'},
+    {name:'만년 2인자',cond:{bigup:'l',express:'l',reflect:'h'},icon:'🌙'},
+    {name:'불꽃 돌진형',cond:{bigup:'h',discip:'l',reflect:'l'},icon:'🔥'},
+  ];
+  const matched=[];
+  ARCHETYPES.forEach(arch=>{
+    let ok=true;
+    Object.entries(arch.cond).forEach(([axis,req])=>{
+      if(req==='h'&&c[axis]<3) ok=false;
+      if(req==='l'&&c[axis]>0) ok=false;
+    });
+    if(ok) matched.push(arch);
+  });
+  if(matched.length>0){
+    const aw=document.createElement('div');aw.className='prm-arche-wrap';
+    matched.forEach(a=>{const at=document.createElement('span');at.className='prm-arche';at.textContent=`${a.icon} ${a.name}`;aw.appendChild(at);});
+    sec.appendChild(aw);
+  }
+}
+
+// === Pentagram Modal ===
+const EL_EMOJI={wood:'🌿',fire:'🔥',earth:'🪨',metal:'⚔️',water:'💧'};
+const EL_NAME_KR={wood:'목',fire:'화',earth:'토',metal:'금',water:'수'};
+const SS_LABELS=[
+  {key:'bigup',ss:'비겁',ax:'주체',rel:'나와 같은 기운',over:'고집',under:'순종'},
+  {key:'express',ss:'식상',ax:'표출',rel:'내가 낳는 기운',over:'외향',under:'내향'},
+  {key:'percept',ss:'재성',ax:'인식',rel:'내가 다스리는 기운',over:'현실',under:'망상'},
+  {key:'discip',ss:'관성',ax:'율기',rel:'나를 다스리는 기운',over:'경직',under:'방탕'},
+  {key:'reflect',ss:'인성',ax:'사유',rel:'나를 낳는 기운',over:'신중',under:'즉흥'}
+];
+
+function showPentaModal(){
+  const d=currentData;
+  const dayEl=d.p[1].g.e;
+  if(!dayEl){return;}
+  const container=document.getElementById('penta-modal');
+  
+  // Calc 십성 counts
+  const pr=calcParams(d);
+  if(!pr) return;
+  const ct=pr.counts; // {bigup,express,percept,discip,reflect}
+  const tot=pr.total;
+  const cArr=[ct.bigup,ct.express,ct.percept,ct.discip,ct.reflect]; // indexed 0-4 matching pentagram nodes
+  const maxC=Math.max(...cArr,1);
+  
+  // Build 상생 cycle starting from dayEl
+  const cycle=[dayEl];
+  for(let i=0;i<4;i++) cycle.push(GEN[cycle[i]]);
+  
+  const cx=150,cy=145,r=95;
+  const pts=[];
+  for(let i=0;i<5;i++){
+    const ang=(-90+i*72)*Math.PI/180;
+    pts.push({x:cx+r*Math.cos(ang),y:cy+r*Math.sin(ang)});
+  }
+  
+  const elC={wood:'#4a7c59',fire:'#c44536',earth:'#b5893a',metal:'#7a8b99',water:'#3a7bd5'};
+  const genColor='#5cb87a';
+  const ovrColor='#c44536';
+  
+  // weight helper: returns {opacity, width} based on two node counts
+  function lineW(cA,cB){
+    const avg=(cA+cB)/2;
+    const t=Math.min(avg/Math.max(maxC,1),1);
+    return {op:0.04+t*0.86, w:0.3+t*4.0};
+  }
+  
+  let svg=`<svg viewBox="0 0 300 295" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width:320px;">`;
+  
+  // 상생 lines (outer pentagon: 0→1→2→3→4→0)
+  for(let i=0;i<5;i++){
+    const j=(i+1)%5;
+    const lw=lineW(cArr[i],cArr[j]);
+    const mx=(pts[i].x+pts[j].x)/2, my=(pts[i].y+pts[j].y)/2;
+    svg+=`<line x1="${pts[i].x}" y1="${pts[i].y}" x2="${pts[j].x}" y2="${pts[j].y}" stroke="${genColor}" stroke-width="${lw.w.toFixed(1)}" stroke-opacity="${lw.op.toFixed(2)}" stroke-linecap="round"/>`;
+    svg+=`<text x="${mx}" y="${my}" fill="${genColor}" font-size="7" text-anchor="middle" dominant-baseline="middle" opacity="${(0.1+lw.op*0.7).toFixed(2)}">생</text>`;
+  }
+  // 상극 lines (star: 0→2→4→1→3→0)
+  const starOrder=[0,2,4,1,3];
+  for(let i=0;i<5;i++){
+    const a=starOrder[i],b=starOrder[(i+1)%5];
+    const lw=lineW(cArr[a],cArr[b]);
+    svg+=`<line x1="${pts[a].x}" y1="${pts[a].y}" x2="${pts[b].x}" y2="${pts[b].y}" stroke="${ovrColor}" stroke-width="${lw.w.toFixed(1)}" stroke-opacity="${(lw.op*0.65).toFixed(2)}" stroke-dasharray="4,3" stroke-linecap="round"/>`;
+  }
+  
+  // Nodes — size & glow scale with count
+  for(let i=0;i<5;i++){
+    const el=cycle[i];
+    const c=elC[el];
+    const isDay=i===0;
+    const ssL=SS_LABELS[i];
+    const v=cArr[i];
+    const t=Math.min(v/Math.max(maxC,1),1);
+    const nodeR=14+t*16; // 14~30
+    const sOp=isDay?1:(0.1+t*0.85);
+    const sW=isDay?2.5:(0.4+t*2.6);
+    const fillA=isDay?(0.1+t*0.2):(0.01+t*0.22);
+    const fCol=isDay?'212,168,67':{wood:'74,124,89',fire:'196,69,54',earth:'181,137,58',metal:'122,139,153',water:'58,123,213'}[el];
+    // glow
+    if(v>=1) svg+=`<circle cx="${pts[i].x}" cy="${pts[i].y}" r="${nodeR+8}" fill="none" stroke="${c}" stroke-width="${(0.3+t*1.2).toFixed(1)}" stroke-opacity="${(t*0.45).toFixed(2)}"/>`;
+    // main circle
+    svg+=`<circle cx="${pts[i].x}" cy="${pts[i].y}" r="${nodeR}" fill="rgba(${fCol},${fillA.toFixed(2)})" stroke="${isDay?'#d4a843':c}" stroke-width="${sW.toFixed(1)}" stroke-opacity="${sOp.toFixed(2)}"/>`;
+    // emoji — opacity scales
+    const emoOp=isDay?1:(0.12+t*0.88);
+    svg+=`<text x="${pts[i].x}" y="${pts[i].y+1}" font-size="${14+t*8}" text-anchor="middle" dominant-baseline="middle" opacity="${emoOp.toFixed(2)}">${EL_EMOJI[el]}</text>`;
+    // count badge
+    svg+=`<text x="${pts[i].x+nodeR-2}" y="${pts[i].y-nodeR+6}" fill="${isDay?'#d4a843':c}" font-size="8" font-weight="700" text-anchor="middle" opacity="${(0.2+t*0.8).toFixed(2)}">${v}</text>`;
+    // 십성 label
+    const ly=pts[i].y+nodeR+11;
+    const lblOp=isDay?1:(0.15+t*0.85);
+    svg+=`<text x="${pts[i].x}" y="${ly}" fill="${isDay?'#d4a843':'#e8e4d9'}" font-size="9" font-weight="700" text-anchor="middle" font-family="'Noto Serif KR',serif" opacity="${lblOp.toFixed(2)}">${ssL.ss}</text>`;
+    svg+=`<text x="${pts[i].x}" y="${ly+11}" fill="#8a8778" font-size="7" text-anchor="middle" opacity="${(0.12+t*0.68).toFixed(2)}">${ssL.ax} · ${ssL.over}↔${ssL.under}</text>`;
+    if(isDay){
+      svg+=`<text x="${pts[i].x}" y="${pts[i].y-nodeR-5}" fill="#d4a843" font-size="7" text-anchor="middle" letter-spacing="2">일 간</text>`;
+    }
+  }
+  svg+=`</svg>`;
+  
+  // Table with counts
+  let tbl=`<table class="modal-tbl"><tr><th>십성</th><th>관계</th><th>파라미터</th><th>수치</th><th>극단</th></tr>`;
+  for(let i=0;i<5;i++){
+    const sl=SS_LABELS[i];
+    const el=cycle[i];
+    const v=cArr[i];
+    tbl+=`<tr><td class="ss-name">${sl.ss}</td><td class="ss-ex">${EL_EMOJI[el]} ${sl.rel}</td><td class="ss-ax">${sl.ax}</td><td class="ss-ax">${v}/${tot}</td><td class="ss-ex">${sl.over} ↔ ${sl.under}</td></tr>`;
+  }
+  tbl+=`</table>`;
+  
+  container.innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closePentaModal()">
+      <div class="modal-box">
+        <button class="modal-close" onclick="closePentaModal()">✕</button>
+        <div class="modal-title">십 성 원 리</div>
+        <div class="modal-sub">일간(${EL_EMOJI[dayEl]}) 기준 오행 관계 → 성격 파라미터</div>
+        <div class="penta-wrap">${svg}</div>
+        <div class="modal-legend">
+          <div class="modal-leg-item"><div class="modal-leg-line" style="background:${genColor}"></div>상생</div>
+          <div class="modal-leg-item"><div class="modal-leg-line" style="background:${ovrColor};opacity:.4"></div>상극</div>
+        </div>
+        ${tbl}
+      </div>
+    </div>`;
+}
+function closePentaModal(){document.getElementById('penta-modal').innerHTML='';}
+
+// === Design Modal (역방향 생성) ===
+const DM_PRESETS={
+  sipsung:[
+    {name:'전사형',icon:'⚔️',vals:[2,0,0,3,1]},
+    {name:'마법사형',icon:'🔮',vals:[0,-1,0,0,3]},
+    {name:'사교형',icon:'🎭',vals:[0,3,2,0,0]},
+    {name:'지휘관형',icon:'👑',vals:[3,2,0,1,0]},
+    {name:'방랑자형',icon:'🌍',vals:[0,1,0,-2,-1]},
+    {name:'균형형',icon:'☯️',vals:[0,0,0,0,0]},
+  ],
+  elem:[
+    {name:'화염술사',icon:'🔥',vals:[0,3,0,0,-2]},
+    {name:'대지의 수호자',icon:'🪨',vals:[0,0,3,0,0]},
+    {name:'칼날의 심판자',icon:'⚔️',vals:[0,-1,0,3,0]},
+    {name:'물의 현자',icon:'💧',vals:[0,0,0,0,3]},
+    {name:'숲의 치유사',icon:'🌿',vals:[3,0,0,0,0]},
+    {name:'균형형',icon:'☯️',vals:[0,0,0,0,0]},
+  ],
+  h:[
+    {name:'청순가련',icon:'🌸',vals:[3,2,2,2,-2]},
+    {name:'요부형',icon:'💋',vals:[-3,-1,-2,1,1]},
+    {name:'철벽녀',icon:'🛡️',vals:[3,3,3,-1,0]},
+    {name:'순종미인',icon:'🎀',vals:[1,1,0,-3,-2]},
+    {name:'여왕님',icon:'👑',vals:[1,0,1,3,3]},
+    {name:'균형형',icon:'☯️',vals:[0,0,0,0,0]},
+  ]
+};
+let dmState={el:'fire',gender:'m',race:'human',mode:'sipsung',vals:[0,0,0,0,0]};
+
+function dmGetAxes(){
+  const m=dmState.mode;
+  if(m==='sipsung') return PARAM_AXES.map(a=>({name:a.name,sub:a.sipsung,over:a.over,under:a.under,titles:a.titles}));
+  if(m==='elem') return ELEM_AXES.map(a=>({name:a.name,sub:a.element,over:a.over,under:a.under,titles:a.titles}));
+  if(m==='h') return H_AXES.map(a=>({name:a.name,sub:'',over:a.over,under:a.under,
+    titles:dmState.gender==='f'?a.titlesF:a.titlesM}));
+  return [];
+}
+
+function showDesignModal(){
+  const c=document.getElementById('design-modal');
+  const elEmoji={wood:'🌿',fire:'🔥',earth:'🪨',metal:'⚔️',water:'💧'};
+  const elName={wood:'목',fire:'화',earth:'토',metal:'금',water:'수'};
+  const m=dmState.mode;
+  const axes=dmGetAxes();
+  
+  function buildHTML(){
+    let h=`<div class="modal-overlay" onclick="if(event.target===this)closeDesignModal()"><div class="modal-box" style="max-width:360px;">
+      <button class="modal-close" onclick="closeDesignModal()">✕</button>
+      <div class="modal-title">캐 릭 터 설 계</div>
+      <div class="modal-sub">원하는 성격 → 원국 역산 생성</div>
+      <div class="dm-section"><div class="dm-label">일간 오행</div><div class="dm-el-row">`;
+    ['wood','fire','earth','metal','water'].forEach(e=>{
+      h+=`<div class="dm-el-btn${dmState.el===e?' on':''}" data-el="${e}" onpointerdown="dmSetEl('${e}')">${elEmoji[e]}<span>${elName[e]}</span></div>`;
+    });
+    h+=`</div></div><div class="dm-section"><div class="dm-label">성별</div><div class="dm-gdr-row">
+      <div class="dm-gdr-btn${dmState.gender==='m'?' on':''}" data-gdr="m" onpointerdown="dmSetGdr('m')">♂ 남</div>
+      <div class="dm-gdr-btn${dmState.gender==='f'?' on':''}" data-gdr="f" onpointerdown="dmSetGdr('f')">♀ 여</div></div></div>`;
+    // Race selector
+    h+=`<div class="dm-section"><div class="dm-label">종족</div><div class="dm-gdr-row" style="flex-wrap:wrap;gap:4px;">`;
+    Object.entries(RACES).forEach(([id,r])=>{
+      h+=`<div class="dm-gdr-btn${dmState.race===id?' on':''}" onpointerdown="dmSetRace('${id}')" style="font-size:10px;padding:5px 8px;">${r.name}</div>`;
+    });
+    h+=`</div></div>`;
+    // Mode tabs
+    h+=`<div class="dm-section"><div class="dm-label">설계 기준</div><div class="dm-gdr-row">
+      <div class="dm-gdr-btn${m==='sipsung'?' on':''}" onpointerdown="dmSetMode('sipsung')">십성기질</div>
+      <div class="dm-gdr-btn${m==='elem'?' on':''}" onpointerdown="dmSetMode('elem')">오행기질</div>
+      <div class="dm-gdr-btn${m==='h'?' on':''}" onpointerdown="dmSetMode('h')">성행위기질</div>
+    </div></div>`;
+    // Sliders
+    h+=`<div class="dm-section">`;
+    for(let i=0;i<axes.length;i++){
+      const ax=axes[i];
+      const v=dmState.vals[i];
+      const overW=v>0?Math.abs(v)/3*45:0;
+      const underW=v<0?Math.abs(v)/3*45:0;
+      const titleIdx=Math.max(0,Math.min(6,v+3));
+      const title=ax.titles[titleIdx];
+      h+=`<div class="dm-slider-row">`;
+      h+=`<div class="dm-slider-hdr"><span class="dm-ax">${ax.name} ${ax.sub?'<span class="dm-ax-sub">'+ax.sub+'</span>':''}</span></div>`;
+      h+=`<div class="dm-bar-wrap">`;
+      h+=`<div class="dm-bar-btn" onpointerdown="dmSlide(${i},${Math.min(3,v+1)});event.preventDefault()">+</div>`;
+      h+=`<div class="dm-bar-track" id="dm-track-${i}"><div class="dm-bar-mid"></div>`;
+      h+=`<div class="dm-bar-fill-over" id="dm-fill-over-${i}" style="width:${overW}%"></div>`;
+      h+=`<div class="dm-bar-fill-under" id="dm-fill-under-${i}" style="width:${underW}%"></div>`;
+      h+=`</div>`;
+      h+=`<div class="dm-bar-btn" onpointerdown="dmSlide(${i},${Math.max(-3,v-1)});event.preventDefault()">−</div>`;
+      h+=`</div>`;
+      h+=`<div class="dm-bar-labels"><span>${ax.over}</span><span id="dm-title-${i}" style="color:${v>0?'var(--fire)':v<0?'var(--water)':'var(--dim)'};font-weight:600;font-style:italic">"${title}"</span><span>${ax.under}</span></div>`;
+      h+=`</div>`;
+    }
+    h+=`</div>`;
+    // Presets
+    const presets=DM_PRESETS[m]||[];
+    h+=`<div class="dm-section"><div class="dm-label">프리셋</div><div class="dm-preset-row">`;
+    presets.forEach((p,i)=>{
+      h+=`<div class="dm-preset" onclick="dmPreset(${i})" title="${p.name}">${p.icon} ${p.name}</div>`;
+    });
+    h+=`</div></div>`;
+    h+=`<button class="dm-gen-btn" onclick="dmGenerate()">생 성</button>`;
+    h+=`</div></div>`;
+    return h;
+  }
+  c.innerHTML=buildHTML();
+}
+function dmSetMode(m){dmState.mode=m;dmState.vals=[0,0,0,0,0];showDesignModal();}
+function closeDesignModal(){document.getElementById('design-modal').innerHTML='';}
+function dmSetEl(e){
+  dmState.el=e;
+  document.querySelectorAll('.dm-el-btn').forEach(btn=>{
+    btn.classList.toggle('on',btn.dataset.el===e);
+  });
+}
+function dmSetRace(r){
+  dmState.race=r;
+  showDesignModal();
+}
+function dmSetGdr(g){
+  dmState.gender=g;
+  document.querySelectorAll('.dm-gdr-btn').forEach(btn=>{
+    btn.classList.toggle('on',btn.dataset.gdr===g);
+  });
+  if(dmState.mode==='h') dmUpdateSliders();
+}
+function dmSlide(idx,val){
+  dmState.vals[idx]=Math.max(-3,Math.min(3,parseInt(val)));
+  dmUpdateSliders();
+}
+function dmUpdateSliders(){
+  const axes=dmGetAxes();
+  for(let i=0;i<axes.length;i++){
+    const v=dmState.vals[i];
+    const absV=Math.abs(v);
+    const overFill=document.getElementById('dm-fill-over-'+i);
+    const underFill=document.getElementById('dm-fill-under-'+i);
+    if(overFill) overFill.style.width=(v>0?absV/3*45:0)+'%';
+    if(underFill) underFill.style.width=(v<0?absV/3*45:0)+'%';
+    const titleEl=document.getElementById('dm-title-'+i);
+    if(titleEl&&axes[i]){
+      const titleIdx=Math.max(0,Math.min(6,v+3));
+      titleEl.textContent=`"${axes[i].titles[titleIdx]}"`;
+      titleEl.style.color=v>0?'var(--fire)':v<0?'var(--water)':'var(--dim)';
+    }
+    const wrap=document.getElementById('dm-track-'+i);
+    if(wrap&&wrap.parentElement){
+      const btns=wrap.parentElement.querySelectorAll('.dm-bar-btn');
+      if(btns[0]) btns[0].setAttribute('onpointerdown',`dmSlide(${i},${Math.min(3,v+1)});event.preventDefault()`);
+      if(btns[1]) btns[1].setAttribute('onpointerdown',`dmSlide(${i},${Math.max(-3,v-1)});event.preventDefault()`);
+    }
+  }
+}
+function dmPreset(idx){
+  const presets=DM_PRESETS[dmState.mode]||[];
+  if(presets[idx]) dmState.vals=[...presets[idx].vals];
+  dmUpdateSliders();
+}
+
+function dmGenerate(){
+  const race=dmState.race||'human';
+  const dayEl=dmState.el;
+  const prefs=dmState.vals;
+  const m=dmState.mode;
+  
+  // Convert preferences to weights
+  function prefToWeight(p){
+    if(p>=3) return 6;if(p===2) return 4;if(p===1) return 2.5;
+    if(p===0) return 1.4;if(p===-1) return 0.5;if(p===-2) return 0.1;return 0;
+  }
+  
+  // Build element weight map
+  const elW={wood:1.4,fire:1.4,earth:1.4,metal:1.4,water:1.4};
+  const elOrder=['wood','fire','earth','metal','water'];
+  
+  if(m==='sipsung'){
+    const sipElMap=[dayEl,GEN[dayEl],OVR[dayEl],CTRL[dayEl],FEED[dayEl]];
+    prefs.forEach((p,i)=>{elW[sipElMap[i]]=prefToWeight(p);});
+  } else if(m==='elem'){
+    prefs.forEach((p,i)=>{elW[elOrder[i]]=prefToWeight(p);});
+  } else if(m==='h'){
+    // H→십성/오행 역추적 (5축: chastity,morality,resist,submit,sadism)
+    const sipElMap=[dayEl,GEN[dayEl],OVR[dayEl],CTRL[dayEl],FEED[dayEl]];
+    const sipW=[0,0,0,0,0];
+    sipW[3]+=prefs[0]*0.4; sipW[2]-=prefs[0]*0.3;// chastity
+    sipW[3]+=prefs[1]*0.3; sipW[2]-=prefs[1]*0.3;// morality
+    sipW[4]+=prefs[2]*0.4; sipW[3]+=prefs[2]*0.3;// resist
+    sipW[0]+=prefs[3]*0.5;// submit(지배↑→주체↑)
+    sipW[0]+=prefs[4]*0.3;sipW[2]+=prefs[4]*0.3;sipW[4]-=prefs[4]*0.2;// sadism
+    sipW.forEach((sw,i)=>{elW[sipElMap[i]]+=sw;});
+    elW.metal+=prefs[0]*0.3;// chastity↑→metal↑
+    elW.wood+=prefs[1]*0.3;// morality↑→wood↑
+    elW.water-=prefs[2]*0.2;elW.fire-=prefs[2]*0.2;// resist
+    elW.earth-=prefs[3]*0.3;// submit(지배↑→earth↓)
+    elW.metal+=prefs[4]*0.3;elW.fire+=prefs[4]*0.2;// sadism
+  }
+  
+  // Clamp and normalize to 7 slots
+  elOrder.forEach(e=>{elW[e]=Math.max(0,elW[e]);});
+  const wSum=elOrder.reduce((s,e)=>s+elW[e],0);
+  const targets=elOrder.map(e=>wSum>0?elW[e]/wSum*7:1.4);
+  const floors=targets.map(t=>Math.floor(t));
+  let remainder=7-floors.reduce((a,b)=>a+b,0);
+  const fracs=targets.map((t,i)=>({i,f:t-floors[i]}));
+  fracs.sort((a,b)=>b.f-a.f);
+  for(let r=0;r<remainder&&r<fracs.length;r++) floors[fracs[r].i]++;
+  
+  // Build pool
+  const pool=[];
+  elOrder.forEach((e,i)=>{for(let j=0;j<floors[i];j++) pool.push(e);});
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+  
+  const isYang=Math.random()>.5;
+  const dayGan=(isYang?GANS_Y:GANS_N).find(g=>g.e===dayEl);
+  const ganSlots=pool.slice(0,3);
+  const jiSlots=pool.slice(3,7);
+  const allGans=[...GANS_Y,...GANS_N];
+  const allJis=[...JIS_Y,...JIS_N];
+  const gans=ganSlots.map(e=>{const ms=allGans.filter(g=>g.e===e);return ms[Math.floor(Math.random()*ms.length)];});
+  const jis=jiSlots.map(e=>{const ms=allJis.filter(j=>j.e===e);return ms[Math.floor(Math.random()*ms.length)];});
+  
+  const pils=[{g:gans[2],j:jis[3]},{g:dayGan,j:jis[2]},{g:gans[1],j:jis[1]},{g:gans[0],j:jis[0]}];
+  const elc={wood:0,fire:0,earth:0,metal:0,water:0};
+  pils.forEach(p=>{elc[p.g.e]+=12.5;elc[p.j.e]+=12.5;});
+  
+  const gdr=dmState.gender;
+  const _mPool={elf:RNAMES_ELF_M,orc:RNAMES_ORC_M,ogre:RNAMES_OGRE_M,dwarf:RNAMES_DWARF_M,darkelf:RNAMES_DELF_M};
+  const _fPool={elf:RNAMES_ELF_F,orc:RNAMES_ORC_F,ogre:RNAMES_OGRE_F,dwarf:RNAMES_DWARF_F,darkelf:RNAMES_DELF_F};
+  const _sPool={elf:SURNAMES_ELF,orc:SURNAMES_ORC,ogre:SURNAMES_OGRE,dwarf:SURNAMES_DWARF,darkelf:SURNAMES_DELF};
+  const _fn=pick(gdr==='m'?(_mPool[race]||RNAMES_M):(_fPool[race]||RNAMES_F));
+  const _sn=Math.random()<0.65?pick(_sPool[race]||SURNAMES):'';
+  const nm=_sn?_sn+' '+_fn:_fn;const _surname=_sn;const _firstname=_fn;
+  const lv=Math.floor(Math.random()*45)+5;
+  const rk=['F','E','D','C','B','A','S'][Math.min(Math.floor(lv/7),6)];
+  const gIcon=gdr==='m'?'♂':'♀';
+  
+  const rd={name:nm,surname:_surname,firstname:_firstname,info:`Lv.${lv} · ${dayGan.n}자리 · ${rk}랭크 · ${gIcon} · ${race==='human'?(ETHNO[ELEM_TO_ETHNO[pils[3].g.e]]||{name:'인간'}).name:RACES[race].name}`,badge:'설계됨',gender:gdr,race:race,
+    p:pils,el:elc,
+    st:{ap:3+Math.floor(Math.random()*8),speed:30+Math.floor(Math.random()*60),hp:120+Math.floor(Math.random()*280),power:20+Math.floor(Math.random()*70),precision:20+Math.floor(Math.random()*70),resist:15+Math.floor(Math.random()*60)}};
+  mode='npc';
+  document.getElementById('mn').className='tog-b on';
+  document.getElementById('mp').className='tog-b';
+  closeDesignModal();
+  render(rd);
+}
+
+
+// ═══ 외형 파생 엔진 ═══
+let selectedHairLen='mid';
+const HAIR_LENS=[{id:'vshort',label:'숏컷',nai:'short hair'},{id:'short',label:'단발',nai:'bob cut'},{id:'mid',label:'중간',nai:'medium hair'},{id:'long',label:'장발',nai:'long hair'},{id:'vlong',label:'극장발',nai:'very long hair'}];
+function setHairLen(id){selectedHairLen=id;document.querySelectorAll('.hl-btn').forEach(b=>{b.style.background=b.dataset.hl===id?'var(--gold)':'transparent';b.style.color=b.dataset.hl===id?'var(--bg)':'var(--dim)';b.style.fontWeight=b.dataset.hl===id?'700':'400';});if(currentData)renderNAI(currentData);}
+function _calcSinsalAppear(d){
+  const r={};if(!d.p||!d.p[1].g.tid)return r;
+  const dG=d.p[1].g.tid;
+  const HY={'甲':'午','乙':'午','丙':'寅','丁':'未','戊':'寅','己':'未','庚':'酉','辛':'酉','壬':'子','癸':'子'};
+  for(let i=0;i<4;i++){if(!d.p[i].j.lk&&d.p[i].j.tid===HY[dG])r['치명적 매력']=(r['치명적 매력']||0)+1;}
+  const YS=['甲子','乙丑','丙寅','丁卯','戊辰','己巳','庚午','辛未','壬申','癸酉'];
+  if(d.p[1].j.tid&&YS.indexOf(dG+d.p[1].j.tid)>=0)r['빛나는 외모']=(r['빛나는 외모']||0)+1;
+  return r;
+}
+function renderAppearance(d){
+  const sec=document.getElementById('appear-sec'),hlSel=document.getElementById('hair-len-sel');
+  if(!sec)return;
+  const pr=calcParams(d);
+  if(!pr||!d.p[1].g.e){sec.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px;font-size:11px;">원국 데이터가 부족합니다.</div>';return;}
+  const{counts,total}=pr;const b=total/5;
+  const dayGan=d.p[1].g,isYang=GAN_YY[dayGan.n]!==undefined?GAN_YY[dayGan.n]:true;
+  const el=d.el||{},gdr=d.gender||'m';
+  const bigup=counts.bigup||0,express=counts.express||0,percept=counts.percept||0,discip=counts.discip||0;
+  const domEl=Object.entries(el).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  const dominant=domEl.length>0?domEl[0][0]:'earth';
+  const arch=getAppearArchetype(d);const ap=arch.data;
+  const BODY={earth:['비만/풍채','plump, thick body'],metal:['근육질','muscular, athletic body'],wood:['마름/장신','slim, tall, slender body'],fire:['마름/날카로움','thin, lean body'],water:['보통~통통','average body, soft body']};
+  let eyeCorner;
+  if(discip>=b*1.6&&dominant==='metal') eyeCorner='도끼눈';
+  else if(isYang||express>discip) eyeCorner='올라간 눈꼬리';
+  else eyeCorner='내려간 눈꼬리';
+  const pupilBig=express>=discip,browThick=bigup>=b*1.2;
+  let gTrait='';
+  if(gdr==='f'){const s=express+percept+(el.earth||0)/10+(el.water||0)/10;gTrait=s>=12?'매우 큼':s>=8?'큼':s>=4.5?'보통':'작음';}
+  else{const s=bigup+express+(isYang?1:0)+(el.water||0)/10;gTrait=s>=10?'매우 큼':s>=7?'큼':s>=4?'보통':'작음';}
+  const sinA=_calcSinsalAppear(d);let sinH='';
+  if(sinA['빛나는 외모'])sinH+=`<span style="display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;background:rgba(212,168,67,.15);color:var(--gold);margin:2px;">✨ 빛나는 외모 → beautiful, attractive</span>`;
+  if(sinA['치명적 매력'])sinH+=`<span style="display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;background:rgba(196,122,158,.15);color:#c47a9e;margin:2px;">💋 치명적 매력 → seductive, alluring</span>`;
+  const body=BODY[dominant]||BODY.earth;
+  let h=`<div style="text-align:center;padding:8px;margin-bottom:8px;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;"><span style="font-size:10px;color:var(--dim);">인종</span><div style="font-size:14px;font-weight:700;color:var(--gold);margin-top:2px;">${ap.name}</div></div>`;
+  h+=`<div style="font-size:9px;color:var(--dim);margin:8px 0 4px;letter-spacing:1px;">인종/종족 아키타입 (고정)</div>`;
+  [{l:'피부색',v:ap.skin},{l:'모발색',v:ap.hairCol},{l:'모발 형태',v:ap.hairType},{l:'눈동자 색',v:ap.eyeCol}].concat(ap.extra?[{l:'특수',v:ap.extra}]:[]).forEach(t=>{
+    h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;margin:3px 0;background:var(--card);border:1px solid var(--bdr);border-radius:8px;"><div style="font-size:11px;font-weight:500;">${t.l}</div><div style="font-size:12px;font-weight:700;">${t.v}</div></div>`;});
+  h+=`<div style="font-size:9px;color:var(--dim);margin:12px 0 4px;letter-spacing:1px;">원국 파생</div>`;
+  [{l:'체형',v:body[0],c:EC[dominant]},{l:'눈꼬리',v:eyeCorner},{l:'눈동자 크기',v:pupilBig?'큰 눈동자':'작은 눈동자'},{l:'눈썹 굵기',v:browThick?'굵은 눈썹':'보통 눈썹'},{l:gdr==='f'?'유방 크기':'성기 크기',v:gTrait}].forEach(t=>{const cs=t.c?' style="color:'+t.c+'"':'';
+    h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;margin:3px 0;background:var(--card);border:1px solid var(--bdr);border-radius:8px;"><div style="font-size:11px;font-weight:500;">${t.l}</div><div style="font-size:12px;font-weight:700;"${cs}>${t.v}</div></div>`;});
+  if(sinH)h+=`<div style="margin-top:8px;font-size:9px;color:var(--dim);margin-bottom:4px;">신살 외형 보정</div>${sinH}`;
+  sec.innerHTML=h;
+  if(hlSel)hlSel.innerHTML=HAIR_LENS.map(hl=>`<button class="hl-btn" data-hl="${hl.id}" onclick="setHairLen('${hl.id}')" style="padding:5px 12px;border-radius:14px;border:1px solid var(--bdr);background:${hl.id===selectedHairLen?'var(--gold)':'transparent'};color:${hl.id===selectedHairLen?'var(--bg)':'var(--dim)'};font-size:11px;cursor:pointer;font-weight:${hl.id===selectedHairLen?'700':'400'};">${hl.label}</button>`).join('');
+  renderNAI(d);
+}
+function renderNAI(d){
+  const elo=document.getElementById('nai-prompt');if(!elo||!d.p[1].g.e)return;
+  const pr=calcParams(d);if(!pr)return;const{counts,total}=pr;const b=total/5;
+  const isYang=GAN_YY[d.p[1].g.n]!==undefined?GAN_YY[d.p[1].g.n]:true,gdr=d.gender||'m',elO=d.el||{};
+  const dom=Object.entries(elO).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1]);const domE=dom.length>0?dom[0][0]:'earth';
+  const bigup=counts.bigup||0,express=counts.express||0,percept=counts.percept||0,discip=counts.discip||0;
+  const B={earth:'plump, thick body',metal:'muscular, athletic body',wood:'slim, tall, slender body',fire:'thin, lean body',water:'average body, soft body'};
+  const arch=getAppearArchetype(d);const ap=arch.data;
+  const tags=[gdr==='f'?'1girl':'1boy'];
+  tags.push(ap.skinNai);tags.push(ap.hairColNai);tags.push(ap.hairTypeNai);
+  const hl=HAIR_LENS.find(h=>h.id===selectedHairLen);if(hl)tags.push(hl.nai);
+  tags.push(ap.eyeColNai);if(ap.extra)tags.push(ap.extra);
+  tags.push(B[domE]);
+  if(discip>=b*1.6&&domE==='metal')tags.push('sharp eyes, narrow eyes');else if(isYang||express>discip)tags.push('upturned eyes');else tags.push('droopy eyes, downturned eyes');
+  tags.push(express>=discip?'large eyes':'small eyes');
+  if(bigup>=b*1.2)tags.push('thick eyebrows');
+  if(gdr==='f'){const s=express+percept+(elO.earth||0)/10+(elO.water||0)/10;tags.push(s>=12?'huge breasts':s>=8?'large breasts':s>=4.5?'medium breasts':'small breasts, flat chest');}
+  else{const s=bigup+express+(isYang?1:0)+(elO.water||0)/10;if(s>=10)tags.push('huge penis');else if(s>=7)tags.push('large penis');else if(s<4)tags.push('small penis');}
+  const sinA=_calcSinsalAppear(d);if(sinA['빛나는 외모'])tags.push('beautiful, attractive');if(sinA['치명적 매력'])tags.push('seductive, alluring');
+  elo.textContent=tags.filter(Boolean).join(', ');
+}
+
+render(npc);
+</script>
+</body>
+</html>

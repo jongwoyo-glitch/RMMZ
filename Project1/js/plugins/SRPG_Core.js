@@ -995,7 +995,8 @@
         constructor(event, meta) {
             this.event = event;
             this.team = meta.srpgUnit; // "actor" | "enemy"
-            this.actorId = Number(meta.srpgActorId || 0);
+            this.partySlot = Number(meta.srpgPartySlot || 0); // 파티 슬롯 (1~8, 0=미사용)
+            this.actorId = this.partySlot > 0 ? 0 : Number(meta.srpgActorId || 0); // 슬롯이면 resolve 시점에 결정
             this.enemyId = Number(meta.srpgEnemyId || 0);
             this.level = Number(meta.srpgLevel || 1);
             this.mov = Number(meta.srpgMov || DEFAULT_MOV);
@@ -1295,6 +1296,46 @@
 
         /** 1x1 유닛인가? */
         isSingleTile() { return this.gridW === 1 && this.gridH === 1; }
+
+        // 파티 슬롯 resolve 후 액터 데이터 바인딩
+        _bindActorData(actorId) {
+            this.actorId = actorId;
+            this._data = $dataActors[actorId] || null;
+            if (!this._data) return;
+
+            // 클래스 기반 스탯 재계산
+            const classId = this._data.classId || 1;
+            const cls = $dataClasses[classId];
+            if (cls && cls.params && Array.isArray(cls.params[0])) {
+                const p = cls.params;
+                const lv = Math.min(this.level, p[0].length - 1);
+                this.mhp = p[0][lv]; this.mmp = p[1][lv];
+                this.atk = p[2][lv]; this.def = p[3][lv];
+                this.mat = p[4][lv]; this.mdf = p[5][lv];
+                this.agi = p[6][lv]; this.luk = p[7][lv];
+            }
+            this.hp = this.mhp;
+            this.mp = this.mmp;
+
+            // xparam/sparam 재계산
+            if (typeof this._calcXparams === 'function') this._calcXparams();
+            if (typeof this._calcSparams === 'function') this._calcSparams();
+
+            // 플러그인 파라미터에서 유닛 설정 재로드
+            const _unitCfg = _getUnitCfg('actor', actorId);
+            if (_unitCfg.atkRange != null) this.atkRange = Number(_unitCfg.atkRange);
+            if (_unitCfg.fireMode) this.fireMode = _unitCfg.fireMode.toLowerCase();
+            else this.fireMode = (this.atkRange <= 1) ? FIRE_MODE.MELEE : FIRE_MODE.DIRECT;
+            if (_unitCfg.mov != null) this.mov = Number(_unitCfg.mov);
+
+            // 캐릭터 그래픽 업데이트
+            if (this.event && this._data.characterName) {
+                this.event.setImage(this._data.characterName, this._data.characterIndex || 0);
+            }
+
+            // 이름 갱신
+            this.name = this._data.name || ('Actor ' + actorId);
+        }
 
         isAlive() { return this._alive; }
         isActor() { return this.team === "actor"; }
@@ -4178,6 +4219,9 @@
                 hitInterval: 10,
                 // Artillery 전용
                 arcHeight: 0,       // 0 = 45도 동적 계산
+                arcLaunchSpeed: 0,  // 발사 속도 배율 (0=기본, >0 = 커스텀)
+                arcFlightSpeed: 0,  // 비행 속도 배율 (0=기본)
+                arcFallSpeed: 0,    // 하강 속도 배율 (0=기본 1.5×)
                 cameraPan: true,
                 scatterRadius: 0,
                 warningDuration: 40,
@@ -4210,6 +4254,9 @@
                 srpgCameraPan:      (v) => { meta.cameraPan = v.toLowerCase() !== "false"; },
                 srpgScatterRadius:  (v) => { meta.scatterRadius = Number(v); },
                 srpgWarningDuration:(v) => { meta.warningDuration = Number(v); },
+                srpgArcLaunchSpeed: (v) => { meta.arcLaunchSpeed = Number(v); },
+                srpgArcFlightSpeed: (v) => { meta.arcFlightSpeed = Number(v); },
+                srpgArcFallSpeed:   (v) => { meta.arcFallSpeed = Number(v); },
                 // 멀티샷
                 srpgMultiShot:      (v) => { meta.multiShot = Math.max(1, Number(v)); },
                 srpgShotDelay:      (v) => { meta.shotDelay = Number(v); },
@@ -4485,7 +4532,12 @@
                 arcHeight: meta.arcHeight > 0 ? meta.arcHeight
                     : Math.abs(finalX - from.x) * 0.5,
                 flightProgress: 0,        // 0 → 1
-                flightSpeed: meta.speed * 0.015,  // progress per frame
+                // 3-phase speed: launch(0~출발), flight(상승중), fall(하강)
+                baseFlightSpeed: meta.speed * 0.015,
+                arcLaunchSpeed: meta.arcLaunchSpeed > 0 ? meta.arcLaunchSpeed : 1.0,
+                arcFlightSpeed: meta.arcFlightSpeed > 0 ? meta.arcFlightSpeed : 1.0,
+                arcFallSpeed:   meta.arcFallSpeed > 0 ? meta.arcFallSpeed : 1.5,
+                flightSpeed: meta.speed * 0.015,  // active speed (changes per phase)
                 // 카메라 팬
                 cameraPan: meta.cameraPan,
                 originalScrollX: 0,
@@ -4618,6 +4670,12 @@
 
                 case "rising":
                     // 포물선 상승 구간 (0 → 0.5)
+                    // launch→flight 전환: 0~0.15=launch, 0.15~0.5=flight
+                    if (p.flightProgress < 0.15) {
+                        p.flightSpeed = p.baseFlightSpeed * p.arcLaunchSpeed;
+                    } else {
+                        p.flightSpeed = p.baseFlightSpeed * p.arcFlightSpeed;
+                    }
                     p.flightProgress += p.flightSpeed;
 
                     if (p.flightProgress >= 0.5) {
@@ -4643,7 +4701,8 @@
 
                 case "falling":
                     // 포물선 하강 구간 (0.5 → 1.0)
-                    p.flightProgress += p.flightSpeed * 1.5; // 낙하 가속
+                    p.flightSpeed = p.baseFlightSpeed * p.arcFallSpeed;
+                    p.flightProgress += p.flightSpeed; // 하강 속도
 
                     this._updateArtilleryPosition(p);
                     this._updateArtilleryFrame(p);
@@ -6507,6 +6566,9 @@
             console.log("[SRPG] Battle mode:", this._battleMode, "Ambush:", this._battleModeParams.ambush);
 
             this._collectUnits();
+
+            // 파티 슬롯 → 실제 액터 바인딩
+            this._resolvePartySlots();
             if (this._units.length === 0) {
                 console.warn("[SRPG] No units found!");
                 this._battleActive = false;
@@ -6537,6 +6599,50 @@
         },
 
         // ─── 기습 적용 ───
+        // ─── 파티 슬롯 → 실제 $gameParty 멤버 바인딩 ───
+        _resolvePartySlots() {
+            const slotUnits = this._units.filter(u => u.partySlot > 0)
+                .sort((a, b) => a.partySlot - b.partySlot);
+            if (slotUnits.length === 0) return;
+
+            // $gameParty.members()에서 현재 파티원 가져오기
+            const members = $gameParty ? $gameParty.members().slice() : [];
+
+            // 기습 판정: 아군이 기습당하는 경우 슬롯 배정을 셔플
+            const ambush = this._battleModeParams ? this._battleModeParams.ambush : null;
+            const ambushTeam = ambush ? Number(ambush) : 0;
+            const playerAmbushed = ambushTeam > 0 && !SrpgAlliance.isPlayerTeam(ambushTeam);
+
+            if (playerAmbushed && members.length > 1) {
+                // Fisher-Yates 셔플
+                for (let i = members.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [members[i], members[j]] = [members[j], members[i]];
+                }
+                console.log("[SRPG] Party slots shuffled (ambush)");
+            }
+
+            for (const su of slotUnits) {
+                const idx = su.partySlot - 1; // 1-based → 0-based
+                if (idx >= 0 && idx < members.length) {
+                    const actor = members[idx];
+                    su._bindActorData(actor.actorId());
+                    // Game_Actor 인스턴스에서 레벨 동기화
+                    su.level = actor.level || 1;
+                    console.log("[SRPG] Slot " + su.partySlot + " → Actor " + su.actorId + " (" + (su.name || "?") + ")");
+                } else {
+                    // 파티원 수 부족 → 슬롯 비활성화
+                    su._dead = true;
+                    su.hp = 0;
+                    if (su.event) {
+                        su.event.setTransparent(true);
+                        su.event.setThrough(true);
+                    }
+                    console.log("[SRPG] Slot " + su.partySlot + " deactivated (no party member)");
+                }
+            }
+        },
+
         _applyAmbush() {
             const ambush = this._battleModeParams.ambush;
             if (!ambush || ambush === "none") return;

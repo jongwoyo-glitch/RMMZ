@@ -1906,28 +1906,19 @@ const GitHubAdapter = {
                     </div>`;
                 }
 
-                // SRPG 스킬 설계 통합 섹션 (범위 + 파이프라인 + 프리뷰)
+                // SRPG Range Editor
                 html += `<div class="formSection">
-                    <div class="formSectionHeader">SRPG 스킬 설계</div>
+                    <div class="formSectionHeader">SRPG 범위</div>
                     <div class="formSectionContent">
-                        <div style="display:flex;gap:12px;align-items:flex-start;">
-                            <div style="flex:0 0 320px;min-width:280px;">
-                                <div style="font-size:11px;font-weight:bold;color:#d4a843;margin-bottom:6px;">범위 설정</div>
-                                <div id="sre-skill-editor"></div>
-                                <div style="margin-top:10px;">
-                                    <div style="font-size:11px;font-weight:bold;color:#d4a843;margin-bottom:6px;">이펙트 미리보기</div>
-                                    <div id="srpg-efk-preview-skill"></div>
-                                </div>
-                            </div>
-                            <div style="flex:1;min-width:300px;">
-                                <div style="font-size:11px;font-weight:bold;color:#d4a843;margin-bottom:6px;">Phase 파이프라인</div>
-                                <div id="srpg-phase-skill"></div>
-                                <div style="margin-top:10px;">
-                                    <div style="font-size:11px;font-weight:bold;color:#d4a843;margin-bottom:6px;">시퀀스 프리뷰</div>
-                                    <div id="srpg-phase-preview-skill"></div>
-                                </div>
-                            </div>
-                        </div>
+                        <div id="sre-skill-editor"></div>
+                    </div>
+                </div>`;
+
+                // SRPG Phase Panel
+                html += `<div class="formSection">
+                    <div class="formSectionHeader">SRPG Phase 파이프라인</div>
+                    <div class="formSectionContent">
+                        <div id="srpg-phase-skill"></div>
                     </div>
                 </div>`;
 
@@ -2168,9 +2159,6 @@ const GitHubAdapter = {
 
                 // artillery 전용
                 const arcHeight   = _ntv('srpgArcHeight') || '200';
-                const arcLaunch   = _ntv('srpgArcLaunchSpeed') || '1';
-                const arcFlight   = _ntv('srpgArcFlightSpeed') || '1';
-                const arcFall     = _ntv('srpgArcFallSpeed') || '1.5';
 
                 // 멀티샷
                 const multiShot   = _ntv('srpgMultiShot') || '';
@@ -2348,27 +2336,6 @@ const GitHubAdapter = {
                                             onchange="UI.syncProjectileNote()">
                                     </div>
                                 </div>
-                                <div style="margin-top:8px;color:#ccc;font-size:0.8em;font-weight:bold;">곡사 3구간 속도 배율</div>
-                                <div class="formInline" style="margin-top:4px;">
-                                    <div class="formGroup">
-                                        <label>발사 속도</label>
-                                        <input type="number" id="srpgArcLaunchSpeed" value="${arcLaunch}" min="0.1" max="5" step="0.1"
-                                            onchange="UI.syncProjectileNote()">
-                                    </div>
-                                    <div class="formGroup">
-                                        <label>비행 속도</label>
-                                        <input type="number" id="srpgArcFlightSpeed" value="${arcFlight}" min="0.1" max="5" step="0.1"
-                                            onchange="UI.syncProjectileNote()">
-                                    </div>
-                                    <div class="formGroup">
-                                        <label>하강 속도</label>
-                                        <input type="number" id="srpgArcFallSpeed" value="${arcFall}" min="0.1" max="5" step="0.1"
-                                            onchange="UI.syncProjectileNote()">
-                                    </div>
-                                </div>
-                                <p style="color:#8899aa;font-size:0.75em;margin-top:2px;">
-                                    1.0 = 기본 속도. 발사(출발 가속), 비행(상승 구간), 하강(착탄 가속). 기본 하강 1.5×
-                                </p>
                             </div>
 
                             <!-- ── 멀티샷 모드 선택 ── -->
@@ -2471,7 +2438,7 @@ const GitHubAdapter = {
                     'srpgProjFrameW', 'srpgProjFrameH', 'srpgProjFrames', 'srpgProjFrameSpeed',
                     'srpgProjImpactAnim', 'srpgProjImpactSe',
                     'srpgBeamStart', 'srpgBeamMid', 'srpgBeamEnd', 'srpgBeamDuration', 'srpgBeamWidth',
-                    'srpgArcHeight', 'srpgArcLaunchSpeed', 'srpgArcFlightSpeed', 'srpgArcFallSpeed',
+                    'srpgArcHeight',
                     'srpgMultiShot', 'srpgShotDelay', 'srpgShotDamageMod',
                     'srpgBarrage', 'srpgBarrageCount', 'srpgBarrageDelay', 'srpgBarrageDamageMod', 'srpgBarrageSpread'
                 ];
@@ -2552,12 +2519,6 @@ const GitHubAdapter = {
                     if (projType === 'artillery') {
                         const ah = document.getElementById('srpgArcHeight')?.value || '200';
                         if (ah !== '200') tags += `\n<srpgArcHeight:${ah}>`;
-                        const arcL = document.getElementById('srpgArcLaunchSpeed')?.value || '1';
-                        const arcF = document.getElementById('srpgArcFlightSpeed')?.value || '1';
-                        const arcD = document.getElementById('srpgArcFallSpeed')?.value || '1.5';
-                        if (arcL !== '1') tags += `\n<srpgArcLaunchSpeed:${arcL}>`;
-                        if (arcF !== '1') tags += `\n<srpgArcFlightSpeed:${arcF}>`;
-                        if (arcD !== '1.5') tags += `\n<srpgArcFallSpeed:${arcD}>`;
                     }
 
                     // 멀티샷 모드
@@ -6329,7 +6290,7 @@ const GitHubAdapter = {
                     sheetName = names[3]; img = imgs[sheetName];
                     if (img && img.complete) {
                         bx = tx * 2;
-                        by = Math.floor((ty - 10) * 2.5 + (ty % 2 === 1 ? 0.5 : 0));
+                        by = Math.floor((ty - 10) * 2.5);
                         atTable = (ty % 2 === 1) ? 'wall' : 'floor';
                         UI._drawAutotile(ctx, img, bx * TW, by * TW, shape, dx, dy, ts, atTable);
                         return;
@@ -8972,7 +8933,7 @@ const GitHubAdapter = {
                 h += '<div style="color:#e94560;font-weight:bold;margin-bottom:6px;font-size:0.95em;">유닛 배치</div>';
 
                 // ── Unit type tabs: 액터 / 몬스터 ──
-                var types = [['actor','액터'],['enemy','몬스터'],['partySlot','파티 슬롯']];
+                var types = [['actor','액터'],['enemy','몬스터']];
                 h += '<div style="display:flex;gap:3px;margin-bottom:8px;">';
                 types.forEach(function(tp) {
                     var isSel = (selType === tp[0]);
@@ -8983,34 +8944,15 @@ const GitHubAdapter = {
                 h += '</div>';
 
                 // ── Unit selector dropdown ──
-                if (selType === 'partySlot') {
-                    // 파티 슬롯: 1~8 선택
-                    var slotN = cur.id || 1;
-                    h += '<div style="margin-bottom:8px;"><span style="color:#aaa;font-size:0.85em;">슬롯 번호: </span>';
-                    h += '<div style="display:flex;gap:3px;margin-top:4px;">';
-                    for (var s = 1; s <= 8; s++) {
-                        var isSl = (slotN === s);
-                        h += '<button onclick="UI._srpgSetSlotNum(' + s + ')" style="flex:1;padding:5px 2px;font-size:0.9em;font-weight:bold;'
-                            + 'background:' + (isSl ? '#e94560' : '#333') + ';color:' + (isSl ? '#fff' : '#aaa') + ';'
-                            + 'border:1px solid ' + (isSl ? '#ff6b81' : '#555') + ';border-radius:4px;cursor:pointer;">' + s + '</button>';
-                    }
-                    h += '</div></div>';
-                    h += '<div style="background:#1a1a2e;border:1px solid #333;border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:0.8em;color:#ffd700;">';
-                    h += '전투 시작 시 $gameParty의 ' + slotN + '번째 멤버가 이 위치에 배치됩니다.';
-                    h += '<br><span style="color:#888;">기습 시 슬롯 배정이 무작위로 셔플됩니다.</span>';
-                    h += '</div>';
+                h += '<select id="srpgPlaceUnitId" onchange="UI._srpgUpdatePlaceUnit()" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:4px;font-size:0.85em;margin-bottom:8px;">';
+                if (selType === 'actor') {
+                    actors.forEach(function(a) { if (a) h += '<option value="' + a.id + '"' + (cur.id === a.id ? ' selected' : '') + '>' + a.id + ': ' + (a.name || '???') + '</option>'; });
                 } else {
-                    h += '<select id="srpgPlaceUnitId" onchange="UI._srpgUpdatePlaceUnit()" style="width:100%;padding:4px 8px;background:#1a1a2e;color:#eee;border:1px solid #444;border-radius:4px;font-size:0.85em;margin-bottom:8px;">';
-                    if (selType === 'actor') {
-                        actors.forEach(function(a) { if (a) h += '<option value="' + a.id + '"' + (cur.id === a.id ? ' selected' : '') + '>' + a.id + ': ' + (a.name || '???') + '</option>'; });
-                    } else {
-                        enemies.forEach(function(e) { if (e) h += '<option value="' + e.id + '"' + (cur.id === e.id ? ' selected' : '') + '>' + e.id + ': ' + (e.name || '???') + '</option>'; });
-                    }
-                    h += '</select>';
+                    enemies.forEach(function(e) { if (e) h += '<option value="' + e.id + '"' + (cur.id === e.id ? ' selected' : '') + '>' + e.id + ': ' + (e.name || '???') + '</option>'; });
                 }
+                h += '</select>';
 
-                // ── Team selector (파티 슬롯이면 숨김 — 항상 팀 1) ──
-                if (selType !== 'partySlot') {
+                // ── Team selector ──
                 h += '<div style="margin-bottom:8px;"><span style="color:#aaa;font-size:0.85em;">팀 배정: </span>';
                 for (var t = 1; t <= 8; t++) {
                     var isSel = (selTeam === t);
@@ -9020,14 +8962,13 @@ const GitHubAdapter = {
                         + 'background:' + TCOL[t] + ';">' + t + '</span>';
                 }
                 h += '</div>';
-                } // end if not partySlot
 
-                // ── DB 정보 미리보기 (읽기 전용, 파티 슬롯이면 생략) ──
+                // ── DB 정보 미리보기 (읽기 전용) ──
                 var dbEntry = null;
                 if (selType === 'actor') { dbEntry = actors[cur.id || 1]; }
-                else if (selType === 'enemy') { dbEntry = enemies[cur.id || 1]; }
+                else { dbEntry = enemies[cur.id || 1]; }
 
-                if (dbEntry && selType !== 'partySlot') {
+                if (dbEntry) {
                     var note = dbEntry.note || '';
                     var movM = note.match(/<srpgMov:(\d+)>/i);
                     var rngM = note.match(/<srpgAtkRange:(\d+)>/i);
@@ -9094,7 +9035,6 @@ const GitHubAdapter = {
                 cur.type = tp;
                 if (tp === 'actor' && (!cur.team || cur.team >= 2)) cur.team = 1;
                 if (tp === 'enemy' && (!cur.team || cur.team < 2)) cur.team = 2;
-                if (tp === 'partySlot') { cur.team = 1; cur.id = cur.id || 1; }
                 var mapData = State.maps[State.currentMap];
                 if (mapData) UI._refreshSrpgUnitPalette(mapData);
             },
@@ -9103,13 +9043,6 @@ const GitHubAdapter = {
                 if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
                 var sel = document.getElementById('srpgPlaceUnitId');
                 if (sel) UI._srpgPlaceUnit.id = parseInt(sel.value) || 1;
-            },
-
-            _srpgSetSlotNum(n) {
-                if (!UI._srpgPlaceUnit) UI._srpgPlaceUnit = {};
-                UI._srpgPlaceUnit.id = n;
-                var mapData = State.maps[State.currentMap];
-                if (mapData) UI._refreshSrpgUnitPalette(mapData);
             },
 
             _srpgTogglePlaceMode() {
@@ -9123,11 +9056,7 @@ const GitHubAdapter = {
                     cur._active = true;
                     cur.type = cur.type || 'actor';
                     cur.team = cur.team || (cur.type === 'actor' ? 1 : 2);
-                    if (cur.type === 'partySlot') {
-                        cur.id = cur.id || 1;
-                    } else if (sel) {
-                        cur.id = parseInt(sel.value) || 1;
-                    }
+                    if (sel) cur.id = parseInt(sel.value) || 1;
                 }
                 var mapData = State.maps[State.currentMap];
                 if (mapData) UI._refreshSrpgUnitPalette(mapData);
@@ -9149,14 +9078,7 @@ const GitHubAdapter = {
                 var evName = '';
                 var charName = '', charIndex = 0;
 
-                if (cur.type === 'partySlot') {
-                    var slotNum = cur.id || 1;
-                    evName = '파티 슬롯 ' + slotNum;
-                    charName = '';
-                    charIndex = 0;
-                    note = '<srpgUnit:actor>\n<srpgPartySlot:' + slotNum + '>';
-                    if (cur.team !== 1) note += '\n<srpgTeam:' + cur.team + '>';
-                } else if (cur.type === 'actor') {
+                if (cur.type === 'actor') {
                     var actor = (State.database?.actors || [])[cur.id];
                     evName = actor?.name || ('액터 ' + cur.id);
                     charName = actor?.characterName || '';
@@ -10392,19 +10314,14 @@ const GitHubAdapter = {
                             if (!this.gl) { reject('WebGL not available'); return; }
 
                             const wasmUrl = 'Project1/js/libs/effekseer.wasm';
-                            if (!window._efkRuntimeInit) {
-                                window._efkRuntimeInit = new Promise((res, rej) => {
-                                    effekseer.initRuntime(wasmUrl, res, rej);
-                                });
-                            }
-                            window._efkRuntimeInit.then(() => {
+                            effekseer.initRuntime(wasmUrl, () => {
                                 this.context = effekseer.createContext();
                                 this.context.init(this.gl, { instanceMaxCount: 2000, squareMaxCount: 8000 });
                                 this.context.setProjectionPerspective(30, canvas.width / canvas.height, 1, 1000);
                                 this.context.setCameraLookAt(0, 0, 30, 0, 0, 0, 0, 1, 0);
                                 this.ready = true;
                                 resolve();
-                            }).catch(() => { reject('Effekseer WASM load failed'); });
+                            }, () => { reject('Effekseer WASM load failed'); });
                         } catch(e) { reject(e); }
                     });
                     return this.initPromise;
@@ -10470,7 +10387,7 @@ const GitHubAdapter = {
                         gl.clearColor(0, 0, 0, 1);
                         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-                        if (self.handle && self.handle.exists) {
+                        if (ctx.exists(self.handle)) {
                             ctx.update(dt * 60);
                             ctx.setProjectionPerspective(30, gl.canvas.width / gl.canvas.height, 1, 1000);
                             ctx.setCameraLookAt(0, 0, 30, 0, 0, 0, 0, 1, 0);
@@ -12786,9 +12703,8 @@ const GitHubAdapter = {
     // ===================== SRPG RANGE EDITOR (SRE) =====================
     const SRE = {
       CELL: 14, REACH_SIZE: 21, AREA_SIZE: 7, PREVIEW_CELL: 5,
-      CLR_BG:'#181a2a', CLR_GRID:'#2a2d4a', CLR_UNIT:'#44cc88',
-      CLR_REACH:'#3388ff', CLR_DAMAGE:'#e55050', CLR_IMPACT:'#ffdd57',
-      CLR_EMPTY:'#222540', CLR_READONLY:'#333',
+      CLR_BG:'#181a2a', CLR_GRID:'#2a2d4a', CLR_UNIT:'#44cc88', CLR_TARGET:'#ee3355',
+      CLR_REACH:'#3388ff', CLR_AREA:'#ff8833', CLR_EMPTY:'#222540', CLR_READONLY:'#333',
       ADJ4: [{dx:0,dy:1},{dx:0,dy:-1},{dx:1,dy:0},{dx:-1,dy:0}],
       _activeEditors: [],
 
@@ -12819,15 +12735,10 @@ const GitHubAdapter = {
         const area = this.parseTileList(this.noteTagValue(note,'srpgArea'));
         const rotate = this.noteTagBool(note,'srpgRotate');
         const selfTarget = this.noteTagBool(note,'srpgSelfTarget');
-        let rangeType = this.noteTagValue(note,'srpgRangeType');
-        if (!rangeType) {
-          rangeType = (area && area.some(t => t.dx!==0 || t.dy!==0)) ? 'impact' : 'radial';
-        }
-        return { reach, area, rotate, selfTarget, rangeType };
+        return { reach, area, rotate, selfTarget };
       },
-      buildNoteTags(reach, area, rotate, selfTarget, rangeType) {
+      buildNoteTags(reach, area, rotate, selfTarget) {
         let tags = '';
-        if (rangeType) tags += `<srpgRangeType:${rangeType}>\n`;
         if (reach && reach.length) tags += `<srpgReach:${this.serializeTileList(reach)}>\n`;
         if (area && area.length) tags += `<srpgArea:${this.serializeTileList(area)}>\n`;
         if (rotate) tags += '<srpgRotate>\n';
@@ -12835,11 +12746,11 @@ const GitHubAdapter = {
         return tags;
       },
       stripSrpgTags(note) {
-        return (note||'').replace(/<srpg(Reach|Area|Rotate|SelfTarget|RangeType)(:[^>]*)?\>\s*/gi,'').trim();
+        return (note||'').replace(/<srpg(Reach|Area|Rotate|SelfTarget)(:[^>]*)?\>\s*/gi,'').trim();
       },
-      updateNote(note, reach, area, rotate, selfTarget, rangeType) {
+      updateNote(note, reach, area, rotate, selfTarget) {
         let clean = this.stripSrpgTags(note);
-        const tags = this.buildNoteTags(reach, area, rotate, selfTarget, rangeType);
+        const tags = this.buildNoteTags(reach, area, rotate, selfTarget);
         if (tags) clean = (clean ? clean+'\n' : '') + tags;
         return clean.trim();
       },
@@ -12858,7 +12769,7 @@ const GitHubAdapter = {
           ctx.strokeStyle=this.CLR_GRID;ctx.lineWidth=0.5;ctx.strokeRect(x+0.5,y+0.5,C-1,C-1);
         }
       },
-      drawPreview(canvas, reachTiles, areaTiles, dir, rangeType) {
+      drawPreview(canvas, reachTiles, areaTiles, dir) {
         const C=this.PREVIEW_CELL; const size=21; const half=Math.floor(size/2);
         canvas.width=size*C; canvas.height=size*C;
         const ctx=canvas.getContext('2d');
@@ -12870,12 +12781,8 @@ const GitHubAdapter = {
           const dx=gx-half,dy=gy-half,x=gx*C,y=gy*C;
           ctx.fillStyle=this.CLR_BG; ctx.fillRect(x,y,C,C);
           if(dx===0&&dy===0) ctx.fillStyle=this.CLR_UNIT;
-          else if(rangeType==='radial') {
-            if(reachSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_DAMAGE;
-          } else {
-            if(reachSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_REACH;
-            else if(areaSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_DAMAGE;
-          }
+          else if(reachSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_REACH;
+          else if(areaSet.has(`${dx},${dy}`)) ctx.fillStyle=this.CLR_AREA;
           ctx.fillRect(x+0.5,y+0.5,C-1,C-1);
         }
       },
@@ -12917,9 +12824,8 @@ const GitHubAdapter = {
         let areaTiles = parsed.area || [{dx:0,dy:0}];
         let rotate = parsed.rotate;
         let selfTarget = parsed.selfTarget;
-        let rangeType = parsed.rangeType || 'radial';
 
-        const editor = { containerId, type, reachTiles, areaTiles, rotate, selfTarget, rangeType, readonly };
+        const editor = { containerId, type, reachTiles, areaTiles, rotate, selfTarget, readonly };
         this._activeEditors.push(editor);
 
         const wrap = document.createElement('div');
@@ -12931,18 +12837,18 @@ const GitHubAdapter = {
           ovDiv.className = 'sre-override';
           const wtName = WTYPE[item.wtypeId] || '?';
           if (isOverride) {
-            ovDiv.innerHTML = `<span>개별 오버라이드 활성 (유형: ${wtName})</span>`;
+            ovDiv.innerHTML = `<span>\uac1c\ubcc4 \uc624\ubc84\ub77c\uc774\ub4dc \ud65c\uc131 (\uc720\ud615: ${wtName})</span>`;
             const btnReset = document.createElement('button');
-            btnReset.textContent = '유형 기본값으로 되돌리기';
+            btnReset.textContent = '\uc720\ud615 \uae30\ubcf8\uac12\uc73c\ub85c \ub418\ub3cc\ub9ac\uae30';
             btnReset.onclick = () => { item.note = this.stripSrpgTags(item.note); this.createEditor(containerId, type); };
             ovDiv.appendChild(btnReset);
           } else {
-            ovDiv.innerHTML = `<span>현재 적용: 유형 기본값 (${wtName})</span>`;
+            ovDiv.innerHTML = `<span>\ud604\uc7ac \uc801\uc6a9: \uc720\ud615 \uae30\ubcf8\uac12 (${wtName})</span>`;
             const btnOv = document.createElement('button');
-            btnOv.textContent = '개별 오버라이드 활성화';
+            btnOv.textContent = '\uac1c\ubcc4 \uc624\ubc84\ub77c\uc774\ub4dc \ud65c\uc131\ud654';
             btnOv.onclick = () => {
               const defReach = wtypeDefault ? wtypeDefault.reach : this.ADJ4;
-              item.note = this.updateNote(item.note, defReach, null, false, false, 'radial');
+              item.note = this.updateNote(item.note, defReach, null, false, false);
               this.createEditor(containerId, type);
             };
             ovDiv.appendChild(btnOv);
@@ -12950,320 +12856,161 @@ const GitHubAdapter = {
           wrap.appendChild(ovDiv);
         }
 
-        // Header with range type toggle
+        // Header
         const hdr = document.createElement('div');
         hdr.className = 'sre-header';
-        hdr.innerHTML = '<h3>SRPG 범위 설정</h3>';
-        if (!readonly) {
-          const typeToggle = document.createElement('div');
-          typeToggle.className = 'sre-type-toggle';
-          const btnRadial = document.createElement('button');
-          btnRadial.textContent = '방사형';
-          btnRadial.title = '시전자 중심 — 영향 범위 직접 편집';
-          btnRadial.className = rangeType === 'radial' ? 'active' : '';
-          const btnImpact = document.createElement('button');
-          btnImpact.textContent = '탄착형';
-          btnImpact.title = '조준 범위 + 탄착 스플래시 분리 편집';
-          btnImpact.className = rangeType === 'impact' ? 'active' : '';
-          btnRadial.onclick = () => {
-            rangeType = 'radial'; editor.rangeType = rangeType;
-            btnRadial.className = 'active'; btnImpact.className = '';
-            updateLayout(); syncToNote();
-          };
-          btnImpact.onclick = () => {
-            rangeType = 'impact'; editor.rangeType = rangeType;
-            btnImpact.className = 'active'; btnRadial.className = '';
-            updateLayout(); syncToNote();
-          };
-          typeToggle.appendChild(btnRadial);
-          typeToggle.appendChild(btnImpact);
-          hdr.appendChild(typeToggle);
-        }
-        wrap.appendChild(hdr);
-
-        // Options row
-        const optsRow = document.createElement('div');
-        optsRow.className = 'sre-options';
-        const rotateLbl = document.createElement('label');
-        const rotateChk = document.createElement('input');
-        rotateChk.type = 'checkbox'; rotateChk.checked = rotate; rotateChk.disabled = readonly;
-        rotateChk.onchange = () => { rotate = rotateChk.checked; editor.rotate = rotate; syncToNote(); };
-        rotateLbl.appendChild(rotateChk); rotateLbl.appendChild(document.createTextNode(' 방향 회전'));
-        optsRow.appendChild(rotateLbl);
+        hdr.innerHTML = '<h3>SRPG \ubc94\uc704 \uc124\uc815</h3>';
+        const modeSelect = document.createElement('select');
+        modeSelect.innerHTML = '<option value="targeted">\ud0c4\ucc29\ud615 (\ud0c0\uc77c \uc9c0\uc815)</option><option value="radial">\ubc29\uc0ac\ud615 (\ubc29\ud5a5 \uc120\ud0dd)</option>';
+        modeSelect.value = rotate ? 'radial' : 'targeted';
+        modeSelect.disabled = readonly;
+        modeSelect.onchange = () => { rotate=modeSelect.value==='radial'; editor.rotate=rotate; syncToNote(); updatePreviews(); };
+        hdr.appendChild(modeSelect);
         const selfLbl = document.createElement('label');
         const selfChk = document.createElement('input');
-        selfChk.type = 'checkbox'; selfChk.checked = selfTarget; selfChk.disabled = readonly;
-        selfChk.onchange = () => { selfTarget = selfChk.checked; editor.selfTarget = selfTarget; syncToNote(); };
-        selfLbl.appendChild(selfChk); selfLbl.appendChild(document.createTextNode(' 자기 자신 대상'));
-        optsRow.appendChild(selfLbl);
-        wrap.appendChild(optsRow);
+        selfChk.type='checkbox'; selfChk.checked=selfTarget; selfChk.disabled=readonly;
+        selfChk.onchange = () => { selfTarget=selfChk.checked; editor.selfTarget=selfTarget; syncToNote(); };
+        selfLbl.appendChild(selfChk); selfLbl.appendChild(document.createTextNode('\uc790\uae30 \uc790\uc2e0 \ub300\uc0c1'));
+        hdr.appendChild(selfLbl);
+        wrap.appendChild(hdr);
 
         // Grids
         const gridsDiv = document.createElement('div');
         gridsDiv.className = 'sre-grids';
         const reachWrap = document.createElement('div');
         reachWrap.className = 'sre-grid-wrap';
-        const reachLabel = document.createElement('h4');
-        reachWrap.appendChild(reachLabel);
+        reachWrap.innerHTML = '<h4>Reach (\ub3c4\ub2ec \ubc94\uc704)</h4>';
         const reachCanvas = document.createElement('canvas');
-        reachWrap.appendChild(reachCanvas);
-        gridsDiv.appendChild(reachWrap);
+        reachWrap.appendChild(reachCanvas); gridsDiv.appendChild(reachWrap);
         const areaWrap = document.createElement('div');
         areaWrap.className = 'sre-grid-wrap';
-        const areaLabel = document.createElement('h4');
-        areaLabel.textContent = '탄착 영향 범위';
-        areaWrap.appendChild(areaLabel);
+        areaWrap.innerHTML = '<h4>Area (\ud6a8\uacfc \ubc94\uc704)</h4>';
         const areaCanvas = document.createElement('canvas');
-        areaWrap.appendChild(areaCanvas);
-        gridsDiv.appendChild(areaWrap);
+        areaWrap.appendChild(areaCanvas); gridsDiv.appendChild(areaWrap);
         wrap.appendChild(gridsDiv);
-
-        // Unified preview (impact mode — hover to see splash)
-        const UPCELL = 12;
-        const unifiedDiv = document.createElement('div');
-        unifiedDiv.className = 'sre-unified-wrap';
-        unifiedDiv.innerHTML = '<h4>통합 미리보기 <span style="color:#666;font-weight:normal">(조준 지점에 펜/마우스를 올려보세요)</span></h4>';
-        const unifiedCanvas = document.createElement('canvas');
-        unifiedCanvas.width = 21 * UPCELL; unifiedCanvas.height = 21 * UPCELL;
-        unifiedDiv.appendChild(unifiedCanvas);
-        wrap.appendChild(unifiedDiv);
-        let hoverCell = null;
-
-        const drawUnifiedPreview = () => {
-          const ctx = unifiedCanvas.getContext('2d');
-          const size = 21, half = Math.floor(size/2), C = UPCELL;
-          unifiedCanvas.width = size * C; unifiedCanvas.height = size * C;
-          const reachSet = new Set(reachTiles.map(t=>`${t.dx},${t.dy}`));
-          let splashSet = new Set();
-          if (hoverCell && reachSet.has(`${hoverCell.dx},${hoverCell.dy}`)) {
-            for (const a of areaTiles) splashSet.add(`${hoverCell.dx+a.dx},${hoverCell.dy+a.dy}`);
-          }
-          for (let gy=0;gy<size;gy++) for (let gx=0;gx<size;gx++) {
-            const dx=gx-half, dy=gy-half, x=gx*C, y=gy*C;
-            const dist = Math.abs(dx)+Math.abs(dy);
-            ctx.fillStyle = (dist>10) ? '#111218' : this.CLR_EMPTY;
-            ctx.fillRect(x,y,C,C);
-            if (dx===0 && dy===0) { ctx.fillStyle = this.CLR_UNIT; ctx.fillRect(x,y,C,C); }
-            else if (reachSet.has(`${dx},${dy}`)) { ctx.fillStyle = this.CLR_REACH; ctx.fillRect(x,y,C,C); }
-            if (splashSet.has(`${dx},${dy}`)) { ctx.fillStyle = 'rgba(229,80,80,0.55)'; ctx.fillRect(x,y,C,C); }
-            ctx.strokeStyle = this.CLR_GRID; ctx.lineWidth = 0.5;
-            ctx.strokeRect(x+0.5,y+0.5,C-1,C-1);
-          }
-          if (hoverCell && reachSet.has(`${hoverCell.dx},${hoverCell.dy}`)) {
-            const hx = (hoverCell.dx+half)*C, hy = (hoverCell.dy+half)*C;
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-            ctx.strokeRect(hx+1, hy+1, C-2, C-2);
-          }
-        };
-        unifiedCanvas.addEventListener('pointermove', (e) => {
-          if (e.pointerType === 'touch') return;
-          const r = unifiedCanvas.getBoundingClientRect();
-          const half = Math.floor(21/2);
-          const dx = Math.floor((e.clientX - r.left) / UPCELL) - half;
-          const dy = Math.floor((e.clientY - r.top) / UPCELL) - half;
-          const reachSet = new Set(reachTiles.map(t=>`${t.dx},${t.dy}`));
-          hoverCell = reachSet.has(`${dx},${dy}`) ? {dx, dy} : null;
-          drawUnifiedPreview();
-        });
-        unifiedCanvas.addEventListener('pointerleave', () => { hoverCell = null; drawUnifiedPreview(); });
 
         // Legend
         const legend = document.createElement('div');
         legend.className = 'sre-legend';
+        legend.innerHTML = `<span><span class="dot" style="background:${this.CLR_UNIT}"></span>\uc0ac\uc6a9 \uc8fc\uccb4</span><span><span class="dot" style="background:${this.CLR_TARGET}"></span>\ud0c4\ucc29\uc810</span><span><span class="dot" style="background:${this.CLR_REACH}"></span>\ub3c4\ub2ec \uac00\ub2a5</span><span><span class="dot" style="background:${this.CLR_AREA}"></span>\ud6a8\uacfc \ubc94\uc704</span>`;
         wrap.appendChild(legend);
 
         // Preset tools
-        let toolsDiv = null;
         if (!readonly) {
-          toolsDiv = document.createElement('div');
-          toolsDiv.className = 'sre-tools';
-          wrap.appendChild(toolsDiv);
+          const tools = document.createElement('div');
+          tools.className = 'sre-tools';
+          const presets = [
+            ['\uc778\uc8114', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
+            ['\ub2e4\uc774\uc544 2', ()=>{reachTiles=this.makeDiamond(2);editor.reachTiles=reachTiles;}],
+            ['\ub2e4\uc774\uc544 3', ()=>{reachTiles=this.makeDiamond(3);editor.reachTiles=reachTiles;}],
+            ['\uc2ed\uc790 2', ()=>{reachTiles=this.makeCross(2);editor.reachTiles=reachTiles;}],
+            ['\uc9c1\uc120 3', ()=>{reachTiles=this.makeLine(3);editor.reachTiles=reachTiles;}],
+            ['\ub9c1 2~4', ()=>{reachTiles=this.makeRing(2,4);editor.reachTiles=reachTiles;}],
+            ['Reach \ud074\ub9ac\uc5b4', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
+            ['Area \ud074\ub9ac\uc5b4', ()=>{areaTiles=[{dx:0,dy:0}];editor.areaTiles=areaTiles;}],
+          ];
+          for (const [label,fn] of presets) {
+            const btn=document.createElement('button');
+            btn.textContent=label; btn.onclick=()=>{fn();syncToNote();redraw();};
+            tools.appendChild(btn);
+          }
+          const symBtn=document.createElement('button');
+          symBtn.textContent='4\ubc29\ud5a5 \ub300\uce6d';
+          symBtn.onclick=()=>{
+            const s=new Set(reachTiles.map(t=>`${t.dx},${t.dy}`));
+            for(const t of[...reachTiles]){s.add(`${-t.dx},${t.dy}`);s.add(`${t.dx},${-t.dy}`);s.add(`${-t.dx},${-t.dy}`);}
+            reachTiles=[...s].map(k=>{const[dx,dy]=k.split(',').map(Number);return{dx,dy};}).filter(t=>!(t.dx===0&&t.dy===0));
+            editor.reachTiles=reachTiles; syncToNote(); redraw();
+          };
+       
+          tools.appendChild(symBtn);
+          wrap.appendChild(tools);
         }
 
         // Direction previews
         const previewRow = document.createElement('div');
         previewRow.className = 'sre-preview-row';
+        previewRow.style.display = rotate ? 'flex' : 'none';
         const previewCanvases = {};
         for (const [dir,label] of [[8,'\u2191'],[6,'\u2192'],[2,'\u2193'],[4,'\u2190']]) {
-          const pw = document.createElement('div'); pw.className = 'sre-preview-wrap';
-          pw.innerHTML = `<span>${label}</span>`;
-          const pc = document.createElement('canvas'); pw.appendChild(pc);
-          previewRow.appendChild(pw); previewCanvases[dir] = pc;
+          const pw=document.createElement('div'); pw.className='sre-preview-wrap';
+          pw.innerHTML=`<span>${label}</span>`;
+          const pc=document.createElement('canvas'); pw.appendChild(pc);
+          previewRow.appendChild(pw); previewCanvases[dir]=pc;
         }
         wrap.appendChild(previewRow);
 
-        // Note tag preview
+        // Note preview
         const notePreview = document.createElement('div');
         notePreview.className = 'sre-note';
         wrap.appendChild(notePreview);
         container.appendChild(wrap);
 
-        // === Layout helpers ===
-        const updateLayout = () => {
-          if (rangeType === 'radial') {
-            reachLabel.textContent = '스킬 영향 범위';
-            areaWrap.style.display = 'none';
-          } else {
-            reachLabel.textContent = '탄착 가능 범위';
-            areaWrap.style.display = '';
-          }
-          unifiedDiv.style.display = rangeType === 'impact' ? '' : 'none';
-          updateLegend(); updateTools(); redraw();
-        };
-
-        const updateLegend = () => {
-          if (rangeType === 'radial') {
-            legend.innerHTML = `<span><span class="dot" style="background:${this.CLR_UNIT}"></span>시전자 ★</span><span><span class="dot" style="background:${this.CLR_DAMAGE}"></span>타격 영역</span>`;
-          } else {
-            legend.innerHTML = `<span><span class="dot" style="background:${this.CLR_UNIT}"></span>시전자 ★</span><span><span class="dot" style="background:${this.CLR_REACH}"></span>조준 가능</span><span><span class="dot" style="background:${this.CLR_IMPACT}"></span>탄착점</span><span><span class="dot" style="background:${this.CLR_DAMAGE}"></span>탄착 영향</span>`;
-          }
-        };
-
-        const updateTools = () => {
-          if (!toolsDiv) return;
-          toolsDiv.innerHTML = '';
-          if (rangeType === 'radial') {
-            const presets = [
-              ['인접 4', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
-              ['다이아 2', ()=>{reachTiles=this.makeDiamond(2);editor.reachTiles=reachTiles;}],
-              ['다이아 3', ()=>{reachTiles=this.makeDiamond(3);editor.reachTiles=reachTiles;}],
-              ['십자 2', ()=>{reachTiles=this.makeCross(2);editor.reachTiles=reachTiles;}],
-              ['직선 3', ()=>{reachTiles=this.makeLine(3);editor.reachTiles=reachTiles;}],
-              ['링 2~4', ()=>{reachTiles=this.makeRing(2,4);editor.reachTiles=reachTiles;}],
-              ['전체 해제', ()=>{reachTiles=[];editor.reachTiles=reachTiles;}],
-            ];
-            for (const [label,fn] of presets) {
-              const btn = document.createElement('button');
-              btn.textContent = label; btn.onclick = () => { fn(); syncToNote(); };
-              toolsDiv.appendChild(btn);
-            }
-          } else {
-            const rPresets = [
-              ['조준: 인접 4', ()=>{reachTiles=[...this.ADJ4];editor.reachTiles=reachTiles;}],
-              ['조준: 다이아 3', ()=>{reachTiles=this.makeDiamond(3);editor.reachTiles=reachTiles;}],
-              ['조준: 링 2~4', ()=>{reachTiles=this.makeRing(2,4);editor.reachTiles=reachTiles;}],
-              ['조준: 직선 5', ()=>{reachTiles=this.makeLine(5);editor.reachTiles=reachTiles;}],
-            ];
-            for (const [label,fn] of rPresets) {
-              const btn = document.createElement('button');
-              btn.textContent = label; btn.className = 'sre-btn-reach';
-              btn.onclick = () => { fn(); syncToNote(); };
-              toolsDiv.appendChild(btn);
-            }
-            const sep = document.createElement('span');
-            sep.className = 'sre-tool-sep'; sep.textContent = '\u2502';
-            toolsDiv.appendChild(sep);
-            const aPresets = [
-              ['영향: 단일', ()=>{areaTiles=[{dx:0,dy:0}];editor.areaTiles=areaTiles;}],
-              ['영향: 십자 1', ()=>{areaTiles=[{dx:0,dy:0},...this.makeCross(1)];editor.areaTiles=areaTiles;}],
-              ['영향: 다이아 1', ()=>{areaTiles=[{dx:0,dy:0},...this.makeDiamond(1)];editor.areaTiles=areaTiles;}],
-              ['영향: 다이아 2', ()=>{areaTiles=[{dx:0,dy:0},...this.makeDiamond(2)];editor.areaTiles=areaTiles;}],
-            ];
-            for (const [label,fn] of aPresets) {
-              const btn = document.createElement('button');
-              btn.textContent = label; btn.className = 'sre-btn-area';
-              btn.onclick = () => { fn(); syncToNote(); };
-              toolsDiv.appendChild(btn);
-            }
-          }
-          // Symmetry button
-          const symBtn = document.createElement('button');
-          symBtn.textContent = '4방향 대칭';
-          symBtn.onclick = () => {
-            const s = new Set(reachTiles.map(t=>`${t.dx},${t.dy}`));
-            for (const t of [...reachTiles]) { s.add(`${-t.dx},${t.dy}`); s.add(`${t.dx},${-t.dy}`); s.add(`${-t.dx},${-t.dy}`); }
-            reachTiles = [...s].map(k => { const [dx,dy] = k.split(',').map(Number); return {dx,dy}; }).filter(t => !(t.dx===0&&t.dy===0));
-            editor.reachTiles = reachTiles; syncToNote();
-          };
-          toolsDiv.appendChild(symBtn);
-        };
-
-        // Draw & sync
+        // Draw & sync functions
         const redraw = () => {
-          if (rangeType === 'radial') {
-            this.drawGrid(reachCanvas, this.REACH_SIZE, reachTiles, this.CLR_UNIT, this.CLR_DAMAGE, readonly);
-          } else {
-            this.drawGrid(reachCanvas, this.REACH_SIZE, reachTiles, this.CLR_UNIT, this.CLR_REACH, readonly);
-            this.drawGrid(areaCanvas, this.AREA_SIZE, areaTiles.filter(t=>!(t.dx===0&&t.dy===0)), this.CLR_IMPACT, this.CLR_DAMAGE, readonly);
-          }
-          if (rangeType === 'impact') drawUnifiedPreview();
+          this.drawGrid(reachCanvas, this.REACH_SIZE, reachTiles, this.CLR_UNIT, this.CLR_REACH, readonly);
+          this.drawGrid(areaCanvas, this.AREA_SIZE, areaTiles.filter(t=>!(t.dx===0&&t.dy===0)), this.CLR_TARGET, this.CLR_AREA, readonly);
           updatePreviews();
-          const areaForNote = (rangeType==='impact' && areaTiles.length>1) ? areaTiles : null;
-          notePreview.textContent = this.buildNoteTags(reachTiles, areaForNote, rotate, selfTarget, rangeType).trim() || '(기본값)';
+          notePreview.textContent = this.buildNoteTags(reachTiles, areaTiles.length>1?areaTiles:null, rotate, selfTarget).trim() || '(\uae30\ubcf8\uac12)';
         };
         const updatePreviews = () => {
           previewRow.style.display = rotate ? 'flex' : 'none';
-          if (rotate) {
-            for (const dir of [8,6,2,4]) this.drawPreview(previewCanvases[dir], reachTiles, rangeType==='impact'?areaTiles:null, dir, rangeType);
-          }
+          if (rotate) { for (const dir of [8,6,2,4]) this.drawPreview(previewCanvases[dir], reachTiles, areaTiles, dir); }
         };
         const syncToNote = () => {
           if (readonly) return;
           const currentItem = this._getItem();
           if (!currentItem) return;
           const hasCustomReach = reachTiles.length > 0;
-          const hasCustomArea = rangeType==='impact' && (areaTiles.length > 1 || (areaTiles.length===1 && !(areaTiles[0].dx===0&&areaTiles[0].dy===0)));
-          currentItem.note = this.updateNote(currentItem.note, hasCustomReach?reachTiles:null, hasCustomArea?areaTiles:null, rotate, selfTarget, rangeType);
+          const hasCustomArea = areaTiles.length > 1 || (areaTiles.length===1 && !(areaTiles[0].dx===0&&areaTiles[0].dy===0));
+          currentItem.note = this.updateNote(currentItem.note, hasCustomReach?reachTiles:null, hasCustomArea?areaTiles:null, rotate, selfTarget);
+          // Sync note textarea
           const noteTA = document.querySelector('#dbFormContainer textarea[data-field="note"]');
           if (noteTA) noteTA.value = currentItem.note;
+          // Refresh phase panel if exists
           if (State.currentDBTab === 'skills' && typeof SrpgPhaseUI !== 'undefined') SrpgPhaseUI.create('srpg-phase-skill');
-          if (State.currentDBTab === 'skills' && typeof SrpgPhasePreview !== 'undefined') SrpgPhasePreview.createUI('srpg-phase-preview-skill');
           if (State.currentDBTab === 'weapons' && typeof SrpgPhaseUI !== 'undefined') SrpgPhaseUI.create('srpg-phase-weapon');
           redraw();
         };
 
-        // Pointer events (pen/mouse only — finger touch skipped for sidebar scroll)
+        // Mouse events
         if (!readonly) {
           this._setupCanvasEvents(reachCanvas, this.REACH_SIZE, reachTiles, editor, 'reachTiles', syncToNote, redraw);
           this._setupCanvasEvents(areaCanvas, this.AREA_SIZE, areaTiles, editor, 'areaTiles', syncToNote, redraw);
         }
-        updateLayout();
+        redraw();
         return editor;
       },
 
-      _setupCanvasEvents(canvas, size, tiles, editor, tilesKey, syncFn) {
-        const half = Math.floor(size/2); const C = this.CELL;
-        let painting = false, erasing = false;
-        const getCellFromEvent = (e) => {
-          const r = canvas.getBoundingClientRect();
-          return { dx: Math.floor((e.clientX-r.left)/C)-half, dy: Math.floor((e.clientY-r.top)/C)-half };
+      _setupCanvasEvents(canvas, size, tiles, editor, tilesKey, syncFn, redrawFn) {
+        const half=Math.floor(size/2); const C=this.CELL;
+        let painting=false, erasing=false;
+        const getCellFromEvent=(e)=>{const r=canvas.getBoundingClientRect();return{dx:Math.floor((e.clientX-r.left)/C)-half,dy:Math.floor((e.clientY-r.top)/C)-half};};
+        const toggleCell=(dx,dy,forceRemove)=>{
+          if(dx===0&&dy===0)return;
+          if(Math.abs(dx)+Math.abs(dy)>10)return; // 최대 사거리 10칸
+          const idx=tiles.findIndex(t=>t.dx===dx&&t.dy===dy);
+          if(forceRemove||(idx>=0&&!painting)){if(idx>=0)tiles.splice(idx,1);}
+          else if(idx<0){tiles.push({dx,dy});}
+          editor[tilesKey]=tiles;
         };
-        const toggleCell = (dx,dy,forceRemove) => {
-          if (dx===0 && dy===0) return;
-          if (Math.abs(dx)+Math.abs(dy) > 10) return;
-          const idx = tiles.findIndex(t => t.dx===dx && t.dy===dy);
-          if (forceRemove || (idx>=0 && !painting)) { if (idx>=0) tiles.splice(idx,1); }
-          else if (idx<0) { tiles.push({dx,dy}); }
-          editor[tilesKey] = tiles;
-        };
-        canvas.addEventListener('pointerdown', (e) => {
-          if (e.pointerType === 'touch') return;
-          e.preventDefault();
-          canvas.setPointerCapture(e.pointerId);
-          const c = getCellFromEvent(e);
-          if (c.dx===0 && c.dy===0) return;
-          erasing = e.button===2; painting = !erasing;
-          if (erasing) { toggleCell(c.dx,c.dy,true); }
-          else { const exists = tiles.some(t => t.dx===c.dx && t.dy===c.dy); if (exists) { painting=false; erasing=true; toggleCell(c.dx,c.dy,true); } else { toggleCell(c.dx,c.dy,false); } }
+        canvas.addEventListener('mousedown',(e)=>{
+          e.preventDefault(); const c=getCellFromEvent(e);
+          if(c.dx===0&&c.dy===0)return;
+          erasing=e.button===2; painting=!erasing;
+          if(erasing){toggleCell(c.dx,c.dy,true);}
+          else{const exists=tiles.some(t=>t.dx===c.dx&&t.dy===c.dy);if(exists){painting=false;erasing=true;toggleCell(c.dx,c.dy,true);}else{toggleCell(c.dx,c.dy,false);}}
           syncFn();
         });
-        canvas.addEventListener('pointermove', (e) => {
-          if (e.pointerType === 'touch') return;
-          if (!painting && !erasing) return;
-          const c = getCellFromEvent(e);
-          if (c.dx===0 && c.dy===0) return;
-          if (erasing) { toggleCell(c.dx,c.dy,true); } else { if (!tiles.some(t => t.dx===c.dx && t.dy===c.dy)) toggleCell(c.dx,c.dy,false); }
+        canvas.addEventListener('mousemove',(e)=>{
+          if(!painting&&!erasing)return; const c=getCellFromEvent(e);
+          if(c.dx===0&&c.dy===0)return;
+          if(erasing){toggleCell(c.dx,c.dy,true);}else{if(!tiles.some(t=>t.dx===c.dx&&t.dy===c.dy))toggleCell(c.dx,c.dy,false);}
           syncFn();
         });
-        canvas.addEventListener('pointerup', (e) => {
-          if (e.pointerType === 'touch') return;
-          painting = false; erasing = false;
-        });
-        canvas.addEventListener('pointerleave', (e) => {
-          if (e.pointerType === 'touch') return;
-          painting = false; erasing = false;
-        });
-        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        canvas.addEventListener('mouseup',()=>{painting=false;erasing=false;});
+        canvas.addEventListener('mouseleave',()=>{painting=false;erasing=false;});
+        canvas.addEventListener('contextmenu',(e)=>e.preventDefault());
       }
     };
 
@@ -13416,11 +13163,10 @@ const GitHubAdapter = {
         const noteTA = document.querySelector('#dbFormContainer textarea[data-field="note"]');
         if (noteTA) noteTA.value = item.note;
 
-        // Refresh Phase panel + Phase preview
+        // Refresh Phase panel
         if (this._currentContainer) {
           this.create(this._currentContainer);
         }
-        if (typeof SrpgPhasePreview !== 'undefined') SrpgPhasePreview.createUI('srpg-phase-preview-skill');
 
         // Refresh SRE editors (note changed from popup)
         SRE._activeEditors = [];
@@ -13428,852 +13174,6 @@ const GitHubAdapter = {
         else if (State.currentDBTab === 'weapons') SRE.createEditor('sre-weapon-editor', 'weapon');
 
         console.log('[SrpgPhaseUI] Phase data applied');
-      }
-    };
-
-// ===================== SRPG EFFEKSEER SKILL PREVIEW =====================
-    const SrpgEfkPreview = {
-      canvas: null, gl: null, ctx: null, handle: null,
-      effectCache: {}, raf: null, ready: false, initPromise: null, speed: 1.0,
-
-      async init(canvasEl) {
-        if (this.ready && this.canvas === canvasEl) return;
-        this.canvas = canvasEl;
-        if (this.initPromise) return this.initPromise;
-        this.initPromise = (async () => {
-          if (typeof effekseer === 'undefined') throw 'Effekseer not loaded';
-          this.gl = canvasEl.getContext('webgl2', { premultipliedAlpha: true, alpha: true })
-                 || canvasEl.getContext('webgl',  { premultipliedAlpha: true, alpha: true });
-          if (!this.gl) throw 'WebGL not available';
-          if (!window._efkRuntimeInit) {
-            window._efkRuntimeInit = new Promise((res, rej) => {
-              effekseer.initRuntime('Project1/js/libs/effekseer.wasm', res, () => rej('WASM failed'));
-            });
-          }
-          await window._efkRuntimeInit;
-          this.ctx = effekseer.createContext();
-          this.ctx.init(this.gl, { instanceMaxCount: 2000, squareMaxCount: 8000 });
-          this.ctx.setProjectionPerspective(30, canvasEl.width / canvasEl.height, 1, 1000);
-          this.ctx.setCameraLookAt(0, 0, 30, 0, 0, 0, 0, 1, 0);
-          this.ready = true;
-        })();
-        return this.initPromise;
-      },
-
-      // maxScale: effect scale capped so it doesn't exceed 1.5× grid
-      // areaCells: [{dx,dy},...] from srpgArea — plays small instances per cell
-      MAX_SCALE: 1.5,
-      GRID_UNIT: 2.0,  // world units per grid cell in the preview camera
-      handles: [],
-
-      loadAndPlay(effectName, scale, areaCells) {
-        if (!this.ready || !effectName) return;
-        this.stop();
-        this._areaCells = areaCells || null;
-        const url = 'Project1/effects/' + effectName + '.efkefc';
-        // Clamp scale so the effect fits within 1.5× the canvas
-        const clamped = Math.min(scale || 1.0, this.MAX_SCALE);
-        if (this.effectCache[effectName]) { this._play(this.effectCache[effectName], clamped); return; }
-        const eff = this.ctx.loadEffect(url, 1.0, () => {
-          this.effectCache[effectName] = eff;
-          this._play(eff, clamped);
-        }, () => console.warn('[SrpgEfk] load fail:', url));
-      },
-
-      _play(eff, scale) {
-        const cells = this._areaCells;
-        this.handles = [];
-        if (cells && cells.length > 1) {
-          // Multi-instance: one small effect per area cell
-          // Scale down proportionally: more cells → smaller per-cell effect
-          const perScale = Math.min(scale, this.MAX_SCALE) / Math.max(1, Math.sqrt(cells.length) * 0.8);
-          const clampedPerScale = Math.min(perScale, this.MAX_SCALE * 0.6);
-          for (const c of cells) {
-            const wx = c.dx * this.GRID_UNIT;
-            const wy = -c.dy * this.GRID_UNIT; // y is inverted in 3D space
-            const h = this.ctx.play(eff, wx, wy, 0);
-            if(h) h.setScale(clampedPerScale, clampedPerScale, clampedPerScale);
-            this.handles.push(h);
-          }
-        } else {
-          // Single effect at center, scale-clamped
-          const clampedScale = Math.min(scale, this.MAX_SCALE);
-          const h = this.ctx.play(eff, 0, 0, 0);
-          if(h) h.setScale(clampedScale, clampedScale, clampedScale);
-          this.handles.push(h);
-        }
-        this.handle = this.handles[0] || null;
-        this._loop();
-      },
-
-      stop() {
-        if (this.ctx) {
-          if (this.handles && this.handles.length) {
-            for (const h of this.handles) if(h) h.stop();
-          } else if (this.handle !== null) {
-            if(this.handle) this.handle.stop();
-          }
-        }
-        this.handles = []; this.handle = null;
-        if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
-        if (this.gl) { this.gl.clearColor(0,0,0,0); this.gl.clear(this.gl.COLOR_BUFFER_BIT|this.gl.DEPTH_BUFFER_BIT); }
-      },
-
-      _loop() {
-        if (this.raf) cancelAnimationFrame(this.raf);
-        const c = this.ctx, g = this.gl, self = this;
-        let last = performance.now();
-        function tick(now) {
-          const dt = (now - last) / 1000; last = now;
-          g.clearColor(0,0,0,0); g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);
-          // Check if any handle is still alive
-          const anyAlive = self.handles.some(h => h && h.exists);
-          if (anyAlive) {
-            c.update(dt * 60 * self.speed);
-            c.setProjectionPerspective(30, g.canvas.width/g.canvas.height, 1, 1000);
-            c.setCameraLookAt(0,0,30, 0,0,0, 0,1,0);
-            c.draw();
-            self.raf = requestAnimationFrame(tick);
-          } else { self.handles = []; self.handle = null; self.raf = null; }
-        }
-        self.raf = requestAnimationFrame(tick);
-      },
-
-      createUI(containerId) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        container.innerHTML = '';
-        const anims = State.database.animations || State.database.Animations || [];
-        if (!anims || anims.length <= 1) { container.innerHTML = '<div style="color:#888;font-style:italic">애니메이션 데이터 없음</div>'; return; }
-
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'background:#1a1a2e;border:1px solid #16213e;border-radius:6px;padding:10px;';
-
-        // Controls row
-        const ctrlRow = document.createElement('div');
-        ctrlRow.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;';
-
-        // Animation dropdown (from project data — NO manual typing)
-        const animSelect = document.createElement('select');
-        animSelect.style.cssText = 'flex:1;min-width:160px;padding:5px 8px;background:#0f3460;border:1px solid #16213e;color:#e0e0e0;border-radius:4px;font-size:12px;min-height:32px;';
-        animSelect.innerHTML = '<option value="">-- 애니메이션 선택 --</option>';
-        for (let i = 1; i < anims.length; i++) {
-          const a = anims[i];
-          if (!a || !a.effectName) continue;
-          const opt = document.createElement('option');
-          opt.value = a.effectName;
-          opt.dataset.idx = i;
-          opt.textContent = `[${i}] ${a.name || a.effectName}`;
-          animSelect.appendChild(opt);
-        }
-        ctrlRow.appendChild(animSelect);
-
-        const btnPlay = document.createElement('button');
-        btnPlay.textContent = '\u25b6 재생';
-        btnPlay.style.cssText = 'padding:5px 14px;background:#4fc3f7;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;min-height:32px;';
-        ctrlRow.appendChild(btnPlay);
-
-        const btnStop = document.createElement('button');
-        btnStop.textContent = '\u23f9 정지';
-        btnStop.style.cssText = 'padding:5px 10px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;min-height:32px;';
-        ctrlRow.appendChild(btnStop);
-        wrap.appendChild(ctrlRow);
-
-        // Speed row
-        const speedRow = document.createElement('div');
-        speedRow.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px;color:#aaa;';
-        speedRow.innerHTML = '<span>속도:</span>';
-        const speeds = [['0.25x',0.25],['0.5x',0.5],['1x',1],['2x',2]];
-        for (const [label, val] of speeds) {
-          const btn = document.createElement('button');
-          btn.textContent = label;
-          btn.style.cssText = 'padding:2px 8px;background:' + (val===1?'#4fc3f7':'#0f3460') + ';color:' + (val===1?'#000':'#e0e0e0') + ';border:1px solid #16213e;border-radius:3px;cursor:pointer;font-size:10px;min-height:24px;';
-          btn.onclick = () => {
-            this.speed = val;
-            speedRow.querySelectorAll('button').forEach(b => { b.style.background='#0f3460'; b.style.color='#e0e0e0'; });
-            btn.style.background = '#4fc3f7'; btn.style.color = '#000';
-          };
-          speedRow.appendChild(btn);
-        }
-        wrap.appendChild(speedRow);
-
-        // Canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = 320; canvas.height = 220;
-        canvas.style.cssText = 'display:block;margin:0 auto;background:#000;border:1px solid #16213e;border-radius:4px;max-width:100%;';
-        wrap.appendChild(canvas);
-
-        // Effect info
-        const infoDiv = document.createElement('div');
-        infoDiv.style.cssText = 'text-align:center;margin-top:6px;font-size:10px;color:#666;';
-        infoDiv.textContent = '애니메이션을 선택하면 자동 재생됩니다';
-        wrap.appendChild(infoDiv);
-
-        container.appendChild(wrap);
-
-        // Events
-        const self = this;
-        const playSelected = async () => {
-          const effectName = animSelect.value;
-          if (!effectName) return;
-          try {
-            await self.init(canvas);
-            const selOpt = animSelect.selectedOptions[0];
-            const idx = selOpt ? parseInt(selOpt.dataset.idx) : -1;
-            const anim = idx > 0 ? anims[idx] : null;
-            const scale = anim && anim.scale ? anim.scale : 1.0;
-            // Get area cells from current skill for multi-instance placement
-            const PP = window.SrpgPhaseParser;
-            const curItem = SRE._getItem ? SRE._getItem() : null;
-            let areaCells = null;
-            if (PP && curItem && curItem.note) {
-              const parsedArea = PP.parseArea(curItem.note);
-              if (parsedArea && parsedArea.length > 1) areaCells = parsedArea;
-            }
-            self.loadAndPlay(effectName, scale, areaCells);
-            infoDiv.textContent = effectName + '.efkefc' + (anim && anim.name ? ' (' + anim.name + ')' : '');
-          } catch(e) {
-            infoDiv.textContent = 'Effekseer 초기화 실패: ' + e;
-            console.warn('[SrpgEfk]', e);
-          }
-        };
-        btnPlay.onclick = playSelected;
-        btnStop.onclick = () => { self.stop(); infoDiv.textContent = '정지됨'; };
-        animSelect.onchange = playSelected;
-      }
-    };
-
-// ===================== SRPG PHASE SEQUENCE PREVIEW =====================
-    const SrpgPhasePreview = {
-      GRID: 11, CELL: 24,
-      CLR_CASTER: '#44cc88', CLR_TARGET: '#e55050', CLR_GRID: '#2a2d4a',
-      CLR_BG: '#222540', CLR_HIT_FLASH: 'rgba(229,80,80,0.55)',
-      CLR_PROJ: '#ffdd57', CLR_PUSH: '#ff8844', CLR_PULL: '#4fc3f7',
-      _container: null, _canvas: null, _ctx: null,
-      _phases: [], _phaseIdx: 0, _playing: false, _raf: null,
-      _casterPos: null, _targetPos: null,
-      _animFrame: 0, _animTotal: 0,
-      _flashCells: null, _projPos: null,
-      _badges: [],
-      _speedMul: 1,
-
-      _getItem() {
-        const type = State.currentDBTab;
-        const data = State.database[type];
-        if (!data || State.currentDBItem === null) return null;
-        return data[State.currentDBItem] || null;
-      },
-
-      createUI(containerId) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        container.innerHTML = '';
-        this._container = container;
-
-        const P = window.SrpgPhaseParser;
-        if (!P) {
-          container.innerHTML = '<div style="color:#888;font-style:italic">srpgPhaseParser.js 로드 안됨</div>';
-          return;
-        }
-        const item = this._getItem();
-        if (!item) return;
-        const note = item.note || '';
-        const phases = P.parsePhases(note);
-        this._phases = phases;
-        this._phaseIdx = 0;
-
-        if (!phases.length) {
-          container.innerHTML = '<div style="color:#888;font-style:italic;padding:4px">(Phase 없음 — 시퀀스 프리뷰 불가)</div>';
-          return;
-        }
-
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'background:#1a1a2e;border:1px solid #16213e;border-radius:6px;padding:10px;margin-top:4px;';
-
-        // --- Badge strip ---
-        const badgeStrip = document.createElement('div');
-        badgeStrip.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:8px;';
-        const CAT_COLORS = SrpgPhaseUI.CAT_COLORS;
-        const ATOM_CATS = SrpgPhaseUI.ATOM_CATS;
-        this._badges = [];
-        phases.forEach((p, i) => {
-          if (i > 0) {
-            const arrow = document.createElement('span');
-            arrow.style.cssText = 'color:#555;font-size:1em;';
-            arrow.textContent = '\u2192';
-            badgeStrip.appendChild(arrow);
-          }
-          const badge = document.createElement('span');
-          const cat = ATOM_CATS[p.type] || 'offense';
-          const baseColor = CAT_COLORS[cat] || '#666';
-          badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.8em;font-weight:bold;cursor:pointer;transition:box-shadow 0.15s;color:#fff;background:' + baseColor + ';opacity:0.5;';
-          let lbl = (P.ATOM_LABELS ? (P.ATOM_LABELS[p.type] || p.type) : p.type);
-          if (p.repeat && p.repeat > 1) lbl += ' \u00d7' + p.repeat;
-          badge.textContent = lbl;
-          badge.title = 'Phase ' + (i+1) + ': ' + JSON.stringify(p, null, 1);
-          badge.dataset.idx = i;
-          badge.onclick = () => { this._jumpToPhase(i); };
-          badgeStrip.appendChild(badge);
-          this._badges.push({el: badge, color: baseColor});
-        });
-        wrap.appendChild(badgeStrip);
-
-        // --- Canvas ---
-        const gridPx = this.GRID * this.CELL;
-        const canvas = document.createElement('canvas');
-        canvas.width = gridPx; canvas.height = gridPx;
-        canvas.style.cssText = 'display:block;margin:0 auto 8px auto;border:1px solid #16213e;border-radius:4px;image-rendering:pixelated;';
-        wrap.appendChild(canvas);
-        this._canvas = canvas;
-        this._ctx = canvas.getContext('2d');
-
-        // --- Controls ---
-        const ctrlRow = document.createElement('div');
-        ctrlRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;';
-
-        const mkBtn = (text, tip, fn) => {
-          const b = document.createElement('button');
-          b.textContent = text;
-          b.title = tip;
-          b.style.cssText = 'background:#2a2d4a;color:#e0e0e0;border:1px solid #3a3d6a;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:0.85em;min-width:36px;min-height:28px;';
-          b.onclick = fn;
-          return b;
-        };
-
-        const btnReset = mkBtn('\u23ee', '처음으로', () => this._reset());
-        const btnPrev = mkBtn('\u25c0', '이전 페이즈', () => this._stepPhase(-1));
-        const btnPlay = mkBtn('\u25b6', '재생', () => this._togglePlay());
-        const btnNext = mkBtn('\u25b6\ufe0e', '다음 페이즈', () => this._stepPhase(1));
-
-        // Speed selector
-        const speedSel = document.createElement('select');
-        speedSel.style.cssText = 'background:#2a2d4a;color:#e0e0e0;border:1px solid #3a3d6a;border-radius:4px;padding:2px 4px;font-size:0.8em;min-height:28px;';
-        [{v:0.5,l:'0.5x'},{v:1,l:'1x'},{v:2,l:'2x'}].forEach(o => {
-          const opt = document.createElement('option');
-          opt.value = o.v; opt.textContent = o.l;
-          if (o.v === 1) opt.selected = true;
-          speedSel.appendChild(opt);
-        });
-        speedSel.onchange = () => { this._speedMul = parseFloat(speedSel.value); };
-
-        // Phase indicator
-        const phaseLabel = document.createElement('span');
-        phaseLabel.style.cssText = 'color:#aaa;font-size:0.8em;margin-left:6px;';
-        phaseLabel.id = 'srpg-phase-prev-label';
-        phaseLabel.textContent = 'Phase 1/' + phases.length;
-
-        ctrlRow.appendChild(btnReset);
-        ctrlRow.appendChild(btnPrev);
-        ctrlRow.appendChild(btnPlay);
-        ctrlRow.appendChild(btnNext);
-        ctrlRow.appendChild(speedSel);
-        ctrlRow.appendChild(phaseLabel);
-        wrap.appendChild(ctrlRow);
-
-        this._btnPlay = btnPlay;
-
-        container.appendChild(wrap);
-
-        // Init positions
-        const half = Math.floor(this.GRID / 2);
-        this._casterPos = { x: half - 2, y: half };
-        this._targetPos = { x: half + 2, y: half };
-        this._origCaster = { x: half - 2, y: half };
-        this._origTarget = { x: half + 2, y: half };
-        this._flashCells = null;
-        this._projPos = null;
-        this._animFrame = 0;
-        this._animTotal = 0;
-        this._playing = false;
-
-        this._highlightBadge(0);
-        this._drawGrid();
-      },
-
-      _highlightBadge(idx) {
-        this._badges.forEach((b, i) => {
-          b.el.style.opacity = (i === idx) ? '1' : '0.5';
-          b.el.style.boxShadow = (i === idx) ? '0 0 6px ' + b.color : 'none';
-        });
-        const lbl = document.getElementById('srpg-phase-prev-label');
-        if (lbl) lbl.textContent = 'Phase ' + (idx + 1) + '/' + this._phases.length;
-      },
-
-      _drawGrid() {
-        const ctx = this._ctx;
-        if (!ctx) return;
-        const C = this.CELL, G = this.GRID, px = G * C;
-        ctx.fillStyle = this.CLR_BG;
-        ctx.fillRect(0, 0, px, px);
-
-        // Grid lines
-        ctx.strokeStyle = this.CLR_GRID;
-        ctx.lineWidth = 0.5;
-        for (let i = 0; i <= G; i++) {
-          ctx.beginPath(); ctx.moveTo(i*C, 0); ctx.lineTo(i*C, px); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(0, i*C); ctx.lineTo(px, i*C); ctx.stroke();
-        }
-
-        // Flash cells (hit effect)
-        if (this._flashCells) {
-          ctx.fillStyle = this.CLR_HIT_FLASH;
-          this._flashCells.forEach(c => {
-            ctx.fillRect(c.x * C + 1, c.y * C + 1, C - 2, C - 2);
-          });
-        }
-
-        // Projectile
-        if (this._projPos) {
-          ctx.fillStyle = this.CLR_PROJ;
-          ctx.beginPath();
-          ctx.arc(this._projPos.px, this._projPos.py, 5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Caster circle
-        if (this._casterPos) {
-          ctx.fillStyle = this.CLR_CASTER;
-          ctx.beginPath();
-          ctx.arc(this._casterPos.x * C + C/2, this._casterPos.y * C + C/2, C * 0.35, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#fff';
-          ctx.font = 'bold 9px sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText('\u2605', this._casterPos.x * C + C/2, this._casterPos.y * C + C/2);
-        }
-
-        // Target circle
-        if (this._targetPos) {
-          ctx.fillStyle = this.CLR_TARGET;
-          ctx.beginPath();
-          ctx.arc(this._targetPos.x * C + C/2, this._targetPos.y * C + C/2, C * 0.35, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#fff';
-          ctx.font = 'bold 9px sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText('\u25cf', this._targetPos.x * C + C/2, this._targetPos.y * C + C/2);
-        }
-      },
-
-      _reset() {
-        this._stopAnim();
-        this._phaseIdx = 0;
-        this._playing = false;
-        if (this._btnPlay) this._btnPlay.textContent = '\u25b6';
-        this._casterPos = { ...this._origCaster };
-        this._targetPos = { ...this._origTarget };
-        this._flashCells = null;
-        this._projPos = null;
-        this._animFrame = 0;
-        this._highlightBadge(0);
-        this._drawGrid();
-      },
-
-      _jumpToPhase(idx) {
-        this._stopAnim();
-        this._playing = false;
-        if (this._btnPlay) this._btnPlay.textContent = '\u25b6';
-        // Reset positions then replay up to idx
-        this._casterPos = { ...this._origCaster };
-        this._targetPos = { ...this._origTarget };
-        this._flashCells = null;
-        this._projPos = null;
-        // Apply completed phases instantly
-        for (let i = 0; i < idx; i++) {
-          this._applyPhaseInstant(this._phases[i]);
-        }
-        this._phaseIdx = idx;
-        this._highlightBadge(idx);
-        this._drawGrid();
-      },
-
-      _applyPhaseInstant(phase) {
-        const half = Math.floor(this.GRID / 2);
-        switch (phase.type) {
-          case 'dash': {
-            // Move caster adjacent to target
-            const dx = this._targetPos.x - this._casterPos.x;
-            const dy = this._targetPos.y - this._casterPos.y;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-              this._casterPos.x = this._targetPos.x - Math.sign(dx);
-            } else {
-              this._casterPos.y = this._targetPos.y - Math.sign(dy);
-            }
-            break;
-          }
-          case 'push': {
-            const dist = phase.dist || 2;
-            const dx = this._targetPos.x - this._casterPos.x;
-            const dy = this._targetPos.y - this._casterPos.y;
-            const dirX = dx !== 0 ? Math.sign(dx) : 0;
-            const dirY = dy !== 0 ? Math.sign(dy) : 0;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-              this._targetPos.x = Math.max(0, Math.min(this.GRID-1, this._targetPos.x + dirX * dist));
-            } else {
-              this._targetPos.y = Math.max(0, Math.min(this.GRID-1, this._targetPos.y + dirY * dist));
-            }
-            break;
-          }
-          case 'pull': {
-            const dist = phase.dist || 2;
-            const dx = this._casterPos.x - this._targetPos.x;
-            const dy = this._casterPos.y - this._targetPos.y;
-            const dirX = dx !== 0 ? Math.sign(dx) : 0;
-            const dirY = dy !== 0 ? Math.sign(dy) : 0;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-              this._targetPos.x = Math.max(0, Math.min(this.GRID-1, this._targetPos.x + dirX * dist));
-            } else {
-              this._targetPos.y = Math.max(0, Math.min(this.GRID-1, this._targetPos.y + dirY * dist));
-            }
-            break;
-          }
-          case 'escape': {
-            const dist = phase.dist || 2;
-            const dx = this._casterPos.x - this._targetPos.x;
-            const dy = this._casterPos.y - this._targetPos.y;
-            const dirX = dx !== 0 ? Math.sign(dx) : 0;
-            const dirY = dy !== 0 ? Math.sign(dy) : 0;
-            if (Math.abs(dx) >= Math.abs(dy)) {
-              this._casterPos.x = Math.max(0, Math.min(this.GRID-1, this._casterPos.x + dirX * dist));
-            } else {
-              this._casterPos.y = Math.max(0, Math.min(this.GRID-1, this._casterPos.y + dirY * dist));
-            }
-            break;
-          }
-          case 'leap': {
-            // Caster leaps to target's position, target stays
-            this._casterPos.x = this._targetPos.x;
-            this._casterPos.y = this._targetPos.y;
-            break;
-          }
-          case 'swap': {
-            const tmpX = this._casterPos.x, tmpY = this._casterPos.y;
-            this._casterPos.x = this._targetPos.x;
-            this._casterPos.y = this._targetPos.y;
-            this._targetPos.x = tmpX;
-            this._targetPos.y = tmpY;
-            break;
-          }
-          // hit, proj, chain, multi, etc. don't move units
-          default: break;
-        }
-      },
-
-      _stepPhase(dir) {
-        this._stopAnim();
-        this._playing = false;
-        if (this._btnPlay) this._btnPlay.textContent = '\u25b6';
-        let next = this._phaseIdx + dir;
-        if (next < 0) next = 0;
-        if (next >= this._phases.length) next = this._phases.length - 1;
-        this._jumpToPhase(next);
-      },
-
-      _togglePlay() {
-        if (this._playing) {
-          this._stopAnim();
-          this._playing = false;
-          if (this._btnPlay) this._btnPlay.textContent = '\u25b6';
-        } else {
-          this._playing = true;
-          if (this._btnPlay) this._btnPlay.textContent = '\u23f8';
-          // Reset if at end
-          if (this._phaseIdx >= this._phases.length) {
-            this._casterPos = { ...this._origCaster };
-            this._targetPos = { ...this._origTarget };
-            this._phaseIdx = 0;
-          }
-          this._startPhaseAnim(this._phaseIdx);
-        }
-      },
-
-      _stopAnim() {
-        if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
-      },
-
-      _startPhaseAnim(idx) {
-        if (idx >= this._phases.length) {
-          this._playing = false;
-          if (this._btnPlay) this._btnPlay.textContent = '\u25b6';
-          return;
-        }
-        this._phaseIdx = idx;
-        this._highlightBadge(idx);
-        this._flashCells = null;
-        this._projPos = null;
-
-        const phase = this._phases[idx];
-        const FPS = 60;
-        const baseDur = 30; // frames at 1x speed
-        const totalFrames = Math.max(10, Math.round(baseDur / this._speedMul));
-
-        switch (phase.type) {
-          case 'dash':   this._animDash(totalFrames); break;
-          case 'hit':    this._animHit(totalFrames); break;
-          case 'proj':   this._animProj(totalFrames); break;
-          case 'push':   this._animPushPull(phase, totalFrames, false); break;
-          case 'pull':   this._animPushPull(phase, totalFrames, true); break;
-          case 'escape': this._animEscape(phase, totalFrames); break;
-          case 'leap':   this._animLeap(totalFrames); break;
-          case 'swap':   this._animSwap(totalFrames); break;
-          case 'chain':  this._animChain(totalFrames); break;
-          default:       this._animHit(totalFrames); break; // fallback: flash
-        }
-      },
-
-      _onPhaseComplete() {
-        if (!this._playing) return;
-        // Small delay between phases
-        setTimeout(() => {
-          if (!this._playing) return;
-          this._startPhaseAnim(this._phaseIdx + 1);
-        }, 200 / this._speedMul);
-      },
-
-      // --- Animation: Dash (caster moves adjacent to target) ---
-      _animDash(totalFrames) {
-        const startX = this._casterPos.x, startY = this._casterPos.y;
-        const dx = this._targetPos.x - startX;
-        const dy = this._targetPos.y - startY;
-        let endX, endY;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          endX = this._targetPos.x - Math.sign(dx);
-          endY = this._targetPos.y;
-        } else {
-          endX = this._targetPos.x;
-          endY = this._targetPos.y - Math.sign(dy);
-        }
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          const ease = t < 0.5 ? 2*t*t : -1+((4-2*t)*t); // ease in-out
-          this._casterPos.x = startX + (endX - startX) * ease;
-          this._casterPos.y = startY + (endY - startY) * ease;
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._casterPos.x = endX;
-            this._casterPos.y = endY;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Hit (flash effect area) ---
-      _animHit(totalFrames) {
-        const tx = Math.round(this._targetPos.x), ty = Math.round(this._targetPos.y);
-        // Parse area from note to get hit cells, or default to target cell
-        const item = this._getItem();
-        const P = window.SrpgPhaseParser;
-        let hitCells = [{x: tx, y: ty}];
-        if (item && P) {
-          const area = P.parseArea(item.note || '');
-          if (area.length) {
-            hitCells = area.map(c => ({x: tx + c.dx, y: ty + c.dy}));
-          }
-        }
-        let frame = 0;
-        const flashInterval = 4;
-        const tick = () => {
-          frame++;
-          // Toggle flash every few frames
-          this._flashCells = (Math.floor(frame / flashInterval) % 2 === 0) ? hitCells : null;
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._flashCells = null;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Projectile (dot from caster to target) ---
-      _animProj(totalFrames) {
-        const C = this.CELL;
-        const sx = Math.round(this._casterPos.x) * C + C/2;
-        const sy = Math.round(this._casterPos.y) * C + C/2;
-        const ex = Math.round(this._targetPos.x) * C + C/2;
-        const ey = Math.round(this._targetPos.y) * C + C/2;
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          this._projPos = {
-            px: sx + (ex - sx) * t,
-            py: sy + (ey - sy) * t
-          };
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._projPos = null;
-            // Flash on impact
-            this._animHit(Math.round(15 / this._speedMul));
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Push/Pull ---
-      _animPushPull(phase, totalFrames, isPull) {
-        const dist = phase.dist || 2;
-        const startX = this._targetPos.x, startY = this._targetPos.y;
-        const dx = isPull
-          ? (this._casterPos.x - this._targetPos.x)
-          : (this._targetPos.x - this._casterPos.x);
-        const dy = isPull
-          ? (this._casterPos.y - this._targetPos.y)
-          : (this._targetPos.y - this._casterPos.y);
-        let dirX, dirY;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          dirX = Math.sign(dx); dirY = 0;
-        } else {
-          dirX = 0; dirY = Math.sign(dy);
-        }
-        const endX = Math.max(0, Math.min(this.GRID-1, startX + dirX * dist));
-        const endY = Math.max(0, Math.min(this.GRID-1, startY + dirY * dist));
-
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          this._targetPos.x = startX + (endX - startX) * t;
-          this._targetPos.y = startY + (endY - startY) * t;
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._targetPos.x = endX;
-            this._targetPos.y = endY;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Escape (caster moves away) ---
-      _animEscape(phase, totalFrames) {
-        const dist = phase.dist || 2;
-        const startX = this._casterPos.x, startY = this._casterPos.y;
-        const dx = this._casterPos.x - this._targetPos.x;
-        const dy = this._casterPos.y - this._targetPos.y;
-        let dirX, dirY;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          dirX = Math.sign(dx); dirY = 0;
-        } else {
-          dirX = 0; dirY = Math.sign(dy);
-        }
-        const endX = Math.max(0, Math.min(this.GRID-1, startX + dirX * dist));
-        const endY = Math.max(0, Math.min(this.GRID-1, startY + dirY * dist));
-
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          this._casterPos.x = startX + (endX - startX) * t;
-          this._casterPos.y = startY + (endY - startY) * t;
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._casterPos.x = endX;
-            this._casterPos.y = endY;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Leap (caster jumps to target) ---
-      _animLeap(totalFrames) {
-        const startX = this._casterPos.x, startY = this._casterPos.y;
-        const endX = this._targetPos.x, endY = this._targetPos.y;
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          // Arc trajectory (parabola)
-          const linear = t;
-          const arc = -4 * (t - 0.5) * (t - 0.5) + 1; // peak at t=0.5
-          this._casterPos.x = startX + (endX - startX) * linear;
-          this._casterPos.y = startY + (endY - startY) * linear - arc * 2; // rise then fall
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._casterPos.x = endX;
-            this._casterPos.y = endY;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Swap (caster ↔ target) ---
-      _animSwap(totalFrames) {
-        const csX = this._casterPos.x, csY = this._casterPos.y;
-        const tsX = this._targetPos.x, tsY = this._targetPos.y;
-        let frame = 0;
-        const tick = () => {
-          frame++;
-          const t = Math.min(1, frame / totalFrames);
-          const ease = t < 0.5 ? 2*t*t : -1+((4-2*t)*t);
-          this._casterPos.x = csX + (tsX - csX) * ease;
-          this._casterPos.y = csY + (tsY - csY) * ease;
-          this._targetPos.x = tsX + (csX - tsX) * ease;
-          this._targetPos.y = tsY + (csY - tsY) * ease;
-          this._drawGrid();
-          if (frame >= totalFrames) {
-            this._casterPos.x = tsX; this._casterPos.y = tsY;
-            this._targetPos.x = csX; this._targetPos.y = csY;
-            this._drawGrid();
-            this._onPhaseComplete();
-          } else {
-            this._raf = requestAnimationFrame(tick);
-          }
-        };
-        this._raf = requestAnimationFrame(tick);
-      },
-
-      // --- Animation: Chain (sequential target flashes) ---
-      _animChain(totalFrames) {
-        const phase = this._phases[this._phaseIdx];
-        const count = phase.count || 3;
-        const tx = Math.round(this._targetPos.x), ty = Math.round(this._targetPos.y);
-        // Generate chain targets spread outward
-        const targets = [{x: tx, y: ty}];
-        for (let i = 1; i < count; i++) {
-          targets.push({x: tx + i, y: ty});
-        }
-        let chainIdx = 0;
-        let frame = 0;
-        const perTarget = Math.max(8, Math.round(totalFrames / count));
-        const tick = () => {
-          frame++;
-          const localFrame = frame % perTarget;
-          if (localFrame === 0 && frame > 0) chainIdx++;
-          if (chainIdx >= targets.length) {
-            this._flashCells = null;
-            this._drawGrid();
-            this._onPhaseComplete();
-            return;
-          }
-          const ct = targets[chainIdx];
-          this._flashCells = (Math.floor(localFrame / 3) % 2 === 0) ? [ct] : null;
-          this._drawGrid();
-          this._raf = requestAnimationFrame(tick);
-        };
-        this._raf = requestAnimationFrame(tick);
       }
     };
 
@@ -14289,8 +13189,6 @@ const GitHubAdapter = {
         setTimeout(() => {
           SRE.createEditor('sre-skill-editor', 'skill');
           SrpgPhaseUI.create('srpg-phase-skill');
-          SrpgEfkPreview.createUI('srpg-efk-preview-skill');
-          SrpgPhasePreview.createUI('srpg-phase-preview-skill');
         }, 0);
       } else if (tab === 'weapons') {
         setTimeout(() => {
