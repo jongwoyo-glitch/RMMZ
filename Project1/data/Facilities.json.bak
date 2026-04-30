@@ -1,0 +1,128 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "모험가 길드",
+    "type": "guild",
+    "bgImage": "facility_guild",
+    "actions": [
+      {
+        "id": "quest_board",
+        "name": "의뢰 게시판",
+        "handler": "openQuestBoard"
+      },
+      {
+        "id": "report",
+        "name": "의뢰 보고",
+        "handler": "reportQuest"
+      },
+      {
+        "id": "rank_check",
+        "name": "등급 확인",
+        "handler": "checkRank"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 2,
+    "name": "여행자의 주점",
+    "type": "tavern",
+    "bgImage": "facility_tavern",
+    "actions": [
+      {
+        "id": "drink",
+        "name": "식사",
+        "handler": "orderFood"
+      },
+      {
+        "id": "gossip",
+        "name": "정보 수집",
+        "handler": "gatherInfo"
+      },
+      {
+        "id": "recruit",
+        "name": "동료 모집",
+        "handler": "recruitMember"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 3,
+    "name": "중앙 시장",
+    "type": "shop",
+    "bgImage": "facility_market",
+    "actions": [
+      {
+        "id": "buy",
+        "name": "구매",
+        "handler": "openShop"
+      },
+      {
+        "id": "sell",
+        "name": "판매",
+        "handler": "openSell"
+      },
+      {
+        "id": "appraise",
+        "name": "감정",
+        "handler": "appraiseItem"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 4,
+    "name": "벨포드 대장간",
+    "type": "smithy",
+    "bgImage": "facility_smithy",
+    "actions": [
+      {
+        "id": "repair",
+        "name": "수리",
+        "handler": "repairEquip"
+      },
+      {
+        "id": "upgrade",
+        "name": "강화",
+        "handler": "upgradeEquip"
+      },
+      {
+        "id": "craft",
+        "name": "제작",
+        "handler": "craftItem"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 5,
+    "name": "나그네의 숙소",
+    "type": "inn",
+    "bgImage": "facility_inn",
+    "actions": [
+      {
+        "id": "rest",
+        "name": "숙박",
+        "handler": "restAtInn"
+      },
+      {
+        "id": "meeting",
+        "name": "회의",
+        "handler": "openMeeting"
+      },
+      {
+        "id": "save",
+        "name": "기록",
+        "handler": "openSave"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  }
+]

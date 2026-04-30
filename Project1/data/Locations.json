@@ -1,0 +1,163 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "시작마을",
+    "region": "왕국 남부 교역로",
+    "type": "town",
+    "bgImage": "town_belford",
+    "bgVariants": {
+      "night": "town_belford_night"
+    },
+    "bgm": {
+      "name": "Town1",
+      "volume": 80,
+      "pitch": 100,
+      "pan": 0
+    },
+    "hotspots": [
+      {
+        "id": "guild",
+        "name": "길드",
+        "icon": "hs_guild",
+        "x": 55,
+        "y": 20,
+        "facilityId": 1,
+        "targetMapId": 0
+      },
+      {
+        "id": "tavern",
+        "name": "주점",
+        "icon": "hs_tavern",
+        "x": 22,
+        "y": 38,
+        "facilityId": 2,
+        "targetMapId": 0
+      },
+      {
+        "id": "market",
+        "name": "시장",
+        "icon": "hs_market",
+        "x": 45,
+        "y": 58,
+        "facilityId": 3,
+        "targetMapId": 0
+      },
+      {
+        "id": "smithy",
+        "name": "대장간",
+        "icon": "hs_smithy",
+        "x": 72,
+        "y": 50,
+        "facilityId": 4,
+        "targetMapId": 0
+      },
+      {
+        "id": "inn",
+        "name": "숙소",
+        "icon": "hs_inn",
+        "x": 12,
+        "y": 75,
+        "facilityId": 5,
+        "targetMapId": 0
+      },
+      {
+        "id": "exit",
+        "name": "외출",
+        "icon": "hs_exit",
+        "x": 62,
+        "y": 82,
+        "target": "worldmap",
+        "targetMapId": 3
+      }
+    ],
+    "worldMapX": 6,
+    "worldMapY": 2,
+    "mapId": 2
+  },
+  {
+    "id": 2,
+    "name": "2차 마을",
+    "region": "왕국 북부 산간지대",
+    "type": "town",
+    "bgImage": "town_highland",
+    "bgVariants": {
+      "night": "town_highland_night"
+    },
+    "bgm": {
+      "name": "Town2",
+      "volume": 80,
+      "pitch": 100,
+      "pan": 0
+    },
+    "hotspots": [
+      {
+        "id": "guild",
+        "name": "용병단",
+        "icon": "hs_guild",
+        "x": 50,
+        "y": 18,
+        "facilityId": 6,
+        "targetMapId": 0
+      },
+      {
+        "id": "tavern",
+        "name": "주점",
+        "icon": "hs_tavern",
+        "x": 18,
+        "y": 35,
+        "facilityId": 7,
+        "targetMapId": 0
+      },
+      {
+        "id": "market",
+        "name": "교역소",
+        "icon": "hs_market",
+        "x": 42,
+        "y": 55,
+        "facilityId": 8,
+        "targetMapId": 0
+      },
+      {
+        "id": "smithy",
+        "name": "대장간",
+        "icon": "hs_smithy",
+        "x": 75,
+        "y": 42,
+        "facilityId": 9,
+        "targetMapId": 0
+      },
+      {
+        "id": "inn",
+        "name": "여관",
+        "icon": "hs_inn",
+        "x": 10,
+        "y": 70,
+        "facilityId": 10,
+        "targetMapId": 0
+      },
+      {
+        "id": "temple",
+        "name": "신전",
+        "icon": "hs_temple",
+        "x": 80,
+        "y": 20,
+        "facilityId": 11,
+        "targetMapId": 0
+      },
+      {
+        "id": "exit",
+        "name": "외출",
+        "icon": "hs_exit",
+        "x": 62,
+        "y": 85,
+        "target": "worldmap",
+        "facilityId": 0,
+        "targetMapId": 3
+      }
+    ],
+    "worldMapX": 13,
+    "worldMapY": 11,
+    "mapId": 4
+  }
+]

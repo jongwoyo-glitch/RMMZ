@@ -29,16 +29,21 @@
  *
  * ─── 사용법 ───
  *   $dataActors[id].surname          // 데이터에서 직접 읽기
+ *   $dataActors[id].gender           // 'm' 또는 'f' (기본 'm')
  *   $gameActors.actor(id).surname()  // Game_Actor 메서드
+ *   $gameActors.actor(id).gender()   // 'm' 또는 'f'
+ *   $gameActors.actor(id).isMale()   // 남성 여부
+ *   $gameActors.actor(id).isFemale() // 여성 여부
  *   $gameActors.actor(id).fullName() // 성+이름 조합 (파라미터 순서 반영)
  *
  * ─── 이벤트 텍스트 제어문자 ───
  *   \SN[n]   → n번 액터의 성씨
  *   \FN[n]   → n번 액터의 풀네임 (성+이름)
+ *   \GD[n]   → n번 액터의 성별 ('남' 또는 '여')
  *
  * ─── 주의사항 ───
- *   surname 필드는 Actors.json에 직접 저장되는 커스텀 프로퍼티입니다.
- *   RMMZ 네이티브 에디터에서 액터를 편집하면 surname 필드가
+ *   surname, gender 필드는 Actors.json에 직접 저장되는 커스텀 프로퍼티입니다.
+ *   RMMZ 네이티브 에디터에서 액터를 편집하면 이 필드들이
  *   유실될 수 있습니다. RMMZStudio를 통해 편집하세요.
  *
  * ============================================================================
@@ -55,6 +60,18 @@
 
     Game_Actor.prototype.surname = function() {
         return $dataActors[this._actorId]?.surname || "";
+    };
+
+    Game_Actor.prototype.gender = function() {
+        return $dataActors[this._actorId]?.gender || "m";
+    };
+
+    Game_Actor.prototype.isMale = function() {
+        return this.gender() === "m";
+    };
+
+    Game_Actor.prototype.isFemale = function() {
+        return this.gender() === "f";
     };
 
     Game_Actor.prototype.fullName = function() {
@@ -80,6 +97,10 @@
         text = text.replace(/\x1bFN\[(\d+)\]/gi, (_, id) => {
             const actor = $gameActors.actor(parseInt(id));
             return actor ? actor.fullName() : "";
+        });
+        text = text.replace(/\x1bGD\[(\d+)\]/gi, (_, id) => {
+            const actor = $gameActors.actor(parseInt(id));
+            return actor ? (actor.isFemale() ? "여" : "남") : "";
         });
         return text;
     };

@@ -57,6 +57,7 @@
         _battleActive: false,
         _battleMode: "annihilation",
         _battleModeParams: null,
+        _pendingBattleConfigId: 0, // 이벤트 커맨드로 설정된 전투 시나리오 ID
         _koActorIds: [],
         _escapedCount: 0,
         _turnNumber: 0,
@@ -104,7 +105,23 @@
             // ─── 맵 노트 파싱: 팀 관계 + 전투 모드 ───
             const mapNote = $dataMap ? ($dataMap.note || "") : "";
             SrpgAlliance.parseMapNote(mapNote);
-            this._battleModeParams = BattleModeChecker.parseMapNote(mapNote);
+            // 이벤트 커맨드로 setBattleConfig(id)가 호출된 경우 해당 ID 우선 사용
+            let effectiveNote = mapNote;
+            if (this._pendingBattleConfigId > 0) {
+                // 맵 노트에 srpgBattleConfig가 없으면 동적으로 삽입
+                if (!/<srpgBattleConfig:\d+>/i.test(effectiveNote)) {
+                    effectiveNote += "\n<srpgBattleConfig:" + this._pendingBattleConfigId + ">";
+                } else {
+                    // 이미 있으면 교체
+                    effectiveNote = effectiveNote.replace(
+                        /<srpgBattleConfig:\d+>/i,
+                        "<srpgBattleConfig:" + this._pendingBattleConfigId + ">"
+                    );
+                }
+                console.log("[SRPG] Dynamic battle config override: #" + this._pendingBattleConfigId);
+                this._pendingBattleConfigId = 0;
+            }
+            this._battleModeParams = BattleModeChecker.parseMapNote(effectiveNote);
             this._battleMode = this._battleModeParams.mode;
             // 리전 기반 구역 스캔 + 병합
             if ($dataMap) {
@@ -142,9 +159,8 @@
                 if (u.event) this._unitMap.set(u.event, u);
             }
             console.log("[SRPG] Battle started. Units:", this._units.length, "Mode:", this._battleMode);
-            this._showBanner("전투 시작!", "#ffdd44");
-            this._phase = "banner";
-            this._subPhase = "startBanner";
+            // 배치 페이즈를 먼저 진행, 배너는 배치 완료 후 표시
+            this._enterDeployOrBattle();
 
             // UI 초기화
             this._turnPredictDirty = true;
@@ -228,18 +244,36 @@
             const ambushed = this._ambushTeam && !SrpgAlliance.isPlayerTeam(this._ambushTeam);
             if (deployEnabled && this._hasDeployableUnits() && !ambushed) {
                 this._phase = "deployment";
-                this._subPhase = "selectUnit";
+                this._subPhase = "selectUnit"; // selectUnit → placeUnit → confirm
                 this._deployUnits = this.allyUnits().slice();
-                this._deployPlaced = [];
-                this._deploySelectedIdx = 0;
+                this._deployStatus = {}; // idx → 'waiting'|'holding'|'placed'
+                this._deployPositions = {}; // idx → {x,y} 배치 확정 좌표
+                this._deployInitialPos = {}; // idx → {x,y} 원래 이벤트 좌표
+                this._deploySelectedIdx = 0; // 첫 유닛 자동 선택
                 this._deployRegion = this._getDeployRegion();
+                this._deployConfirmOpen = false; // 확인 모달 오픈 여부
+                // 배치 커서 초기 위치: 배치 구역 중앙
+                this._deployCursorX = 0;
+                this._deployCursorY = 0;
+                this._initDeployCursorCenter();
                 this._inputDelay = 15;
+                // 초기 위치 저장 + 유닛을 맵 밖으로 이동 (대기 상태)
+                for (let i = 0; i < this._deployUnits.length; i++) {
+                    const u = this._deployUnits[i];
+                    this._deployInitialPos[i] = { x: u.event.x, y: u.event.y };
+                    this._deployStatus[i] = "waiting";
+                    // 맵 밖으로 이동 + 투명 처리 (완전 숨김)
+                    u.event.setPosition(-10, -10);
+                    u.event.setTransparent(true);
+                }
                 console.log("[SRPG] Entering deployment phase. Units:", this._deployUnits.length);
             } else {
                 if (!deployEnabled) console.log("[SRPG] Deployment disabled by notetag.");
                 else if (ambushed) console.log("[SRPG] Deployment skipped — player is ambushed.");
-                this._phase = "turnAdvance";
-                this._subPhase = "none";
+                // 배치 스킵 시에도 이벤트 대기 후 배너 표시
+                this._phase = "postDeploy";
+                this._subPhase = "waitEvents";
+                this._postDeployWait = 10;
             }
         },
 
@@ -297,79 +331,484 @@
                 return;
             }
 
-            // 현재 선택 유닛 하이라이트
-            const selectedUnit = allies[this._deploySelectedIdx];
-            if (!selectedUnit) { this._finishDeployment(); return; }
-
-            // 키보드 입력
-            if (Input.isTriggered("left") || Input.isTriggered("up")) {
-                this._deploySelectedIdx = (this._deploySelectedIdx - 1 + allies.length) % allies.length;
-                SoundManager.playCursor();
-                this._uiDirty = true;
-            }
-            if (Input.isTriggered("right") || Input.isTriggered("down")) {
-                this._deploySelectedIdx = (this._deploySelectedIdx + 1) % allies.length;
-                SoundManager.playCursor();
-                this._uiDirty = true;
+            // 마우스 엣지 스크롤 (브라우즈와 동일)
+            this._browseEdgeScroll();
+            // 확인 모달이 열려있으면 모달 입력만 처리
+            if (this._deployConfirmOpen) {
+                this._updateDeployConfirm();
+                return;
             }
 
-            // 마우스/터치 클릭 → 배치 위치 지정
-            if (TouchInput.isTriggered()) {
-                const tx = $gameMap.canvasToMapX(TouchInput.x);
-                const ty = $gameMap.canvasToMapY(TouchInput.y);
-
-                // 배치 타일 클릭 → 유닛 이동
-                if (this._isDeployTile(tx, ty)) {
-                    // 해당 위치에 이미 다른 유닛이 있는지 체크
-                    const occupant = this.unitAt(tx, ty);
-                    if (!occupant || occupant === selectedUnit) {
-                        // 이동 (unitAt은 event 위치 기반이므로 별도 점유 관리 불필요)
-                        selectedUnit.event.setPosition(tx, ty);
-                        // 다음 유닛으로
-                        if (!this._deployPlaced.includes(this._deploySelectedIdx)) {
-                            this._deployPlaced.push(this._deploySelectedIdx);
+            // ─── subPhase: selectUnit (유닛 리스트에서 선택) ───
+            if (this._subPhase === "selectUnit") {
+                // 키보드: 상하로 유닛 선택
+                if (Input.isTriggered("up")) {
+                    this._deployMoveSelection(-1);
+                }
+                if (Input.isTriggered("down")) {
+                    this._deployMoveSelection(1);
+                }
+                // OK → 선택한 유닛을 홀딩 모드(placeUnit)로 전환
+                if (Input.isTriggered("ok") && this._deploySelectedIdx >= 0) {
+                    this._deployEnterHolding(this._deploySelectedIdx);
+                }
+                // 마우스/터치
+                if (TouchInput.isTriggered()) {
+                    const hitIdx = this._deployHitTestPanel(TouchInput.x, TouchInput.y);
+                    if (hitIdx >= 0) {
+                        if (this._deployStatus[hitIdx] === "placed") {
+                            // 배치 완료 유닛 재배치 (커서를 해당 유닛 위치로)
+                            this._deployCursorX = allies[hitIdx].event.x;
+                            this._deployCursorY = allies[hitIdx].event.y;
+                            this._deployEnterHolding(hitIdx);
+                        } else if (this._deployStatus[hitIdx] === "waiting") {
+                            this._deploySelectedIdx = hitIdx;
+                            this._deployEnterHolding(hitIdx);
                         }
-                        this._deploySelectedIdx = (this._deploySelectedIdx + 1) % allies.length;
+                        this._uiDirty = true;
+                    } else {
+                        // 맵 클릭: 배치된 유닛 클릭 → 재배치
+                        const tx = $gameMap.canvasToMapX(TouchInput.x);
+                        const ty = $gameMap.canvasToMapY(TouchInput.y);
+                        for (let i = 0; i < allies.length; i++) {
+                            if (this._deployStatus[i] === "placed" && allies[i].event.x === tx && allies[i].event.y === ty) {
+                                this._deployCursorX = tx;
+                                this._deployCursorY = ty;
+                                this._deployEnterHolding(i);
+                                break;
+                            }
+                        }
+                        // 배치 구역 빈 타일 클릭 → 현재 선택 유닛이 waiting이면 바로 배치 모드
+                        if (this._deploySelectedIdx >= 0 && this._deployStatus[this._deploySelectedIdx] === "waiting") {
+                            if (this._isDeployTile(tx, ty) && !this.unitAt(tx, ty)) {
+                                this._deployCursorX = tx;
+                                this._deployCursorY = ty;
+                                this._deployEnterHolding(this._deploySelectedIdx);
+                            }
+                        }
+                    }
+                }
+                // ESC/Cancel → 전원 배치 완료 확인
+                if (Input.isTriggered("cancel") || Input.isTriggered("shift")) {
+                    if (this._deployAllPlaced()) {
+                        this._deployConfirmOpen = true;
+                        this._deployConfirmIdx = 0;
                         SoundManager.playOk();
                         this._uiDirty = true;
                     } else {
                         SoundManager.playBuzzer();
                     }
                 }
-                // 아군 유닛 클릭 → 선택 변경
-                else {
-                    for (let i = 0; i < allies.length; i++) {
-                        if (allies[i].event.x === tx && allies[i].event.y === ty) {
-                            this._deploySelectedIdx = i;
+            }
+            // ─── subPhase: placeUnit (홀딩 모드 — 액터=커서, 맵에서 자리 선택) ───
+            else if (this._subPhase === "placeUnit") {
+                const holdUnit = allies[this._deploySelectedIdx];
+                if (!holdUnit) { this._subPhase = "selectUnit"; return; }
+
+                // 키보드: 방향키로 액터 커서 이동 (배치 구역 내)
+                let dx = 0, dy = 0;
+                if (Input.isTriggered("left"))  dx = -1;
+                if (Input.isTriggered("right")) dx = 1;
+                if (Input.isTriggered("up"))    dy = -1;
+                if (Input.isTriggered("down"))  dy = 1;
+                if (dx !== 0 || dy !== 0) {
+                    const nx = holdUnit.event.x + dx;
+                    const ny = holdUnit.event.y + dy;
+                    if (this._isDeployTile(nx, ny)) {
+                        const occ = this.unitAt(nx, ny);
+                        if (!occ || occ === holdUnit) {
+                            holdUnit.event.setPosition(nx, ny);
+                            this._deployCursorX = nx;
+                            this._deployCursorY = ny;
+                            // 화면 자동 추적: 유닛이 화면 밖으로 나가면 스크롤
+                            this._deployScrollToTile(nx, ny);
                             SoundManager.playCursor();
                             this._uiDirty = true;
-                            break;
                         }
                     }
                 }
-            }
 
-            // Enter/OK → 배치 확정
-            if (Input.isTriggered("ok")) {
-                this._finishDeployment();
-            }
+                // ── 마우스 호버: 배치 구역 내 타일로 유닛 미리보기 이동 ──
+                {
+                    const hx = $gameMap.canvasToMapX(TouchInput.x);
+                    const hy = $gameMap.canvasToMapY(TouchInput.y);
+                    if (this._isDeployTile(hx, hy) &&
+                        (hx !== holdUnit.event.x || hy !== holdUnit.event.y)) {
+                        const occ = this.unitAt(hx, hy);
+                        if (!occ || occ === holdUnit) {
+                            holdUnit.event.setPosition(hx, hy);
+                            this._deployCursorX = hx;
+                            this._deployCursorY = hy;
+                            this._uiDirty = true;
+                        }
+                    }
+                }
 
-            // ESC/Cancel → 배치 리셋 (전원 초기 위치로)
-            if (Input.isTriggered("cancel")) {
-                // 초기 위치는 이미 이벤트 원래 위치이므로 리셋 불필요
-                // 단순히 "정말 시작?" 확인 생략하고 진행
-                this._finishDeployment();
+                // 마우스/터치 클릭
+                if (TouchInput.isTriggered()) {
+                    const tx = $gameMap.canvasToMapX(TouchInput.x);
+                    const ty = $gameMap.canvasToMapY(TouchInput.y);
+                    const panelHit = this._deployHitTestPanel(TouchInput.x, TouchInput.y);
+                    if (panelHit >= 0 && panelHit !== this._deploySelectedIdx) {
+                        // 다른 유닛 패널 클릭 → 현재 취소 + 새 유닛으로 전환
+                        this._deployCancelHolding(this._deploySelectedIdx);
+                        if (this._deployStatus[panelHit] === "placed") {
+                            this._deployCursorX = allies[panelHit].event.x;
+                            this._deployCursorY = allies[panelHit].event.y;
+                        }
+                        this._deployEnterHolding(panelHit);
+                    } else if (this._isDeployTile(tx, ty)) {
+                        const occ = this.unitAt(tx, ty);
+                        if (!occ || occ === holdUnit) {
+                            // 배치 확정: 클릭 위치로 이동 후 확정
+                            holdUnit.event.setPosition(tx, ty);
+                            this._deployCursorX = tx;
+                            this._deployCursorY = ty;
+                            this._deployStatus[this._deploySelectedIdx] = "placed";
+                            this._deployPositions[this._deploySelectedIdx] = { x: tx, y: ty };
+                            SoundManager.playOk();
+                            this._deployAutoSelectNext();
+                            this._uiDirty = true;
+                        } else {
+                            SoundManager.playBuzzer();
+                        }
+                    }
+                }
+
+                // OK → 현재 위치에 배치 확정
+                if (Input.isTriggered("ok")) {
+                    const hx = holdUnit.event.x;
+                    const hy = holdUnit.event.y;
+                    if (this._isDeployTile(hx, hy)) {
+                        const occ = this.unitAt(hx, hy);
+                        if (!occ || occ === holdUnit) {
+                            this._deployStatus[this._deploySelectedIdx] = "placed";
+                            this._deployPositions[this._deploySelectedIdx] = { x: hx, y: hy };
+                            this._deployCursorX = hx;
+                            this._deployCursorY = hy;
+                            SoundManager.playOk();
+                            this._deployAutoSelectNext();
+                            this._uiDirty = true;
+                        }
+                    }
+                }
+
+                // ESC → 홀딩 취소, 유닛 리스트로 복귀
+                if (Input.isTriggered("cancel")) {
+                    this._deployCancelHolding(this._deploySelectedIdx);
+                    SoundManager.playCancel();
+                    this._uiDirty = true;
+                }
             }
         },
 
-        _finishDeployment() {
-            this._phase = "turnAdvance";
-            this._subPhase = "none";
-            this._deployUnits = null;
-            this._deployPlaced = null;
-            this._deployRegion = null;
+        /** 유닛 선택 인덱스 이동 */
+        _deployMoveSelection(dir) {
+            const len = this._deployUnits.length;
+            if (len === 0) return;
+            if (this._deploySelectedIdx < 0) {
+                this._deploySelectedIdx = dir > 0 ? 0 : len - 1;
+            } else {
+                this._deploySelectedIdx = (this._deploySelectedIdx + dir + len) % len;
+            }
+            SoundManager.playCursor();
             this._uiDirty = true;
-            console.log("[SRPG] Deployment complete. Starting battle.");
+        },
+
+        /** 유닛을 홀딩 모드로 진입 — 커서 위치에 스프라이트 표시 */
+        _deployEnterHolding(idx) {
+            const u = this._deployUnits[idx];
+            if (!u) return;
+            this._deploySelectedIdx = idx;
+            this._subPhase = "placeUnit";
+            if (this._deployStatus[idx] === "placed") {
+                // 이미 배치된 유닛 → 현재 위치에서 재배치 (커서도 동기화)
+                this._deployCursorX = u.event.x;
+                this._deployCursorY = u.event.y;
+            } else {
+                // 대기 유닛 → 커서 위치에 배치 (점유 중이면 근처 빈 타일)
+                let cx = this._deployCursorX;
+                let cy = this._deployCursorY;
+                const occ = this.unitAt(cx, cy);
+                if (occ && occ !== u) {
+                    const empty = this._deployFindEmptyTileNear(cx, cy);
+                    if (empty) { cx = empty.x; cy = empty.y; }
+                }
+                u.event.setPosition(cx, cy);
+                this._deployCursorX = cx;
+                this._deployCursorY = cy;
+            }
+            this._deployStatus[idx] = "holding";
+            u.event.setTransparent(false);
+            SoundManager.playOk();
+            this._uiDirty = true;
+        },
+
+        /** 홀딩 취소 — 유닛을 맵 밖으로 */
+        _deployCancelHolding(idx) {
+            const u = this._deployUnits[idx];
+            if (!u) return;
+            this._deployStatus[idx] = "waiting";
+            u.event.setPosition(-10, -10);
+            u.event.setTransparent(true); // 다시 숨김
+            delete this._deployPositions[idx];
+            this._subPhase = "selectUnit";
+        },
+
+        /** 배치 가능 구역의 빈 타일 찾기 */
+        _deployFindEmptyTile() {
+            if (!this._deployRegion) return null;
+            for (const key of this._deployRegion) {
+                const parts = key.split(",");
+                const tx = Number(parts[0]);
+                const ty = Number(parts[1]);
+                if (!this.unitAt(tx, ty)) return { x: tx, y: ty };
+            }
+            return null;
+        },
+
+        /** (cx,cy) 근처에서 빈 배치 타일 찾기 (맨해튼 거리순) */
+        _deployFindEmptyTileNear(cx, cy) {
+            if (!this._deployRegion) return this._deployFindEmptyTile();
+            let best = null, bestDist = 9999;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                const tx = Number(p[0]), ty = Number(p[1]);
+                if (this.unitAt(tx, ty)) continue;
+                const d = Math.abs(tx - cx) + Math.abs(ty - cy);
+                if (d < bestDist) { bestDist = d; best = { x: tx, y: ty }; }
+            }
+            return best || this._deployFindEmptyTile();
+        },
+
+        /** 배치 구역 중앙 좌표로 커서 초기화 */
+        _initDeployCursorCenter() {
+            if (!this._deployRegion || this._deployRegion.size === 0) return;
+            let sumX = 0, sumY = 0, count = 0;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                sumX += Number(p[0]); sumY += Number(p[1]); count++;
+            }
+            // 중앙 좌표 계산 후 가장 가까운 배치 타일 찾기
+            const avgX = Math.round(sumX / count);
+            const avgY = Math.round(sumY / count);
+            let best = null, bestDist = 9999;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                const tx = Number(p[0]), ty = Number(p[1]);
+                const d = Math.abs(tx - avgX) + Math.abs(ty - avgY);
+                if (d < bestDist) { bestDist = d; best = { x: tx, y: ty }; }
+            }
+            if (best) {
+                this._deployCursorX = best.x;
+                this._deployCursorY = best.y;
+                // 배치 시작 시 커서 위치로 화면 이동
+                this._deployScrollToTile(best.x, best.y);
+            }
+        },
+
+        /** 타일 좌표가 화면 밖이면 부드럽게 스크롤 */
+        _deployScrollToTile(tx, ty) {
+            const tw = $gameMap.tileWidth();
+            const th = $gameMap.tileHeight();
+            const margin = 3; // 화면 가장자리에서 3타일 여유
+            const dx = $gameMap.displayX();
+            const dy = $gameMap.displayY();
+            const screenW = $gameMap.screenTileX();
+            const screenH = $gameMap.screenTileY();
+            let newDx = dx, newDy = dy;
+            // 좌우 범위 체크
+            if (tx < dx + margin) newDx = tx - margin;
+            else if (tx > dx + screenW - margin - 1) newDx = tx - screenW + margin + 1;
+            // 상하 범위 체크
+            if (ty < dy + margin) newDy = ty - margin;
+            else if (ty > dy + screenH - margin - 1) newDy = ty - screenH + margin + 1;
+            // 맵 범위 제한
+            const maxDx = $gameMap.width() - screenW;
+            const maxDy = $gameMap.height() - screenH;
+            newDx = Math.max(0, Math.min(maxDx, newDx));
+            newDy = Math.max(0, Math.min(maxDy, newDy));
+            if (newDx !== dx || newDy !== dy) {
+                $gameMap._displayX = newDx;
+                $gameMap._displayY = newDy;
+            }
+        },
+
+        /** 다음 미배치 유닛 자동 선택 → selectUnit 복귀 (자동 holding 진입 없음) */
+        _deployAutoSelectNext() {
+            const len = this._deployUnits.length;
+            // 전부 배치됨 → 확인 모달
+            if (this._deployAllPlaced()) {
+                this._subPhase = "selectUnit";
+                this._deploySelectedIdx = 0;
+                this._deployConfirmOpen = true;
+                this._deployConfirmIdx = 0;
+                this._uiDirty = true;
+                return;
+            }
+            // 다음 waiting 유닛 찾기 → selectUnit 상태로 하이라이트만
+            for (let d = 1; d <= len; d++) {
+                const ni = (this._deploySelectedIdx + d) % len;
+                if (this._deployStatus[ni] === "waiting") {
+                    this._deploySelectedIdx = ni;
+                    this._subPhase = "selectUnit";
+                    this._uiDirty = true;
+                    return;
+                }
+            }
+            // fallback
+            this._subPhase = "selectUnit";
+            this._deploySelectedIdx = 0;
+        },
+
+        /** 모든 유닛이 placed 상태인지 확인 */
+        _deployAllPlaced() {
+            for (let i = 0; i < this._deployUnits.length; i++) {
+                if (this._deployStatus[i] !== "placed") return false;
+            }
+            return true;
+        },
+
+        /** 확인 모달 입력 처리 */
+        _updateDeployConfirm() {
+            if (Input.isTriggered("left") || Input.isTriggered("up")) {
+                this._deployConfirmIdx = 0;
+                SoundManager.playCursor();
+                this._uiDirty = true;
+            }
+            if (Input.isTriggered("right") || Input.isTriggered("down")) {
+                this._deployConfirmIdx = 1;
+                SoundManager.playCursor();
+                this._uiDirty = true;
+            }
+            // 마우스 클릭 → 버튼 히트테스트는 UI에서 처리하고 SM에 결과만 전달
+            if (TouchInput.isTriggered()) {
+                const hitBtn = this._deployConfirmHitTest(TouchInput.x, TouchInput.y);
+                if (hitBtn >= 0) {
+                    this._deployConfirmIdx = hitBtn;
+                    this._deployConfirmSelect();
+                    return;
+                }
+            }
+            if (Input.isTriggered("ok")) {
+                this._deployConfirmSelect();
+            }
+            if (Input.isTriggered("cancel")) {
+                this._deployConfirmOpen = false;
+                SoundManager.playCancel();
+                this._uiDirty = true;
+            }
+        },
+
+        /** 확인 모달 선택 처리 */
+        _deployConfirmSelect() {
+            if (this._deployConfirmIdx === 0) {
+                // 확정 → 전투 시작
+                SoundManager.playOk();
+                this._finishDeployment();
+            } else {
+                // 다시 배치 → 전원 리셋
+                SoundManager.playCancel();
+                this._deployConfirmOpen = false;
+                for (let i = 0; i < this._deployUnits.length; i++) {
+                    this._deployStatus[i] = "waiting";
+                    this._deployUnits[i].event.setPosition(-10, -10);
+                    this._deployUnits[i].event.setTransparent(true);
+                    delete this._deployPositions[i];
+                }
+                this._deploySelectedIdx = -1;
+                this._subPhase = "selectUnit";
+                this._uiDirty = true;
+            }
+        },
+
+        /** 확인 모달 버튼 히트테스트 (화면 좌표 → 버튼 인덱스) */
+        _deployConfirmHitTest(sx, sy) {
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
+            const mw = Math.round(280 * _rs);
+            const mh = Math.round(130 * _rs);
+            const mx = (Graphics.width - mw) / 2;
+            const my = (Graphics.height - mh) / 2;
+            const btnW = Math.round(100 * _rs);
+            const btnH = Math.round(32 * _rs);
+            const btnY = my + mh - Math.round(50 * _rs);
+            const gap = Math.round(20 * _rs);
+            const bx0 = mx + (mw - btnW * 2 - gap) / 2;
+            const bx1 = bx0 + btnW + gap;
+            if (sy >= btnY && sy <= btnY + btnH) {
+                if (sx >= bx0 && sx <= bx0 + btnW) return 0;
+                if (sx >= bx1 && sx <= bx1 + btnW) return 1;
+            }
+            return -1;
+        },
+
+        /** 유닛 리스트 패널 히트테스트 (화면 좌표 → 유닛 인덱스) */
+        _deployHitTestPanel(sx, sy) {
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
+            const pw = Math.round(180 * _rs);
+            const px = Graphics.width - pw - Math.round(10 * _rs);
+            const py = Math.round(60 * _rs);
+            const itemH = Math.round(48 * _rs);
+            const gap = Math.round(4 * _rs);
+            if (sx < px || sx > px + pw) return -1;
+            const allies = this._deployUnits;
+            if (!allies) return -1;
+            for (let i = 0; i < allies.length; i++) {
+                const iy = py + i * (itemH + gap);
+                if (sy >= iy && sy <= iy + itemH) return i;
+            }
+            return -1;
+        },
+
+        _finishDeployment() {
+            // 모든 유닛 투명 해제
+            if (this._deployUnits) {
+                for (const u of this._deployUnits) {
+                    if (u && u.event) u.event.setTransparent(false);
+                }
+            }
+            // 배치 데이터 정리
+            this._deployUnits = null;
+            this._deployStatus = null;
+            this._deployPositions = null;
+            this._deployInitialPos = null;
+            this._deployRegion = null;
+            this._deployConfirmOpen = false;
+            this._deployCursorX = 0;
+            this._deployCursorY = 0;
+            this._uiDirty = true;
+            // 배치 완료 → postDeploy: 맵 이벤트(대사) 실행 대기 후 배너
+            this._phase = "postDeploy";
+            this._subPhase = "waitEvents";
+            this._postDeployWait = 10; // 이벤트 트리거 대기 프레임
+            console.log("[SRPG] Deployment complete. Waiting for map events...");
+        },
+
+
+        /** 배치 완료 후 맵 이벤트 실행 대기 → "전투 시작!" 배너 */
+        _updatePostDeploy() {
+            // 이벤트 트리거 대기 (autorun 이벤트가 시작할 시간 확보)
+            if (this._postDeployWait > 0) {
+                this._postDeployWait--;
+                return;
+            }
+            // 맵 인터프리터가 실행 중이면 대기 (대사/이벤트 완료까지)
+            if ($gameMap && $gameMap._interpreter && $gameMap._interpreter.isRunning()) {
+                return;
+            }
+            // 이벤트 완료 → "전투 시작!" + 목표 배너 표시 (새 UI 시스템)
+            console.log("[SRPG] Map events done. Showing battle start banner.");
+            const obj = (this._battleModeParams && this._battleModeParams.objective) || "";
+            const defCond = (this._battleModeParams && this._battleModeParams.defeatCondition) || "";
+            const sm = this;
+            this._phase = "banner";
+            this._subPhase = "newBattleBanner";
+            SrpgUI.showBattleBanner("전투 시작!", obj, defCond, function() {
+                console.log("[SRPG] Battle banner done. Starting turns.");
+                sm._phase = "turnAdvance";
+                sm._subPhase = "none";
+                sm._uiDirty = true;
+            });
         },
 
         endBattle() {
@@ -389,6 +828,7 @@
             this._battleActive = false;
             this._battleMode = "annihilation";
             this._battleModeParams = null;
+            this._pendingBattleConfigId = 0;
             this._phase = "idle";
             this._subPhase = "none";
             this._currentUnit = null;
@@ -664,6 +1104,10 @@
                 }
                 return; // 배너 중에는 다른 입력 차단
             }
+            // 새 UI 배너 활성 중 입력 차단
+            if (SrpgUI.isBattleBannerActive && SrpgUI.isBattleBannerActive()) {
+                return;
+            }
 
             // 입력 딜레이
             if (this._inputDelay > 0) {
@@ -676,7 +1120,7 @@
             // (이중 타이머 감소 방지)
 
             // 승패 체크 — BattleModeChecker로 모드별 판정
-            if (this._phase !== "idle" && this._phase !== "banner" && this._phase !== "battleEnd" && this._phase !== "deployment") {
+            if (this._phase !== "idle" && this._phase !== "banner" && this._phase !== "battleEnd" && this._phase !== "deployment" && this._phase !== "postDeploy") {
                 const result = BattleModeChecker.check(this._battleMode, this);
                 if (result === "defeat") {
                     this._lastBattleResult = "defeat";
@@ -699,10 +1143,12 @@
 
             switch (this._phase) {
                 case "deployment": this._updateDeployment(); break;
+                case "postDeploy": this._updatePostDeploy(); break;
                 case "turnAdvance": this._updateTurnAdvance(); break;
                 case "playerTurn": this._updatePlayerTurn(); break;
                 case "enemyTurn": this._updateEnemyTurn(); break;
                 case "combat": this._updateCombat(); break;
+                case "banner": break; // 새 UI 배너 활성 중 — 콜백 대기
                 case "battleEnd": break;
             }
 
@@ -737,19 +1183,38 @@
         _onBannerDone() {
             this._uiDirty = true; // 배너 종료 시 강제 UI 갱신
             if (this._subPhase === "startBanner") {
-                // 전투 목표 배너 표시 (있으면)
+                // 전투 목표 배너 표시 (있으면) — 새 UI 시스템으로 대체
+                const objective = this._battleModeParams && this._battleModeParams.objective;
+                if (objective) {
+                    const sm2 = this;
+                    this._phase = "banner";
+                    this._subPhase = "newBattleBanner";
+                    const defCond2 = (this._battleModeParams && this._battleModeParams.defeatCondition) || "";
+                    SrpgUI.showBattleBanner("전투 시작!", objective, defCond2, function() {
+                        sm2._phase = "turnAdvance";
+                        sm2._subPhase = "none";
+                        sm2._uiDirty = true;
+                    });
+                    return;
+                }
+                // 목표 없으면 바로 턴 진행
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
+            } else if (this._subPhase === "objectiveBanner") {
+                // 목표 배너 종료 → 턴 진행
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
+            } else if (this._subPhase === "postDeployBanner") {
+                // 배치 후 "전투 시작!" 배너 종료 → 목표 배너 or 턴 진행
                 const objective = this._battleModeParams && this._battleModeParams.objective;
                 if (objective) {
                     this._subPhase = "objectiveBanner";
                     this._bannerText = objective;
-                    this._bannerTimer = 120; // 2초
+                    this._bannerTimer = 120;
                     return;
                 }
-                // 목표 없으면 바로 배치/전투
-                this._enterDeployOrBattle();
-            } else if (this._subPhase === "objectiveBanner") {
-                // 목표 배너 종료 → 배치/전투 진입
-                this._enterDeployOrBattle();
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
             } else if (this._subPhase === "victory" || this._subPhase === "defeat") {
                 this._phase = "battleEnd";
                 this.endBattle();
@@ -767,7 +1232,7 @@
                 } else if (this._currentUnit) {
                     this._phase = "enemyTurn";
                     this._subPhase = "thinking";
-                    this._enemyThinkTimer = 30;
+                    this._enemyThinkTimer = 10;
                 }
             }
         },
@@ -895,6 +1360,14 @@
                 this._atkRange = [];
                 this._inputDelay = 15;
                 this._uiDirty = true;
+                // ── 아군 턴 시작 시 첫 아군 유닛 위치로 카메라 이동 ──
+                if (roundUnits.length > 0) {
+                    const firstAlly = roundUnits[0];
+                    $gamePlayer.locate(firstAlly.x, firstAlly.y);
+                    $gamePlayer.center(firstAlly.x, firstAlly.y);
+                    this._browseCursorX = firstAlly.x;
+                    this._browseCursorY = firstAlly.y;
+                }
             } else {
                 this._enemyPhaseIndex = 0;
                 this._startNextEnemyInPhase();
@@ -951,7 +1424,7 @@
                     $gamePlayer.center(u.x, u.y);
                     this._phase = "enemyTurn";
                     this._subPhase = "thinking";
-                    this._enemyThinkTimer = 30;
+                    this._enemyThinkTimer = 10;
                     return;
                 }
             }
@@ -1139,8 +1612,11 @@
         // ─── 브라우즈: 유닛에 커서를 설정하고 범위 표시 ───
         // ─── 브라우즈: 마우스 화면 가장자리 스크롤 ───
         _browseEdgeScroll() {
-            const edgeMargin = 30;  // 가장자리 감지 영역 (px)
-            const scrollSpeed = 0.15; // 스크롤 속도 (타일/프레임)
+            const edgeMargin = 50;  // 가장자리 감지 영역 (px) — 넓은 반투명 테두리
+            const speedTable = [0, 0.05, 0.08, 0.12, 0.15, 0.20, 0.28];
+            const speedIdx = (typeof ConfigManager !== "undefined" && ConfigManager.srpgScrollSpeed != null)
+                ? ConfigManager.srpgScrollSpeed : 4;
+            const scrollSpeed = speedTable[speedIdx] || 0.15;
             const mx = TouchInput.x, my = TouchInput.y;
             // 마우스가 화면 밖이거나 (0,0)이면 스킵
             if ((mx <= 0 && my <= 0) || mx < 0 || my < 0) return;
@@ -1151,6 +1627,13 @@
             else if (mx > Graphics.width - edgeMargin) sdx = scrollSpeed;
             if (my < edgeMargin) sdy = -scrollSpeed;
             else if (my > Graphics.height - edgeMargin) sdy = scrollSpeed;
+
+            // UI 레이어에 스크롤 존 상태 전달
+            if (typeof SrpgUI !== "undefined") {
+                SrpgUI._scrollEdgeDirs = { left: mx < edgeMargin, right: mx > Graphics.width - edgeMargin,
+                    up: my < edgeMargin, down: my > Graphics.height - edgeMargin };
+                SrpgUI._scrollEdgeMargin = edgeMargin;
+            }
 
             if (sdx !== 0 || sdy !== 0) {
                 // 맵 범위 제한 (scrollDown/scrollRight 등 사용)
@@ -1427,7 +1910,10 @@
                 }
             }
 
-            // 경로 이동 완료 → 행동 메뉴
+            // 경로 이동 완료 → 장판 효과 체크 + 행동 메뉴
+            if (typeof SrpgField !== "undefined") {
+                SrpgField.checkUnitFieldStatus(unit);
+            }
             $gamePlayer.locate(unit.x, unit.y);
             this._openActionMenu();
         },
@@ -2952,35 +3438,26 @@
         },
 
         _handleCombatPreview() {
-            // ─── 버튼 영역 (UI 그리기에서 캐시됨) ───
-            const ba = this._pvBtnArea;
+            // ─── 타일 재클릭 / 우클릭 방식 ───
+            const tw = $gameMap.tileWidth(), th = $gameMap.tileHeight();
+            const ox = $gameMap.displayX() * tw, oy = $gameMap.displayY() * th;
             const mx = TouchInput.x, my = TouchInput.y;
-            let hoverConfirm = false, hoverCancel = false;
+            const hoverTileX = Math.floor((mx + ox) / tw);
+            const hoverTileY = Math.floor((my + oy) / th);
+            const tgtX = this._targetTileX, tgtY = this._targetTileY;
 
-            if (ba) {
-                hoverConfirm = (mx >= ba.confirmX && mx <= ba.confirmX + ba.btnW && my >= ba.btnY && my <= ba.btnY + ba.btnH);
-                hoverCancel = (mx >= ba.cancelX && mx <= ba.cancelX + ba.btnW && my >= ba.btnY && my <= ba.btnY + ba.btnH);
-            }
-
-            // 호버 상태 변경 시 UI 갱신
-            if (hoverConfirm !== this._pvHoverConfirm || hoverCancel !== this._pvHoverCancel) {
-                this._pvHoverConfirm = hoverConfirm;
-                this._pvHoverCancel = hoverCancel;
-                this._uiDirty = true;
-            }
+            // 마우스 위치를 UI에 전달 (툴팁용)
+            this._pvMouseX = mx;
+            this._pvMouseY = my;
 
             // ─── 클릭/터치 ───
             if (TouchInput.isTriggered()) {
-                if (hoverConfirm) {
+                // 대상 타일을 다시 클릭 → 공격 실행
+                if (hoverTileX === tgtX && hoverTileY === tgtY) {
                     this._executeCombat();
                     return;
                 }
-                if (hoverCancel) {
-                    this._subPhase = "selectTarget";
-                    this._inputDelay = 8;
-                    return;
-                }
-                // 버튼 외부 클릭 → 취소
+                // 다른 타일 클릭 → 취소 (selectTarget으로 복귀)
                 this._subPhase = "selectTarget";
                 this._inputDelay = 8;
                 return;
@@ -3041,7 +3518,56 @@
             const hitTarget = result.actualTarget || def;
 
             if (result.missed) {
-                // 회피! — "MISS" 팝업 표시
+                // ─── 투사체가 있는 원거리 공격의 Miss → 빗나감 연출 ───
+                if (projMeta && result.isRanged) {
+                    this._phase = "combat";
+                    this._subPhase = "projectile";
+                    this._combatAnimTimer = 999;
+                    this._projTimeout = 0;
+
+                    // 타겟 주변 1~2타일 오프셋 (빗나간 착탄지)
+                    const offsets = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
+                                     {dx:1,dy:1},{dx:-1,dy:-1},{dx:1,dy:-1},{dx:-1,dy:1},
+                                     {dx:2,dy:0},{dx:0,dy:2},{dx:-2,dy:0},{dx:0,dy:-2}];
+                    const pick = offsets[Math.floor(Math.random() * offsets.length)];
+                    const missX = def.x + pick.dx;
+                    const missY = def.y + pick.dy;
+                    const missTgt = { x: missX, y: missY, event: { screenX: () => {
+                        const tw2 = $gameMap.tileWidth();
+                        return Math.round((missX + 0.5) * tw2 - $gameMap.displayX() * tw2);
+                    }, screenY: () => {
+                        const th2 = $gameMap.tileHeight();
+                        return Math.round((missY + 0.5) * th2 - $gameMap.displayY() * th2);
+                    }}};
+
+                    const onMissImpact = () => {
+                        this._addPopup(def.x, def.y, "MISS!", "#88aaff");
+                        try { AudioManager.playSe({name: "Evasion1", volume: 80, pitch: 110, pan: 0}); } catch(e) {}
+                        // 빗나간 착탄 이펙트 (축소 + 작게)
+                        if (projMeta.impactAnimId > 0) {
+                            const _tw = $gameMap ? $gameMap.tileWidth() : 48;
+                            SrpgAnimScale.setScale(_tw * 0.8);
+                            const missEvt = this.unitAt(missX, missY);
+                            if (missEvt && missEvt.event) {
+                                $gameTemp.requestAnimation([missEvt.event], projMeta.impactAnimId);
+                            }
+                        }
+                        this._combatAnimTimer = 35;
+                        this._subPhase = "animating";
+                    };
+
+                    if (projMeta.type === "projectile") {
+                        SrpgProjectile.fireProjectile(atk, missTgt, projMeta, onMissImpact);
+                    } else if (projMeta.type === "hitray") {
+                        SrpgProjectile.fireHitray(atk, missTgt, projMeta, onMissImpact);
+                    } else if (projMeta.type === "artillery") {
+                        SrpgProjectile.fireArtillery(atk, missTgt, projMeta, onMissImpact);
+                    }
+                    try { AudioManager.playSe({name: "Bow1", volume: 80, pitch: 100, pan: 0}); } catch(e) {}
+                    return;
+                }
+
+                // ─── 근접/투사체 없는 Miss → 기존 즉시 팝업 ───
                 this._addPopup(def.x, def.y, "MISS!", "#88aaff");
                 try {
                     if (AudioManager && AudioManager.playSe) {
@@ -3691,6 +4217,14 @@
                 this._moveRange = [];
                 this._atkRange = [];
                 this._inputDelay = 10;
+                // ── 남은 아군 중 첫 유닛으로 카메라 이동 ──
+                if (remaining.length > 0) {
+                    const nextAlly = remaining[0];
+                    $gamePlayer.locate(nextAlly.x, nextAlly.y);
+                    $gamePlayer.center(nextAlly.x, nextAlly.y);
+                    this._browseCursorX = nextAlly.x;
+                    this._browseCursorY = nextAlly.y;
+                }
             } else if (this._phaseRounds &&
                        this._currentRoundIndex < this._phaseRounds.length - 1) {
                 // 현재 라운드 완료, 다음 라운드 존재 → 다음 라운드 시작
@@ -3758,7 +4292,7 @@
                     this._enemyShowTimer--;
                     if (this._enemyShowTimer <= 0) {
                         this._subPhase = "enemyShowRange";
-                        this._enemyShowTimer = 25;
+                        this._enemyShowTimer = 10;
                         this._uiDirty = true;
                     }
                     break;
@@ -3783,7 +4317,7 @@
                             }
                         }
                         this._subPhase = "enemyShowAction";
-                        this._enemyActionTimer = 30;
+                        this._enemyActionTimer = 12;
                         this._uiDirty = true;
                     }
                     break;
@@ -3995,7 +4529,7 @@
                 this._enemyActionMsg = "대기";
             }
 
-            this._enemyShowTimer = 40;
+            this._enemyShowTimer = 15;
             this._subPhase = "showDecision";
             this._uiDirty = true;
         },
@@ -4018,7 +4552,7 @@
                     // 이동 없이 바로 행동
                     this._currentUnit.hasMoved = true;
                     this._subPhase = "enemyShowAction";
-                    this._enemyActionTimer = 30;
+                    this._enemyActionTimer = 12;
                     this._uiDirty = true;
                 }
             }
@@ -4130,7 +4664,7 @@
                 hitTarget.refreshTint();
                 unit.refreshTint();
 
-                this._combatAnimTimer = 60;
+                this._combatAnimTimer = 25;
                 this._subPhase = "enemyActing";
                 this._uiDirty = true;
                 this._turnPredictDirty = true;

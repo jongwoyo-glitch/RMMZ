@@ -1,0 +1,107 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "시작마을",
+    "region": "왕국 남부 교역로",
+    "type": "town",
+    "bgImage": "town_belford",
+    "bgVariants": {
+      "night": "town_belford_night"
+    },
+    "bgm": {
+      "name": "Town1",
+      "volume": 80,
+      "pitch": 100,
+      "pan": 0
+    },
+    "hotspots": [
+      {
+        "id": "guild",
+        "name": "길드",
+        "icon": "hs_guild",
+        "x": 55,
+        "y": 20,
+        "facilityId": 1,
+        "targetMapId": 0
+      },
+      {
+        "id": "tavern",
+        "name": "주점",
+        "icon": "hs_tavern",
+        "x": 22,
+        "y": 38,
+        "facilityId": 2,
+        "targetMapId": 0
+      },
+      {
+        "id": "market",
+        "name": "시장",
+        "icon": "hs_market",
+        "x": 45,
+        "y": 58,
+        "facilityId": 3,
+        "targetMapId": 0
+      },
+      {
+        "id": "smithy",
+        "name": "대장간",
+        "icon": "hs_smithy",
+        "x": 72,
+        "y": 50,
+        "facilityId": 4,
+        "targetMapId": 0
+      },
+      {
+        "id": "inn",
+        "name": "숙소",
+        "icon": "hs_inn",
+        "x": 12,
+        "y": 75,
+        "facilityId": 5,
+        "targetMapId": 0
+      },
+      {
+        "id": "exit",
+        "name": "외출",
+        "icon": "hs_exit",
+        "x": 62,
+        "y": 82,
+        "target": "worldmap",
+        "targetMapId": 3
+      }
+    ],
+    "worldMapX": 5,
+    "worldMapY": 4,
+    "mapId": 2
+  },
+  {
+    "id": 2,
+    "name": "2차 마을",
+    "region": "",
+    "type": "town",
+    "bgImage": "",
+    "bgVariants": {},
+    "bgm": {
+      "name": "Town2",
+      "volume": 80,
+      "pitch": 100,
+      "pan": 0
+    },
+    "hotspots": [
+      {
+        "id": "exit",
+        "name": "외출",
+        "icon": "hs_exit",
+        "x": 62,
+        "y": 82,
+        "target": "worldmap",
+        "facilityId": 0,
+        "targetMapId": 3
+      }
+    ],
+    "worldMapX": 14,
+    "worldMapY": 12,
+    "mapId": 4
+  }
+]

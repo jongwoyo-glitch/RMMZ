@@ -122,9 +122,24 @@
                 }
                 this._toSlots = [];
                 this._toPortraitCache = {};
+
+            // 스크롤 존 오버레이 초기화 (화면 고정, Scene_Map 자식)
+            // — stage(Scene_Map)는 init 시점에 아직 없으므로 _pendingScrollZoneInit 플래그로 지연
+            this._pendingScrollZoneInit = true;
+            this._pendingBannerInit = true;
                 // 메뉴 텍스트 정리
                 if (this._menuTextWrap && !this._menuTextWrap._destroyed) {
                     this._menuTextWrap.removeChildren();
+                }
+                // 기존 팝업 스프라이트 정리 (scene 복귀 시 고아 방지)
+                if (SM._damagePopups) {
+                    for (const p of SM._damagePopups) {
+                        if (p.sprite) {
+                            if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                            if (!p.sprite._destroyed) p.sprite.destroy();
+                        }
+                    }
+                    SM._damagePopups.length = 0;
                 }
                 console.log("[SRPG] SrpgUI re-initializing (scene recreated)");
             }
@@ -275,6 +290,18 @@
             this._updateEnemyVisionOverlay();
             // 배치 페이즈 오버레이
             this._updateDeploymentOverlay();
+            // 스크롤 존 오버레이 (지연 초기화 + 매 프레임 갱신)
+            if (this._pendingScrollZoneInit) {
+                const stage = SceneManager._scene;
+                if (stage) {
+                    this._initScrollZone(stage);
+                    this._initBattleBanner(stage);
+                    this._pendingScrollZoneInit = false;
+                    this._pendingBannerInit = false;
+                }
+            }
+            this._updateScrollZone();
+            this._updateBattleBanner();
         },
 
         clearAll() {
@@ -287,6 +314,15 @@
             if (this._hudGfx) this._hudGfx.clear();
             if (this._miniArrowGfx) this._miniArrowGfx.clear();
             if (this._toGfx) this._toGfx.clear();
+            // 스크롤 존 + 배너 정리
+            if (this._scrollZoneGfx) this._scrollZoneGfx.clear();
+            this._scrollEdgeDirs = null;
+            if (this._prevCursorStyle) { document.body.style.cursor = ""; this._prevCursorStyle = null; }
+            if (this._battleBanner && this._battleBanner.container) {
+                if (this._battleBanner.container.parent) this._battleBanner.container.parent.removeChild(this._battleBanner.container);
+                if (!this._battleBanner.container._destroyed) this._battleBanner.container.destroy({ children: true });
+                this._battleBanner = null;
+            }
             // 턴오더 슬롯 제거
             for (const s of this._toSlots) {
                 if (s.container && s.container.parent) s.container.parent.removeChild(s.container);
@@ -299,6 +335,16 @@
                 t.destroy();
             }
             this._textPool = {};
+            // 팝업 스프라이트 전체 제거
+            if (SM._damagePopups) {
+                for (const p of SM._damagePopups) {
+                    if (p.sprite) {
+                        if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                        if (!p.sprite._destroyed) p.sprite.destroy();
+                    }
+                }
+                SM._damagePopups.length = 0;
+            }
             // 메뉴 텍스트 제거
             if (this._menuTextWrap) this._menuTextWrap.removeChildren();
             this._initialized = false;
@@ -829,10 +875,15 @@
 
         // ─── 적군 시야 오버레이 (은신 유닛 턴에 표시) ───
 
-        // ─── 배치 페이즈 오버레이 ───
+        // ─── 배치 페이즈 오버레이 (v2 — 유닛 리스트 + 홀딩/배치 시각) ───
         _deployOverlayWrap: null,
         _deployOverlaySprites: {},
         _deploySelectedSprite: null,
+        _deployPanelContainer: null,
+        _deployPanelItems: [],
+        _deployConfirmContainer: null,
+        _deployHeaderText: null,
+        _deployHintText: null,
 
         _updateDeploymentOverlay() {
             const SM = window.SrpgManager || window.SM;
@@ -843,11 +894,12 @@
 
             const tilemap = this._tilemap;
             if (!tilemap) return;
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
 
-            // 컨테이너 생성
+            // 타일맵 오버레이 컨테이너
             if (!this._deployOverlayWrap) {
                 this._deployOverlayWrap = new PIXI.Container();
-                this._deployOverlayWrap.zIndex = -1; // 액터 스프라이트 아래
+                this._deployOverlayWrap.zIndex = -1;
                 tilemap.addChild(this._deployOverlayWrap);
             }
 
@@ -857,7 +909,7 @@
             if (!deployRegion) return;
 
             const PAD = 1, CUT = 3;
-            // 배치 가능 타일 하이라이트 (팔각형, 기존 그리드 디자인과 통일)
+            // ─── 배치 가능 타일 하이라이트 ───
             const needed = new Set();
             for (const key of deployRegion) {
                 needed.add(key);
@@ -878,7 +930,6 @@
                     this._deployOverlaySprites[key] = g;
                 }
             }
-            // 불필요한 스프라이트 제거
             for (const key in this._deployOverlaySprites) {
                 if (!needed.has(key)) {
                     this._deployOverlayWrap.removeChild(this._deployOverlaySprites[key]);
@@ -887,10 +938,23 @@
                 }
             }
 
-            // 선택된 유닛 강조 (노란색 깜빡임 — alpha만 매 프레임 변경)
-            if (SM._deployUnits && SM._deploySelectedIdx >= 0) {
-                const selUnit = SM._deployUnits[SM._deploySelectedIdx];
-                if (selUnit) {
+            // ─── 배치 커서 위치 하이라이트 ───
+            // placeUnit: 홀딩 유닛 위치에 노란 깜빡임
+            // selectUnit: 커서 대기 위치에 은은한 표시 (다음 배치 위치 프리뷰)
+            const showCursor = SM._deployUnits && SM._deploySelectedIdx >= 0;
+            if (showCursor) {
+                let cursorX = -1, cursorY = -1;
+                if (SM._subPhase === "placeUnit") {
+                    const selUnit = SM._deployUnits[SM._deploySelectedIdx];
+                    if (selUnit && selUnit.event.x >= 0) {
+                        cursorX = selUnit.event.x;
+                        cursorY = selUnit.event.y;
+                    }
+                } else if (SM._subPhase === "selectUnit" && typeof SM._deployCursorX === "number") {
+                    cursorX = SM._deployCursorX;
+                    cursorY = SM._deployCursorY;
+                }
+                if (cursorX >= 0 && cursorY >= 0) {
                     if (!this._deploySelectedSprite) {
                         this._deploySelectedSprite = new PIXI.Graphics();
                         this._deploySelectedSprite.beginFill(0xffdd44, 0.45);
@@ -901,19 +965,357 @@
                         this._deploySelectedSprite.lineStyle(0);
                         this._deployOverlayWrap.addChild(this._deploySelectedSprite);
                     }
-                    // alpha만 변경 (Graphics 재생성 없음)
-                    this._deploySelectedSprite.alpha = 0.5 + Math.sin(Date.now() / 200) * 0.35;
-                    this._deploySelectedSprite.x = selUnit.event.x * tw;
-                    this._deploySelectedSprite.y = selUnit.event.y * th;
+                    const isPlacing = SM._subPhase === "placeUnit";
+                    this._deploySelectedSprite.alpha = isPlacing
+                        ? 0.5 + Math.sin(Date.now() / 200) * 0.35   // 배치 중: 강한 깜빡임
+                        : 0.25 + Math.sin(Date.now() / 400) * 0.15; // 대기 중: 은은한 표시
+                    this._deploySelectedSprite.x = cursorX * tw;
+                    this._deploySelectedSprite.y = cursorY * th;
                     this._deploySelectedSprite.visible = true;
+                } else if (this._deploySelectedSprite) {
+                    this._deploySelectedSprite.visible = false;
                 }
+            } else if (this._deploySelectedSprite) {
+                this._deploySelectedSprite.visible = false;
             }
 
-            // 배치 안내 텍스트 (화면 하단)
-            // TODO: Phase 10 에서 별도 HUD 창으로 대체
+            // ─── 스프라이트 시각 효과: 반투명/그레이톤 ───
+            this._updateDeploySpriteTints(SM);
+
+            // ─── 우측 유닛 리스트 패널 (PIXI, 화면 고정) ───
+            this._updateDeployPanel(SM, _rs);
+
+            // ─── 상단 헤더 "배치 페이즈" ───
+            this._updateDeployHeader(_rs);
+
+            // ─── 하단 조작 힌트 ───
+            this._updateDeployHint(SM, _rs);
+
+            // ─── 확인 모달 ───
+            this._updateDeployConfirmModal(SM, _rs);
+        },
+
+        /** 배치 페이즈 스프라이트 반투명/그레이톤 처리 */
+        _updateDeploySpriteTints(SM) {
+            if (!SM._deployUnits || !SM._deployStatus) return;
+            const spriteset = SceneManager._scene._spriteset;
+            if (!spriteset) return;
+            const charSprites = spriteset._characterSprites || [];
+            for (let i = 0; i < SM._deployUnits.length; i++) {
+                const u = SM._deployUnits[i];
+                if (!u || !u.event) continue;
+                const status = SM._deployStatus[i];
+                // 해당 이벤트의 Sprite_Character 찾기
+                for (const cs of charSprites) {
+                    if (cs._character === u.event) {
+                        if (status === "holding") {
+                            // 반투명
+                            cs.alpha = 0.55;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
+                        } else if (status === "placed") {
+                            // 불투명 + 그레이톤 색조
+                            cs.alpha = 1.0;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0x888899;
+                        } else {
+                            // waiting — 맵 밖이므로 보이지 않음
+                            cs.alpha = 1.0;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
+                        }
+                        break;
+                    }
+                }
+            }
+        },
+
+        /** 우측 유닛 리스트 패널 */
+        _updateDeployPanel(SM, _rs) {
+            const pw = Math.round(180 * _rs);
+            const px = Graphics.width - pw - Math.round(10 * _rs);
+            const py = Math.round(60 * _rs);
+            const itemH = Math.round(48 * _rs);
+            const gap = Math.round(4 * _rs);
+            const faceSize = Math.round(36 * _rs);
+            const allies = SM._deployUnits;
+            if (!allies) return;
+
+            // 컨테이너 생성 (화면 고정 — stage에 추가)
+            if (!this._deployPanelContainer) {
+                this._deployPanelContainer = new PIXI.Container();
+                this._deployPanelContainer.zIndex = 9999;
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployPanelContainer);
+            }
+
+            const pc = this._deployPanelContainer;
+            // 매 프레임 재그리기 (항목 수 변동 가능)
+            while (pc.children.length > 0) pc.removeChildAt(0);
+            this._deployPanelItems = [];
+
+            // 패널 배경
+            const bg = new PIXI.Graphics();
+            const totalH = allies.length * (itemH + gap) - gap + Math.round(10 * _rs);
+            bg.beginFill(0x000000, 0.6);
+            bg.drawRoundedRect(px - Math.round(6 * _rs), py - Math.round(6 * _rs),
+                pw + Math.round(12 * _rs), totalH + Math.round(12 * _rs), Math.round(6 * _rs));
+            bg.endFill();
+            pc.addChild(bg);
+
+            for (let i = 0; i < allies.length; i++) {
+                const u = allies[i];
+                const status = SM._deployStatus ? SM._deployStatus[i] : "waiting";
+                const iy = py + i * (itemH + gap);
+                const isSelected = (i === SM._deploySelectedIdx);
+
+                const itemG = new PIXI.Graphics();
+                // 아이템 배경
+                const bgColor = isSelected ? 0x446688 : (status === "placed" ? 0x334433 : 0x222233);
+                const bgAlpha = isSelected ? 0.85 : 0.7;
+                itemG.beginFill(bgColor, bgAlpha);
+                itemG.drawRoundedRect(px, iy, pw, itemH, Math.round(4 * _rs));
+                itemG.endFill();
+                // 선택 테두리
+                if (isSelected) {
+                    itemG.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.9);
+                    itemG.drawRoundedRect(px, iy, pw, itemH, Math.round(4 * _rs));
+                    itemG.lineStyle(0);
+                }
+                pc.addChild(itemG);
+
+                // 페이스 아이콘 (비트맵 로드 — 캐시된 PIXI.Sprite)
+                const faceX = px + Math.round(6 * _rs);
+                const faceY = iy + (itemH - faceSize) / 2;
+                const faceBg = new PIXI.Graphics();
+                faceBg.beginFill(0x111122, 0.8);
+                faceBg.drawRoundedRect(faceX, faceY, faceSize, faceSize, Math.round(3 * _rs));
+                faceBg.endFill();
+                pc.addChild(faceBg);
+
+                // 페이스 초상화 로드 (비동기 대응)
+                {
+                    // 스튜디오 지정 페이스 우선, 없으면 바닐라 플레이스홀더
+                    let faceName = u._faceName || "";
+                    let faceIdx = u._faceIndex || 0;
+                    if (!faceName && u.actorId > 0 && $dataActors[u.actorId]) {
+                        faceName = $dataActors[u.actorId].faceName || "";
+                        faceIdx = $dataActors[u.actorId].faceIndex || 0;
+                    }
+                    if (!faceName) {
+                        // 플레이스홀더: 바닐라 Actor1의 0번 페이스
+                        faceName = "Actor1";
+                        faceIdx = 0;
+                    }
+                    const faceBitmap = ImageManager.loadFace(faceName);
+                    const _drawFace = function() {
+                        const source = faceBitmap._canvas || faceBitmap._image;
+                        if (!source) return;
+                        const fw = 144, fh = 144;
+                        const fcol = faceIdx % 4, frow = Math.floor(faceIdx / 4);
+                        const canvas = document.createElement("canvas");
+                        canvas.width = faceSize; canvas.height = faceSize;
+                        const ctx2 = canvas.getContext("2d");
+                        ctx2.drawImage(source, fcol * fw, frow * fh, fw, fh,
+                            0, 0, faceSize, faceSize);
+                        const faceSprite = new PIXI.Sprite(PIXI.Texture.from(canvas));
+                        faceSprite.x = faceX;
+                        faceSprite.y = faceY;
+                        if (status === "placed") faceSprite.tint = 0x888899;
+                        pc.addChild(faceSprite);
+                    };
+                    if (faceBitmap.isReady()) {
+                        _drawFace();
+                    } else {
+                        faceBitmap.addLoadListener(_drawFace);
+                    }
+                }
+
+                // 이름 텍스트
+                const nameX = faceX + faceSize + Math.round(8 * _rs);
+                const nameStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(13 * _rs),
+                    fontWeight: isSelected ? "bold" : "normal",
+                    fill: status === "placed" ? "#88aa88" : (isSelected ? "#ffdd44" : "#ffffff"),
+                });
+                const nameText = new PIXI.Text(u.name || "???", nameStyle);
+                nameText.x = nameX;
+                nameText.y = iy + Math.round(6 * _rs);
+                pc.addChild(nameText);
+
+                // 상태 표시
+                const statusLabel = status === "placed" ? "배치 완료" : (status === "holding" ? "배치 중..." : "대기");
+                const statusColor = status === "placed" ? "#66aa66" : (status === "holding" ? "#ffdd44" : "#888888");
+                const statusStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(10 * _rs),
+                    fill: statusColor,
+                });
+                const statusText = new PIXI.Text(statusLabel, statusStyle);
+                statusText.x = nameX;
+                statusText.y = iy + Math.round(26 * _rs);
+                pc.addChild(statusText);
+
+                // 배치 완료 체크마크
+                if (status === "placed") {
+                    const checkStyle = new PIXI.TextStyle({
+                        fontFamily: "sans-serif",
+                        fontSize: Math.round(16 * _rs),
+                        fontWeight: "bold",
+                        fill: "#66cc66",
+                    });
+                    const checkText = new PIXI.Text("V", checkStyle);
+                    checkText.x = px + pw - Math.round(20 * _rs);
+                    checkText.y = iy + (itemH - Math.round(16 * _rs)) / 2;
+                    pc.addChild(checkText);
+                }
+
+                this._deployPanelItems.push({ x: px, y: iy, w: pw, h: itemH, idx: i });
+            }
+        },
+
+        /** 상단 "배치 페이즈" 헤더 */
+        _updateDeployHeader(_rs) {
+            if (!this._deployHeaderText) {
+                this._deployHeaderText = new PIXI.Text("", new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(20 * _rs),
+                    fontWeight: "bold",
+                    fill: "#ffdd44",
+                    stroke: "#000000",
+                    strokeThickness: Math.round(3 * _rs),
+                }));
+                this._deployHeaderText.anchor.set(0.5, 0);
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployHeaderText);
+            }
+            this._deployHeaderText.text = "-- 배치 페이즈 --";
+            this._deployHeaderText.x = Graphics.width / 2;
+            this._deployHeaderText.y = Math.round(12 * _rs);
+            this._deployHeaderText.visible = true;
+        },
+
+        /** 하단 조작 힌트 */
+        _updateDeployHint(SM, _rs) {
+            if (!this._deployHintText) {
+                this._deployHintText = new PIXI.Text("", new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(12 * _rs),
+                    fill: "#cccccc",
+                    stroke: "#000000",
+                    strokeThickness: Math.round(2 * _rs),
+                }));
+                this._deployHintText.anchor.set(0.5, 1);
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployHintText);
+            }
+            let hint = "";
+            if (SM._subPhase === "selectUnit") {
+                const allPlaced = SM._deployAllPlaced ? SM._deployAllPlaced() : false;
+                hint = allPlaced
+                    ? "[Shift/ESC] 배치 확정  |  유닛 클릭으로 재배치"
+                    : "[Up/Down] 유닛 선택  |  [OK] 배치 시작  |  맵 클릭으로 바로 배치";
+            } else if (SM._subPhase === "placeUnit") {
+                hint = "[방향키] 위치 이동  |  [OK/클릭] 배치 확정  |  [ESC] 취소";
+            }
+            this._deployHintText.text = hint;
+            this._deployHintText.x = Graphics.width / 2;
+            this._deployHintText.y = Graphics.height - Math.round(12 * _rs);
+            this._deployHintText.visible = true;
+        },
+
+        /** 확인 모달 렌더링 */
+        _updateDeployConfirmModal(SM, _rs) {
+            if (!SM._deployConfirmOpen) {
+                if (this._deployConfirmContainer) {
+                    this._deployConfirmContainer.visible = false;
+                }
+                return;
+            }
+
+            if (!this._deployConfirmContainer) {
+                this._deployConfirmContainer = new PIXI.Container();
+                this._deployConfirmContainer.zIndex = 10000;
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployConfirmContainer);
+            }
+
+            const mc = this._deployConfirmContainer;
+            while (mc.children.length > 0) mc.removeChildAt(0);
+            mc.visible = true;
+
+            const mw = Math.round(280 * _rs);
+            const mh = Math.round(130 * _rs);
+            const mx = (Graphics.width - mw) / 2;
+            const my = (Graphics.height - mh) / 2;
+
+            // 반투명 배경 오버레이
+            const dimBg = new PIXI.Graphics();
+            dimBg.beginFill(0x000000, 0.4);
+            dimBg.drawRect(0, 0, Graphics.width, Graphics.height);
+            dimBg.endFill();
+            mc.addChild(dimBg);
+
+            // 모달 박스
+            const box = new PIXI.Graphics();
+            box.beginFill(0x1a1a2e, 0.95);
+            box.drawRoundedRect(mx, my, mw, mh, Math.round(8 * _rs));
+            box.endFill();
+            box.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.7);
+            box.drawRoundedRect(mx, my, mw, mh, Math.round(8 * _rs));
+            box.lineStyle(0);
+            mc.addChild(box);
+
+            // 제목
+            const titleStyle = new PIXI.TextStyle({
+                fontFamily: "sans-serif",
+                fontSize: Math.round(16 * _rs),
+                fontWeight: "bold",
+                fill: "#ffffff",
+            });
+            const title = new PIXI.Text("배치를 확정하시겠습니까?", titleStyle);
+            title.anchor.set(0.5, 0);
+            title.x = mx + mw / 2;
+            title.y = my + Math.round(18 * _rs);
+            mc.addChild(title);
+
+            // 버튼
+            const btnW = Math.round(100 * _rs);
+            const btnH = Math.round(32 * _rs);
+            const btnY = my + mh - Math.round(50 * _rs);
+            const gapB = Math.round(20 * _rs);
+            const bx0 = mx + (mw - btnW * 2 - gapB) / 2;
+            const bx1 = bx0 + btnW + gapB;
+            const confirmIdx = SM._deployConfirmIdx || 0;
+
+            const labels = ["확정", "다시 배치"];
+            const xs = [bx0, bx1];
+            for (let b = 0; b < 2; b++) {
+                const isSel = (b === confirmIdx);
+                const btnG = new PIXI.Graphics();
+                btnG.beginFill(isSel ? 0x446688 : 0x222233, 0.9);
+                btnG.drawRoundedRect(xs[b], btnY, btnW, btnH, Math.round(4 * _rs));
+                btnG.endFill();
+                if (isSel) {
+                    btnG.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.9);
+                    btnG.drawRoundedRect(xs[b], btnY, btnW, btnH, Math.round(4 * _rs));
+                    btnG.lineStyle(0);
+                }
+                mc.addChild(btnG);
+                const btnStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(13 * _rs),
+                    fontWeight: isSel ? "bold" : "normal",
+                    fill: isSel ? "#ffdd44" : "#aaaaaa",
+                });
+                const btnText = new PIXI.Text(labels[b], btnStyle);
+                btnText.anchor.set(0.5, 0.5);
+                btnText.x = xs[b] + btnW / 2;
+                btnText.y = btnY + btnH / 2;
+                mc.addChild(btnText);
+            }
         },
 
         _clearDeploymentOverlay() {
+            // 타일맵 오버레이
             if (this._deployOverlayWrap) {
                 for (const key in this._deployOverlaySprites) {
                     this._deployOverlaySprites[key].destroy();
@@ -928,6 +1330,46 @@
                 }
                 this._deployOverlayWrap.destroy();
                 this._deployOverlayWrap = null;
+            }
+            // 패널 컨테이너
+            if (this._deployPanelContainer) {
+                if (this._deployPanelContainer.parent) {
+                    this._deployPanelContainer.parent.removeChild(this._deployPanelContainer);
+                }
+                this._deployPanelContainer.destroy({ children: true });
+                this._deployPanelContainer = null;
+            }
+            this._deployPanelItems = [];
+            // 헤더 텍스트
+            if (this._deployHeaderText) {
+                if (this._deployHeaderText.parent) this._deployHeaderText.parent.removeChild(this._deployHeaderText);
+                this._deployHeaderText.destroy();
+                this._deployHeaderText = null;
+            }
+            // 힌트 텍스트
+            if (this._deployHintText) {
+                if (this._deployHintText.parent) this._deployHintText.parent.removeChild(this._deployHintText);
+                this._deployHintText.destroy();
+                this._deployHintText = null;
+            }
+            // 확인 모달
+            if (this._deployConfirmContainer) {
+                if (this._deployConfirmContainer.parent) this._deployConfirmContainer.parent.removeChild(this._deployConfirmContainer);
+                this._deployConfirmContainer.destroy({ children: true });
+                this._deployConfirmContainer = null;
+            }
+            // 스프라이트 틴트 복원
+            this._restoreDeploySpriteTints();
+        },
+
+        /** 배치 완료 후 스프라이트 틴트/알파 원래대로 복원 */
+        _restoreDeploySpriteTints() {
+            const spriteset = SceneManager._scene ? SceneManager._scene._spriteset : null;
+            if (!spriteset) return;
+            const charSprites = spriteset._characterSprites || [];
+            for (const cs of charSprites) {
+                cs.alpha = 1.0;
+                if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
             }
         },
 
@@ -1654,22 +2096,25 @@
             }
 
             if (isArtillery) {
-                // ── 곡선 경로 (포물선) ──
+                // ── 곡선 경로 (반원) ──
                 const lineColor = isBlocked ? 0xff4444 : 0x44ff66;
                 const lineAlpha = isBlocked ? 0.5 : 0.6;
-                // 45도 기반 동적 arcHeight (수평 픽셀거리 * 0.5)
-                const hDist = Math.sqrt((dx - ax) ** 2 + (dy - ay) ** 2);
-                const arcHeight = projMeta.arcHeight > 0 ? projMeta.arcHeight : hDist * 0.5;
+                // 반원: 총 거리 기반 arcHeight
+                const totalDist = Math.sqrt((dx - ax) ** 2 + (dy - ay) ** 2) || 1;
+                const arcHeight = projMeta.arcHeight > 0 ? projMeta.arcHeight : totalDist * 0.5;
+                const pathAngle = Math.atan2(dy - ay, dx - ax);
+                const TILT = 0.35;
                 const steps = 24;
 
                 g.lineStyle(2.5, lineColor, lineAlpha);
                 for (let i = 0; i <= steps; i++) {
                     const t = i / steps;
-                    const px = ax + (dx - ax) * t;
-                    // 포물선: y = baseY - 4*h*t*(1-t)
-                    const baseY = ay + (dy - ay) * t;
-                    const arcY = -4 * (arcHeight * 0.3) * t * (1 - t); // 미리보기는 축소 스케일
-                    const py = baseY + arcY;
+                    const lx = ax + (dx - ax) * t;
+                    const ly = ay + (dy - ay) * t;
+                    // 반원 오프셋 (미리보기는 0.3 축소)
+                    const arcH = (arcHeight * 0.3) * Math.sin(Math.PI * t);
+                    const px = lx + arcH * Math.sin(pathAngle) * TILT;
+                    const py = ly - arcH;
                     if (i === 0) g.moveTo(px, py);
                     else g.lineTo(px, py);
                 }
@@ -1742,8 +2187,7 @@
         //  전투 프리뷰 — 텍스트 포함
         // =================================================================
         _drawCombatPreview(g) {
-            // 전투 프리뷰 모달 비활성화 — HP/MP 바 위에 직접 표시
-            // 확인/취소 버튼만 대상 유닛 근처에 작게 표시
+            // 전투 프리뷰 — 투사체 경로 + 커서 근처 툴팁
             if (!SM._combatPrediction) return;
             const def = SM._selectedTarget;
             if (!def || !def.event) return;
@@ -1751,42 +2195,32 @@
             // ── 투사체 예상 경로 오버레이 ──
             this._drawProjectilePathPreview(g);
 
-            const tw = $gameMap.tileWidth();
-            const th = $gameMap.tileHeight();
-            // screenX/Y는 스크롤 보정된 화면좌표이므로, 컨테이너 오프셋 적용 후
-            // 맵픽셀 좌표로 변환 (scrollOffset을 다시 더함)
-            const _scrollOX = $gameMap.displayX() * tw;
-            const _scrollOY = $gameMap.displayY() * th;
-            const sx = def.event.screenX() + _scrollOX;
-            const sy = def.event.screenY() - th - 30 + _scrollOY; // 바 위쪽
+            // ── 커서 근처 조작 툴팁 ──
+            const mx = SM._pvMouseX || TouchInput.x;
+            const my = SM._pvMouseY || TouchInput.y;
+            const _scrollOX = $gameMap.displayX() * $gameMap.tileWidth();
+            const _scrollOY = $gameMap.displayY() * $gameMap.tileHeight();
+            // 마우스 화면좌표를 맵 컨테이너 좌표로 변환
+            const tipX = mx + _scrollOX + 16;
+            const tipY = my + _scrollOY - 8;
 
             const rs = RS();
-            const btnW = Math.round(50 * rs), btnH = Math.round(22 * rs);
-            const confirmX = sx - btnW - 4;
-            const cancelX = sx + 4;
-            const btnY = sy - btnH - 4;
+            const fontSize = Math.round(11 * rs);
+            const tipStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif", fontSize: fontSize,
+                fill: "#ffffff", dropShadow: true, dropShadowColor: "#000000",
+                dropShadowBlur: 2, dropShadowDistance: 1
+            });
+            const tipText = new PIXI.Text("클릭: 공격  |  우클릭: 취소", tipStyle);
+            const pw = tipText.width + 12, ph = tipText.height + 6;
 
-            // 확인 버튼
-            g.beginFill(SM._pvHoverConfirm ? 0x44aa44 : 0x336633, 0.88);
-            g.lineStyle(1, 0x55cc55, 0.6);
-            g.drawRoundedRect(confirmX, btnY, btnW, btnH, 3); g.endFill();
-            g.lineStyle(0);
-            // 취소 버튼
-            g.beginFill(SM._pvHoverCancel ? 0xaa4444 : 0x663333, 0.88);
-            g.lineStyle(1, 0xcc5555, 0.6);
-            g.drawRoundedRect(cancelX, btnY, btnW, btnH, 3); g.endFill();
-            g.lineStyle(0);
+            // 배경
+            g.beginFill(0x000000, 0.55);
+            g.drawRoundedRect(tipX, tipY, pw, ph, 4);
+            g.endFill();
 
-            // 버튼 텍스트
-            const cTxt = new PIXI.Text("확인", new PIXI.TextStyle(_TS.pvBtn));
-            cTxt.x = confirmX + (btnW - 26) / 2; cTxt.y = btnY + 3;
-            this._menuTextWrap.addChild(cTxt);
-            const xTxt = new PIXI.Text("취소", new PIXI.TextStyle(_TS.pvBtn));
-            xTxt.x = cancelX + (btnW - 26) / 2; xTxt.y = btnY + 3;
-            this._menuTextWrap.addChild(xTxt);
-
-            // 버튼 영역을 SM에 캐시 (입력 처리용)
-            SM._pvBtnArea = { confirmX, cancelX, btnY, btnW, btnH };
+            tipText.x = tipX + 6; tipText.y = tipY + 3;
+            this._menuTextWrap.addChild(tipText);
         },
 
         // ─── 방향 전환 화살표 ───
@@ -1871,37 +2305,54 @@
         _updatePopups() {
             if (!SM._damagePopups) return;
             const tw = $gameMap.tileWidth(), th = $gameMap.tileHeight();
+            const MAX_LIFE = 300; // 안전장치: 최대 5초 (300프레임)
             for (let i = SM._damagePopups.length - 1; i >= 0; i--) {
                 const p = SM._damagePopups[i];
+                // 생성 시간 기록 (최초 1회)
+                if (p._born === undefined) p._born = 0;
+                p._born++;
                 // 스프라이트 미생성 시 새로 만듦
-                if (!p.sprite && this._tilemap) {
-                    const isShout = p.isShout;
-                    const rs = RS();
-                    const fontSize = Math.round((isShout ? 15 : 20) * rs);
-                    const fillColor = typeof p.color === "string" ? p.color : "#ffffff";
-                    const style = new PIXI.TextStyle({
-                        fontFamily: "sans-serif",
-                        fontSize,
-                        fontWeight: "bold",
-                        fill: fillColor,
-                        stroke: isShout ? "#222244" : "#000000",
-                        strokeThickness: Math.round((isShout ? 4 : 3) * rs),
-                        ...(isShout ? { dropShadow: false } : {}),
-                    });
-                    p.sprite = new PIXI.Text(String(p.text), style);
-                    p.sprite.anchor.set(0.5, 1);
-                    p.sprite.x = p.x * tw + tw / 2;
-                    // 외침은 유닛 머리 위(타일 상단보다 위), 데미지는 타일 중앙
-                    p.sprite.y = isShout ? (p.y * th - th * 0.3) : (p.y * th);
-                    p.sprite.z = 10;
-                    this._overlayWrap.addChild(p.sprite);
+                if (!p.sprite && this._tilemap && this._overlayWrap) {
+                    try {
+                        const isShout = p.isShout;
+                        const rs = RS();
+                        const fontSize = Math.round((isShout ? 15 : 20) * rs);
+                        const fillColor = typeof p.color === "string" ? p.color : "#ffffff";
+                        const style = new PIXI.TextStyle({
+                            fontFamily: "sans-serif",
+                            fontSize,
+                            fontWeight: "bold",
+                            fill: fillColor,
+                            stroke: isShout ? "#222244" : "#000000",
+                            strokeThickness: Math.round((isShout ? 4 : 3) * rs),
+                            ...(isShout ? { dropShadow: false } : {}),
+                        });
+                        p.sprite = new PIXI.Text(String(p.text), style);
+                        p.sprite.anchor.set(0.5, 1);
+                        p.sprite.x = p.x * tw + tw / 2;
+                        p.sprite.y = isShout ? (p.y * th - th * 0.3) : (p.y * th);
+                        p.sprite.z = 10;
+                        this._overlayWrap.addChild(p.sprite);
+                    } catch (e) {
+                        console.warn("[SRPG] Popup sprite creation failed:", e);
+                        SM._damagePopups.splice(i, 1);
+                        continue;
+                    }
                 }
                 p.timer--;
-                if (p.timer <= 0) {
-                    if (p.sprite && p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
-                    if (p.sprite) p.sprite.destroy();
+                // 안전장치: 최대 수명 초과 OR 타이머 이상값 → 강제 제거
+                if (p.timer <= 0 || p._born > MAX_LIFE || isNaN(p.timer)) {
+                    if (p.sprite) {
+                        if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                        if (!p.sprite._destroyed) p.sprite.destroy();
+                    }
                     SM._damagePopups.splice(i, 1);
                 } else if (p.sprite) {
+                    // 스프라이트가 고아(orphaned)인 경우 강제 제거
+                    if (p.sprite._destroyed || !p.sprite.parent) {
+                        SM._damagePopups.splice(i, 1);
+                        continue;
+                    }
                     p.sprite.y -= (p.isShout ? 0.4 : 0.8);
                     p.sprite.alpha = Math.min(1, p.timer / 15);
                 }
@@ -1928,15 +2379,25 @@
             return;
         }
 
-        // ── 투명도: 턴 종료 유닛 0.75, 그 외 1.0 (피/아 무관, 매 프레임 적용) ──
+        // ── 턴 종료/비페이즈 유닛 시각 피드백 (tint + alpha) ──
         const isCurrentUnit = (unit === SM._currentUnit);
         const isFinished = SM._finishedUnits && SM._finishedUnits.includes(unit);
+        // 아군 페이즈에서 _phaseUnits에 속하지 않는 아군 = 비활성
+        const isAllyPhase = (SM._phase === "playerTurn");
+        const isInPhase = !SM._phaseUnits || SM._phaseUnits.includes(unit);
+        const isNonPhaseAlly = isAllyPhase && unit.team === "actor" && !isInPhase;
         if (isCurrentUnit) {
             this.alpha = 1.0;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0xffffff;
         } else if (isFinished) {
             this.alpha = 0.75;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0x888899;
+        } else if (isNonPhaseAlly) {
+            this.alpha = 0.65;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0x777788;
         } else {
             this.alpha = 1.0;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0xffffff;
         }
 
         if (PORTRAIT_MODE && unit.hasPortrait()) {
@@ -1996,6 +2457,12 @@
         this._srpgDmgText.anchor.set(0.5, 1);
         this._srpgDmgText.visible = false;
         this.addChild(this._srpgDmgText);
+
+        // ─── 선택 표시: 역삼각형 마커 (▼) ───
+        this._srpgPMarker = new PIXI.Graphics();
+        this._srpgPMarker.visible = false;
+        this.addChild(this._srpgPMarker);
+        this._srpgPMarkerDrawn = false;
 
         this._srpgPLoadImage(unit);
     };
@@ -2162,8 +2629,57 @@
         const glow = this._srpgPGlow;
         const fx = SrpgFX.getEffectsForUnit(unit);
 
-        // 호버링 애니메이션
-        if (isSelected && !SrpgFX.hasActiveEffect(unit)) {
+        // ─── 장판 수풀 효과: 초상화 하반부 반투명 처리 ───
+        const onBushField = (typeof SrpgField !== 'undefined') &&
+            SrpgField.hasBushFieldAt(unit.x, unit.y);
+        if (onBushField && spr.texture && spr.texture.valid) {
+            const texH = spr.texture.height;
+            const bushCut = Math.floor(texH * 0.25); // 하단 25% 잠김
+            if (!this._srpgPBushMask) {
+                // 반투명 마스크용 서브스프라이트 생성
+                this._srpgPBushBottom = new Sprite();
+                this._srpgPBushBottom.anchor.set(0.5, 1);
+                this.addChild(this._srpgPBushBottom);
+            }
+            // 상단 부분: 원본 영역 잘라서 표시
+            const topH = texH - bushCut;
+            spr.setFrame(0, 0, spr.texture.width, topH);
+            spr.anchor.set(0.5, topH / texH); // 앵커를 하단 잘린 높이 기준으로
+            // 하단 부분: 반투명
+            const bot = this._srpgPBushBottom;
+            bot.texture = spr.texture;
+            bot.setFrame(0, topH, spr.texture.width, bushCut);
+            bot.anchor.set(0.5, 0);
+            bot.scale.set(spr.scale.x, spr.scale.y);
+            bot.alpha = 0.35;
+            bot.tint = spr.tint;
+            bot.y = spr.y;
+            bot.x = spr.x;
+            bot.visible = true;
+            this._srpgPBushMask = true;
+        } else if (this._srpgPBushMask) {
+            // 수풀 효과 해제 — 원래 프레임 복원
+            if (spr.texture && spr.texture.valid) {
+                spr.setFrame(0, 0, spr.texture.width, spr.texture.height);
+                spr.anchor.set(0.5, 1);
+            }
+            if (this._srpgPBushBottom) {
+                this._srpgPBushBottom.visible = false;
+            }
+            this._srpgPBushMask = false;
+        }
+
+        // ─── 행동 가능 여부 판별 ───
+        const isFinished = SM._finishedUnits && SM._finishedUnits.includes(unit);
+        const isAllyPhase = (SM._phase === "playerTurn");
+        const isInPhase = !SM._phaseUnits || SM._phaseUnits.includes(unit);
+        const isNonPhaseAlly = isAllyPhase && unit.team === "actor" && !isInPhase;
+        const canActNow = unit.team === "actor" && !isFinished && !isNonPhaseAlly;
+
+        // ─── 호버링 애니메이션 ───
+        // 활동 가능 아군: 바운스 O / 활동 불가 아군: 바운스 X / 선택: 바운스 O
+        const shouldBounce = isSelected || (canActNow && !SrpgFX.hasActiveEffect(unit));
+        if (shouldBounce && !SrpgFX.hasActiveEffect(unit)) {
             this._srpgPHover += 0.06;
             const hoverY = Math.sin(this._srpgPHover) * 4;
             spr.y = hoverY + fx.offsetY;
@@ -2179,12 +2695,42 @@
         spr.x = fx.offsetX;
         glow.x = fx.offsetX;
 
-        // 글로우 (선택 시 팀 컬러)
+        // 글로우 (선택 시 팀 컬러 외곽선 강조)
         glow.visible = isSelected && !SrpgFX.hasActiveEffect(unit);
         if (glow.visible) {
             const tc = unit.teamColor().fill;
             glow.tint = tc;
             glow.alpha = 0.35 + Math.sin(this._srpgPHover * 1.5) * 0.2;
+        }
+
+        // ─── 역삼각형 마커 (선택된 아군 위) ───
+        const marker = this._srpgPMarker;
+        if (marker) {
+            marker.visible = isSelected && !SrpgFX.hasActiveEffect(unit);
+            if (marker.visible) {
+                // 마커를 한 번만 그리기 (크기 고정)
+                if (!this._srpgPMarkerDrawn) {
+                    marker.clear();
+                    const mSize = 6;
+                    marker.beginFill(0xFFDD00, 0.95);
+                    marker.lineStyle(1.5, 0x000000, 0.6);
+                    marker.moveTo(-mSize, -mSize * 1.2);
+                    marker.lineTo(mSize, -mSize * 1.2);
+                    marker.lineTo(0, mSize * 0.4);
+                    marker.closePath();
+                    marker.endFill();
+                    marker.anchor && marker.anchor.set(0.5, 0.5);
+                    this._srpgPMarkerDrawn = true;
+                }
+                // 위치: 스프라이트 상단 위쪽으로 간격
+                const sprH = (spr.texture && spr.texture.valid) ? spr.texture.height * (spr.scale ? spr.scale.y : 1) : 48;
+                const markerGap = 8;
+                const hoverY = Math.sin(this._srpgPHover) * 4;
+                marker.x = fx.offsetX;
+                marker.y = -sprH - markerGap + hoverY + fx.offsetY;
+                // 부드러운 펄스 (투명도)
+                marker.alpha = 0.7 + Math.sin(this._srpgPHover * 2.0) * 0.3;
+            }
         }
 
         // 투명도는 상위 Sprite_Character.update에서 this.alpha로 직접 제어
@@ -2416,6 +2962,7 @@
         if (this._srpgPGlow) { this.removeChild(this._srpgPGlow); this._srpgPGlow = null; }
         this._srpgPShadow = null;
         if (this._srpgPTargetGlow) { this.removeChild(this._srpgPTargetGlow); this._srpgPTargetGlow = null; }
+        if (this._srpgPMarker) { this.removeChild(this._srpgPMarker); this._srpgPMarker.destroy(); this._srpgPMarker = null; this._srpgPMarkerDrawn = false; }
         if (this._srpgPWhiteOverlay) { this.removeChild(this._srpgPWhiteOverlay); this._srpgPWhiteOverlay = null; }
         // HP/MP 바 정리 (통합 Graphics)
         if (this._srpgHpBar) { this.removeChild(this._srpgHpBar); this._srpgHpBar = null; }
@@ -2505,13 +3052,18 @@
         }
     };
 
-    // Sprite_Animation.updateEffectGeometry 후킹 — SRPG 스케일 적용
+    // Sprite_Animation.updateEffectGeometry 후킹 — SRPG 타일 기반 절대 스케일
     const _origUpdateEffectGeo = Sprite_Animation.prototype.updateEffectGeometry;
     Sprite_Animation.prototype.updateEffectGeometry = function() {
         _origUpdateEffectGeo.call(this);
         if (this._srpgScale && this._handle) {
+            // _srpgScale = 목표 타일 영역의 픽셀 크기 (예: 48, 96, 144...)
+            // 네이티브 스케일 = animation.scale/100 (DB 설정, 화면 전체 기준)
+            // 타일 비율 = targetPx / (화면높이 × 0.5) → 화면 반 기준 대비 타일 비율
             const baseScale = this._animation.scale / 100;
-            const finalScale = baseScale * this._srpgScale;
+            const screenRef = Graphics.height * 0.5; // 이펙트 기본 커버리지 ≈ 화면 절반
+            const tileRatio = this._srpgScale / screenRef;
+            const finalScale = baseScale * tileRatio;
             this._handle.setScale(finalScale, finalScale, finalScale);
         }
     };
@@ -2520,8 +3072,9 @@
     window.SrpgAnimScale = {
         // 이펙트 타일(area) 목록에서 바운딩 최대 치수(타일 수) 계산
         calcFromEffectTiles(tiles) {
-            if (!tiles || tiles.length === 0) return 1.5;
-            if (tiles.length === 1) return 1.5;  // 1그리드 → 1+0.5 = 1.5배
+            // 반환값 = 목표 영역 픽셀 크기 (절대값)
+            const tw = $gameMap ? $gameMap.tileWidth() : 48;
+            if (!tiles || tiles.length <= 1) return tw;  // 1타일 = 타일 1개 크기
 
             let minX = Infinity, maxX = -Infinity;
             let minY = Infinity, maxY = -Infinity;
@@ -2536,17 +3089,18 @@
             const width = maxX - minX + 1;
             const height = maxY - minY + 1;
             const maxDim = Math.max(width, height);
-            return maxDim + 0.5;  // 최대 치수 + 0.5 패딩
+            return tw * maxDim;  // 타일 수 × 타일 픽셀 크기
         },
 
         // 스킬/유닛 조합으로 스케일 계산
         calcForSkill(unit, skill, targetX, targetY) {
-            if (!skill) return 1.5;  // 기본 공격 = 1타일
+            const tw = $gameMap ? $gameMap.tileWidth() : 48;
+            if (!skill) return tw;  // 기본 공격 = 1타일 픽셀 크기
             const meta = SrpgSkillMeta.getRange(unit, skill);
             if (meta.area && meta.area.length > 1) {
                 return this.calcFromEffectTiles(meta.area);
             }
-            return 1.5;  // 단일 타일
+            return tw;  // 단일 타일
         },
 
         // $gameTemp에 스케일 설정 (requestAnimation 직전 호출)
@@ -2605,6 +3159,295 @@
         SM.endBattle();
     });
 
+    /**
+     * SetBattleConfig — 이벤트 커맨드로 전투 시나리오 ID를 동적 지정
+     * StartBattle 전에 호출하면 해당 SrpgBattles 설정을 사용
+     * @param {string} configId - SrpgBattles.json 인덱스
+     */
+    PluginManager.registerCommand(pluginName, "SetBattleConfig", (args) => {
+        const id = Number(args.configId || 0);
+        if (id > 0 && window.$dataSrpgBattles && window.$dataSrpgBattles[id]) {
+            SM._pendingBattleConfigId = id;
+            console.log("[SRPG] SetBattleConfig: #" + id + " (" + window.$dataSrpgBattles[id].name + ")");
+        } else {
+            console.warn("[SRPG] SetBattleConfig: invalid id=" + id);
+        }
+    });
+
+
+
+    // =========================================================================
+    //  스크롤 경계 영역 시각 피드백 — 반투명 테두리 + 커서 변형
+    // =========================================================================
+
+    // HUD 업데이트에서 매 프레임 호출
+    const SrpgUI_proto = SrpgUI;
+
+    // 스크롤 존 오버레이 (Scene_Map 자식 — 화면 고정)
+    SrpgUI._scrollZoneGfx = null;
+    SrpgUI._scrollEdgeDirs = null;
+    SrpgUI._scrollEdgeMargin = 50;
+    SrpgUI._prevCursorStyle = null;
+
+    SrpgUI._initScrollZone = function(stage) {
+        if (this._scrollZoneGfx) {
+            if (this._scrollZoneGfx.parent) this._scrollZoneGfx.parent.removeChild(this._scrollZoneGfx);
+            if (!this._scrollZoneGfx._destroyed) this._scrollZoneGfx.destroy();
+        }
+        this._scrollZoneGfx = new PIXI.Graphics();
+        this._scrollZoneGfx.zIndex = 9990;
+        if (stage && !stage.sortableChildren) stage.sortableChildren = true;
+        if (stage) stage.addChild(this._scrollZoneGfx);
+    };
+
+    SrpgUI._updateScrollZone = function() {
+        const g = this._scrollZoneGfx;
+        if (!g) return;
+        g.clear();
+
+        const dirs = this._scrollEdgeDirs;
+        if (!dirs) {
+            // 전투 비활성 — 커서 복원
+            if (this._prevCursorStyle) {
+                document.body.style.cursor = "";
+                this._prevCursorStyle = null;
+            }
+            return;
+        }
+
+        const m = this._scrollEdgeMargin || 50;
+        const w = Graphics.width, h = Graphics.height;
+        const color = 0x4488CC;
+        const alpha = 0.18;
+
+        // 활성 방향의 테두리만 그리기
+        if (dirs.left)  g.beginFill(color, alpha).drawRect(0, 0, m, h).endFill();
+        if (dirs.right) g.beginFill(color, alpha).drawRect(w - m, 0, m, h).endFill();
+        if (dirs.up)    g.beginFill(color, alpha).drawRect(0, 0, w, m).endFill();
+        if (dirs.down)  g.beginFill(color, alpha).drawRect(0, h - m, w, m).endFill();
+
+        // 항상 edge 영역이면 테두리 표시 (활성 여부와 무관하게 존재 감지)
+        const anyActive = dirs.left || dirs.right || dirs.up || dirs.down;
+
+        // CSS 커서 변형
+        if (anyActive) {
+            let cursor = "default";
+            if (dirs.left && dirs.up)        cursor = "nw-resize";
+            else if (dirs.right && dirs.up)   cursor = "ne-resize";
+            else if (dirs.left && dirs.down)  cursor = "sw-resize";
+            else if (dirs.right && dirs.down) cursor = "se-resize";
+            else if (dirs.left)               cursor = "w-resize";
+            else if (dirs.right)              cursor = "e-resize";
+            else if (dirs.up)                 cursor = "n-resize";
+            else if (dirs.down)               cursor = "s-resize";
+            document.body.style.cursor = cursor;
+            this._prevCursorStyle = cursor;
+        } else {
+            if (this._prevCursorStyle) {
+                document.body.style.cursor = "";
+                this._prevCursorStyle = null;
+            }
+        }
+    };
+
+    // =========================================================================
+    //  전투 시작 + 목표 배너 UI (화면 중앙 페이드인/아웃)
+    // =========================================================================
+
+    SrpgUI._battleBanner = null; // { phase, timer, maxTimer, texts, container }
+
+    SrpgUI._initBattleBanner = function(stage) {
+        if (this._battleBanner && this._battleBanner.container) {
+            if (this._battleBanner.container.parent)
+                this._battleBanner.container.parent.removeChild(this._battleBanner.container);
+            if (!this._battleBanner.container._destroyed)
+                this._battleBanner.container.destroy({ children: true });
+        }
+        this._battleBanner = null;
+        this._bannerStage = stage;
+    };
+
+    /**
+     * 전투 시작 배너 표시 — SM에서 호출
+     * @param {string} title - "전투 시작" 등
+     * @param {string} objective - 승리 조건 텍스트
+     * @param {string} [defeatCondition] - 패배 조건 텍스트
+     * @param {Function} [callback] - 배너 완료 후 콜백
+     */
+    SrpgUI.showBattleBanner = function(title, objective, defeatCondition, callback) {
+        let stage = this._bannerStage;
+        // _bannerStage가 아직 없으면 SceneManager에서 직접 획득 시도
+        if (!stage && SceneManager._scene) {
+            this._bannerStage = SceneManager._scene;
+            stage = this._bannerStage;
+            console.log("[SrpgUI] showBattleBanner: _bannerStage was null, recovered from SceneManager.");
+        }
+        if (!stage) {
+            console.warn("[SrpgUI] showBattleBanner: No stage available. Calling callback immediately.");
+            if (callback) callback();
+            return;
+        }
+
+        // sortableChildren 활성화 (zIndex 적용)
+        if (!stage.sortableChildren) stage.sortableChildren = true;
+        const c = new PIXI.Container();
+        c.zIndex = 10001;
+        c.alpha = 0;
+        stage.addChild(c);
+        console.log("[SrpgUI] Battle banner container added to stage. children=" + stage.children.length);
+
+        const w = Graphics.width, h = Graphics.height;
+        const hasConditions = !!(objective || defeatCondition);
+
+        // 반투명 배경 밴드 (화면 중앙) — 조건 텍스트가 있으면 더 넓게
+        const bandH = Math.round(h * (hasConditions ? 0.40 : 0.22));
+        const bandY = Math.round((h - bandH) / 2);
+        const bg = new PIXI.Graphics();
+        bg.beginFill(0x000000, 0.65);
+        bg.drawRect(0, bandY, w, bandH);
+        bg.endFill();
+        c.addChild(bg);
+
+        // 레이아웃 계산: 조건 텍스트가 있으면 title을 위로, 없으면 중앙
+        const titleYRatio = hasConditions ? 0.28 : 0.5;
+
+        // 제목 텍스트
+        const titleStyle = new PIXI.TextStyle({
+            fontFamily: "Arial, sans-serif",
+            fontSize: Math.round(h * 0.065),
+            fontWeight: "bold",
+            fill: "#FFD700",
+            stroke: "#000000",
+            strokeThickness: 4,
+            dropShadow: true,
+            dropShadowColor: "#000000",
+            dropShadowDistance: 3,
+            align: "center",
+        });
+        const titleText = new PIXI.Text(title, titleStyle);
+        titleText.anchor.set(0.5, 0.5);
+        titleText.x = w / 2;
+        titleText.y = bandY + bandH * titleYRatio;
+        c.addChild(titleText);
+
+        // 승리 조건 (녹색 라벨 + 흰색 텍스트)
+        if (objective) {
+            const winLabelStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.028),
+                fontWeight: "bold",
+                fill: "#66FF66",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+            });
+            const winLabel = new PIXI.Text("\u25B6 \uC2B9\uB9AC \uC870\uAC74", winLabelStyle); // ▶ 승리 조건
+            winLabel.anchor.set(0.5, 0.5);
+            winLabel.x = w / 2;
+            winLabel.y = bandY + bandH * 0.52;
+            c.addChild(winLabel);
+
+            const winStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.032),
+                fill: "#FFFFFF",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+                wordWrap: true,
+                wordWrapWidth: w * 0.7,
+            });
+            const winText = new PIXI.Text(objective, winStyle);
+            winText.anchor.set(0.5, 0.5);
+            winText.x = w / 2;
+            winText.y = bandY + bandH * 0.62;
+            c.addChild(winText);
+        }
+
+        // 패배 조건 (적색 라벨 + 흰색 텍스트)
+        if (defeatCondition) {
+            const loseLabelStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.028),
+                fontWeight: "bold",
+                fill: "#FF6666",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+            });
+            const loseLabel = new PIXI.Text("\u25B6 \uD328\uBC30 \uC870\uAC74", loseLabelStyle); // ▶ 패배 조건
+            loseLabel.anchor.set(0.5, 0.5);
+            loseLabel.x = w / 2;
+            loseLabel.y = bandY + bandH * 0.74;
+            c.addChild(loseLabel);
+
+            const loseStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.032),
+                fill: "#FFCCCC",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+                wordWrap: true,
+                wordWrapWidth: w * 0.7,
+            });
+            const loseText = new PIXI.Text(defeatCondition, loseStyle);
+            loseText.anchor.set(0.5, 0.5);
+            loseText.x = w / 2;
+            loseText.y = bandY + bandH * 0.84;
+            c.addChild(loseText);
+        }
+
+        // 애니메이션 상태
+        // phase: fadeIn(30f) → hold(90f) → fadeOut(30f)
+        this._battleBanner = {
+            phase: "fadeIn",
+            timer: 0,
+            fadeInFrames: 30,
+            holdFrames: 90,
+            fadeOutFrames: 30,
+            container: c,
+            callback: callback || null,
+        };
+    };
+
+    SrpgUI._updateBattleBanner = function() {
+        const b = this._battleBanner;
+        if (!b || !b.container) return false; // 배너 없음
+
+        b.timer++;
+        const c = b.container;
+
+        if (b.phase === "fadeIn") {
+            c.alpha = Math.min(1, b.timer / b.fadeInFrames);
+            if (b.timer >= b.fadeInFrames) {
+                b.phase = "hold";
+                b.timer = 0;
+            }
+        } else if (b.phase === "hold") {
+            c.alpha = 1;
+            if (b.timer >= b.holdFrames) {
+                b.phase = "fadeOut";
+                b.timer = 0;
+            }
+        } else if (b.phase === "fadeOut") {
+            c.alpha = Math.max(0, 1 - b.timer / b.fadeOutFrames);
+            if (b.timer >= b.fadeOutFrames) {
+                // 배너 종료
+                if (c.parent) c.parent.removeChild(c);
+                if (!c._destroyed) c.destroy({ children: true });
+                const cb = b.callback;
+                this._battleBanner = null;
+                if (cb) cb();
+                return false; // 완료
+            }
+        }
+        return true; // 아직 진행 중
+    };
+
+    SrpgUI.isBattleBannerActive = function() {
+        return !!this._battleBanner;
+    };
 
     // =========================================================================
     //  SRPG 이동속도 옵션 — ConfigManager + Window_Options 확장
@@ -2689,6 +3532,42 @@
             return;
         }
         _Window_Options_cursorLeft.call(this);
+    };
+
+
+    // =========================================================================
+    //  SRPG 스크롤 속도 옵션 — ConfigManager + Window_Options 확장
+    // =========================================================================
+
+    const _DEFAULT_SCROLL_SPEED = 4;
+    ConfigManager.srpgScrollSpeed = _DEFAULT_SCROLL_SPEED;
+
+    const _ConfigManager_makeData2 = ConfigManager.makeData;
+    ConfigManager.makeData = function() {
+        const config = _ConfigManager_makeData2.call(this);
+        config.srpgScrollSpeed = this.srpgScrollSpeed;
+        return config;
+    };
+
+    const _ConfigManager_applyData2 = ConfigManager.applyData;
+    ConfigManager.applyData = function(config) {
+        _ConfigManager_applyData2.call(this, config);
+        this.srpgScrollSpeed = config.srpgScrollSpeed != null
+            ? Number(config.srpgScrollSpeed).clamp(1, 6)
+            : _DEFAULT_SCROLL_SPEED;
+    };
+
+    // --- Window_Options 확장: SRPG 스크롤 속도 항목 추가 ---
+    const _Window_Options_addGeneralOptions2 = Window_Options.prototype.addGeneralOptions;
+    Window_Options.prototype.addGeneralOptions = function() {
+        _Window_Options_addGeneralOptions2.call(this);
+        this.addCommand("SRPG 스크롤속도", "srpgScrollSpeed");
+    };
+
+    // srpgScrollSpeed도 isSrpgSpeedSymbol에 포함
+    const _isSrpgSpeedSymbol = Window_Options.prototype.isSrpgSpeedSymbol;
+    Window_Options.prototype.isSrpgSpeedSymbol = function(symbol) {
+        return symbol === "srpgScrollSpeed" || _isSrpgSpeedSymbol.call(this, symbol);
     };
 
 })(); // ── IIFE 끝 ──

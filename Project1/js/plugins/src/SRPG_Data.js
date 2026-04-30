@@ -132,6 +132,17 @@
  * @text SRPG 전투 종료
  * @desc 진행 중인 SRPG 전투를 종료합니다.
  *
+ * @command SetBattleConfig
+ * @text 전투 시나리오 지정
+ * @desc StartBattle 전에 호출하여 SrpgBattles.json의 시나리오를 동적 지정합니다.
+ *
+ * @arg configId
+ * @text 시나리오 ID
+ * @type number
+ * @min 1
+ * @default 1
+ * @desc SrpgBattles.json에서 사용할 전투 시나리오 번호
+ *
  * @param DefaultMov
  * @text 기본 이동력
  * @type number
@@ -195,6 +206,20 @@
 
     const pluginName = "SRPG_Core";
     const params = PluginManager.parameters(pluginName);
+
+    // ─── SrpgBattles.json 데이터 로딩 — 전투 시나리오 테이블 ───
+    window.$dataSrpgBattles = null;
+    const _DM_loadDatabase = DataManager.loadDatabase;
+    DataManager.loadDatabase = function() {
+        _DM_loadDatabase.call(this);
+        this.loadDataFile("$dataSrpgBattles", "SrpgBattles.json");
+    };
+    const _DM_isDatabaseLoaded = DataManager.isDatabaseLoaded;
+    DataManager.isDatabaseLoaded = function() {
+        if (!_DM_isDatabaseLoaded.call(this)) return false;
+        if (!window.$dataSrpgBattles) return false;
+        return true;
+    };
     const DEFAULT_MOV = Number(params["DefaultMov"] || 4);
     const DEFAULT_ATK_RANGE = Number(params["DefaultAtkRange"] || 1);
     const TILE = Number(params["TileSize"] || 48);
@@ -662,91 +687,134 @@
                 victoryEvent: 0,
                 defeatEvent: 0,
                 deployEnabled: true,
-                objective: ""
+                objective: "",
+                defeatCondition: ""
             };
             if (!note) return params;
 
-            // 전투 모드
-            const modeMatch = note.match(/<srpgBattleMode:(\w+)>/i);
-            if (modeMatch) params.mode = modeMatch[1];
-
-            // KO 정책
-            const koMatch = note.match(/<srpgKoPolicy:(\w+)>/i);
-            if (koMatch) params.koPolicy = koMatch[1];
-
-            // 기습
-            const ambushMatch = note.match(/<srpgAmbush:(\w+)>/i);
-            if (ambushMatch) params.ambush = ambushMatch[1];
-
-            // 대장전
-            const cmdRe = /<srpgCommander:(\d+):(\d+)>/gi;
-            let m;
-            while ((m = cmdRe.exec(note)) !== null) {
-                params.commanders[Number(m[1])] = Number(m[2]);
+            // ─── Phase 1: SrpgBattles.json에서 시나리오 로드 (우선) ───
+            const configMatch = note.match(/<srpgBattleConfig:(\d+)>/i);
+            if (configMatch && window.$dataSrpgBattles) {
+                const cfgId = Number(configMatch[1]);
+                const cfg = window.$dataSrpgBattles[cfgId];
+                if (cfg) {
+                    // 시나리오 귀속 필드만 복사 (맵 귀속 필드는 건드리지 않음)
+                    const SCENARIO_KEYS = [
+                        "mode", "koPolicy", "ambush", "objective", "defeatCondition",
+                        "defenseTurns", "defenseTarget", "escapeCount", "escapeTurnLimit",
+                        "capCount", "capTurnsRequired", "commanders", "escorts",
+                        "escortFollow", "escortAI", "victoryEvent", "defeatEvent"
+                    ];
+                    for (const k of SCENARIO_KEYS) {
+                        if (cfg[k] !== undefined && cfg[k] !== null) {
+                            params[k] = (typeof cfg[k] === "object")
+                                ? JSON.parse(JSON.stringify(cfg[k]))
+                                : cfg[k];
+                        }
+                    }
+                    console.log("[BattleModeChecker] Loaded SrpgBattles #" + cfgId + ": " + (cfg.name || cfg.mode));
+                } else {
+                    console.warn("[BattleModeChecker] SrpgBattles #" + cfgId + " not found!");
+                }
             }
 
-            // 호위전
-            const escortMatch = note.match(/<srpgEscort:([^>]+)>/i);
-            if (escortMatch) params.escorts = escortMatch[1].split(",").map(Number);
-            const escortFollowMatch = note.match(/<srpgEscortFollow:(\d+)>/i);
-            if (escortFollowMatch) params.escortFollow = Number(escortFollowMatch[1]);
-            const escortGoalMatch = note.match(/<srpgEscortGoal:(\d+),(\d+)>/i);
-            if (escortGoalMatch) params.escortGoal = { x: Number(escortGoalMatch[1]), y: Number(escortGoalMatch[2]) };
-            const escortAIMatch = note.match(/<srpgEscortAI:(\w+)>/i);
-            if (escortAIMatch) params.escortAI = escortAIMatch[1];
-
-            // 깃발전
-            const flagMatch = note.match(/<srpgFlag:(\d+),(\d+)>/i);
-            if (flagMatch) params.flagPos = { x: Number(flagMatch[1]), y: Number(flagMatch[2]) };
-            const flagBaseRe = /<srpgFlagBase:(\d+):(\d+),(\d+)>/gi;
-            while ((m = flagBaseRe.exec(note)) !== null) {
-                params.flagBases[Number(m[1])] = { x: Number(m[2]), y: Number(m[3]) };
+            // ─── Phase 2: 맵 노트태그 파싱 (SrpgBattles 미사용 시 폴백) ───
+            // SrpgBattles로 이미 로드된 경우에도 맵 노트태그가 있으면 덮어쓰기 가능
+            if (!configMatch) {
+                // 시나리오 귀속 필드 — SrpgBattles가 없을 때만 맵 노트에서 파싱
+                const modeMatch = note.match(/<srpgBattleMode:(\w+)>/i);
+                if (modeMatch) params.mode = modeMatch[1];
+                const koMatch = note.match(/<srpgKoPolicy:(\w+)>/i);
+                if (koMatch) params.koPolicy = koMatch[1];
+                const ambushMatch = note.match(/<srpgAmbush:(\w+)>/i);
+                if (ambushMatch) params.ambush = ambushMatch[1];
+                const cmdRe = /<srpgCommander:(\d+):(\d+)>/gi;
+                let m;
+                while ((m = cmdRe.exec(note)) !== null) {
+                    params.commanders[Number(m[1])] = Number(m[2]);
+                }
+                const escortMatch = note.match(/<srpgEscort:([^>]+)>/i);
+                if (escortMatch) params.escorts = escortMatch[1].split(",").map(Number);
+                const escortFollowMatch = note.match(/<srpgEscortFollow:(\d+)>/i);
+                if (escortFollowMatch) params.escortFollow = Number(escortFollowMatch[1]);
+                const escortGoalMatch = note.match(/<srpgEscortGoal:(\d+),(\d+)>/i);
+                if (escortGoalMatch) params.escortGoal = { x: Number(escortGoalMatch[1]), y: Number(escortGoalMatch[2]) };
+                const escortAIMatch = note.match(/<srpgEscortAI:(\w+)>/i);
+                if (escortAIMatch) params.escortAI = escortAIMatch[1];
+                const flagMatch = note.match(/<srpgFlag:(\d+),(\d+)>/i);
+                if (flagMatch) params.flagPos = { x: Number(flagMatch[1]), y: Number(flagMatch[2]) };
+                const flagBaseRe = /<srpgFlagBase:(\d+):(\d+),(\d+)>/gi;
+                while ((m = flagBaseRe.exec(note)) !== null) {
+                    params.flagBases[Number(m[1])] = { x: Number(m[2]), y: Number(m[3]) };
+                }
+                const capCountMatch = note.match(/<srpgCapCount:(\d+)>/i);
+                if (capCountMatch) params.capCount = Number(capCountMatch[1]);
+                const capTurnsMatch = note.match(/<srpgCapTurns:(\d+)>/i);
+                if (capTurnsMatch) params.capTurnsRequired = Number(capTurnsMatch[1]);
+                const defTurnsMatch = note.match(/<srpgDefenseTurns:(\d+)>/i);
+                if (defTurnsMatch) params.defenseTurns = Number(defTurnsMatch[1]);
+                const defTargetMatch = note.match(/<srpgDefenseTarget:(\d+)>/i);
+                if (defTargetMatch) params.defenseTarget = Number(defTargetMatch[1]);
+                const escCountMatch = note.match(/<srpgEscapeCount:(\d+)>/i);
+                if (escCountMatch) params.escapeCount = Number(escCountMatch[1]);
+                const escLimitMatch = note.match(/<srpgEscapeTurnLimit:(\d+)>/i);
+                if (escLimitMatch) params.escapeTurnLimit = Number(escLimitMatch[1]);
+                const vicMatch = note.match(/<srpgVictoryEvent:(\d+)>/i);
+                if (vicMatch) params.victoryEvent = Number(vicMatch[1]);
+                const defMatch = note.match(/<srpgDefeatEvent:(\d+)>/i);
+                if (defMatch) params.defeatEvent = Number(defMatch[1]);
+                const objMatch = note.match(/<srpgObjective:([^>]+)>/i);
+                if (objMatch) params.objective = objMatch[1].trim();
+                const defCondMatch = note.match(/<srpgDefeatCondition:([^>]+)>/i);
+                if (defCondMatch) params.defeatCondition = defCondMatch[1].trim();
             }
 
-            // 점령전
-            const capRe = /<srpgCapPoint:(\d+),(\d+)>/gi;
-            while ((m = capRe.exec(note)) !== null) {
-                params.capPoints.push({ x: Number(m[1]), y: Number(m[2]), owner: 0, gauge: 0 });
-            }
-            const capCountMatch = note.match(/<srpgCapCount:(\d+)>/i);
-            if (capCountMatch) params.capCount = Number(capCountMatch[1]);
-            const capTurnsMatch = note.match(/<srpgCapTurns:(\d+)>/i);
-            if (capTurnsMatch) params.capTurnsRequired = Number(capTurnsMatch[1]);
-
-            // 방어전
-            const defTurnsMatch = note.match(/<srpgDefenseTurns:(\d+)>/i);
-            if (defTurnsMatch) params.defenseTurns = Number(defTurnsMatch[1]);
-            const defTargetMatch = note.match(/<srpgDefenseTarget:(\d+)>/i);
-            if (defTargetMatch) params.defenseTarget = Number(defTargetMatch[1]);
-            const spawnRe = /<srpgSpawnWave:(\d+),(\d+),(\d+),(\d+)>/gi;
-            while ((m = spawnRe.exec(note)) !== null) {
-                params.spawnWaves.push({
-                    turn: Number(m[1]), enemyId: Number(m[2]),
-                    x: Number(m[3]), y: Number(m[4]), spawned: false
-                });
-            }
-
-            // 도망전
-            const escRegionMatch = note.match(/<srpgEscapeRegion:(\d+)>/i);
-            if (escRegionMatch) params.escapeRegion = Number(escRegionMatch[1]);
-            const escCountMatch = note.match(/<srpgEscapeCount:(\d+)>/i);
-            if (escCountMatch) params.escapeCount = Number(escCountMatch[1]);
-            const escLimitMatch = note.match(/<srpgEscapeTurnLimit:(\d+)>/i);
-            if (escLimitMatch) params.escapeTurnLimit = Number(escLimitMatch[1]);
-
-            // 이벤트
-            const vicMatch = note.match(/<srpgVictoryEvent:(\d+)>/i);
-            if (vicMatch) params.victoryEvent = Number(vicMatch[1]);
-            const defMatch = note.match(/<srpgDefeatEvent:(\d+)>/i);
-            if (defMatch) params.defeatEvent = Number(defMatch[1]);
-
-            // 배치 페이즈 활성화 여부
+            // ─── Phase 3: 맵 귀속 필드 (항상 맵 노트에서 파싱) ───
+            // 배치 페이즈
             const deployMatch = note.match(/<srpgDeployEnabled:(true|false)>/i);
             if (deployMatch) params.deployEnabled = deployMatch[1].toLowerCase() === "true";
 
-            // 전투 목표 텍스트
-            const objMatch = note.match(/<srpgObjective:([^>]+)>/i);
-            if (objMatch) params.objective = objMatch[1].trim();
+            // 좌표 기반 맵 귀속 데이터 (점령 거점, 깃발, 탈출구, 스폰)
+            const capRe = /<srpgCapPoint:(\d+),(\d+)>/gi;
+            let mc;
+            while ((mc = capRe.exec(note)) !== null) {
+                params.capPoints.push({ x: Number(mc[1]), y: Number(mc[2]), owner: 0, gauge: 0 });
+            }
+            const escRegionMatch = note.match(/<srpgEscapeRegion:(\d+)>/i);
+            if (escRegionMatch) params.escapeRegion = Number(escRegionMatch[1]);
+            const spawnRe = /<srpgSpawnWave:(\d+),(\d+),(\d+),(\d+)>/gi;
+            while ((mc = spawnRe.exec(note)) !== null) {
+                params.spawnWaves.push({
+                    turn: Number(mc[1]), enemyId: Number(mc[2]),
+                    x: Number(mc[3]), y: Number(mc[4]), spawned: false
+                });
+            }
+
+            // ─── Phase 4: 자동 기본값 (승리/패배 조건 텍스트) ───
+            if (!params.objective) {
+                const defaultObj = {
+                    annihilation: "모든 적군의 섬멸",
+                    commander: "적 대장 처치",
+                    defense: params.defenseTurns + "턴 방어",
+                    escape: "아군 " + params.escapeCount + "명 탈출",
+                    capture: "거점 점령",
+                    escort: "호위 대상 보호",
+                    flag: "적 깃발 탈취",
+                };
+                params.objective = defaultObj[params.mode] || "적 섬멸";
+            }
+            if (!params.defeatCondition) {
+                const defaultDef = {
+                    annihilation: "아군의 전멸",
+                    commander: "아군 대장 전사",
+                    defense: "방어 거점 함락",
+                    escape: "턴 제한 초과",
+                    capture: "아군 전멸",
+                    escort: "호위 대상 전사",
+                    flag: "아군 깃발 탈취당함",
+                };
+                params.defeatCondition = defaultDef[params.mode] || "아군 전멸";
+            }
 
             // 스폰존 기반 증원 (zone 모드): <srpgSpawnWave:턴,적ID,zone,팀ID>
             const spawnZoneRe = /<srpgSpawnWave:(\d+),(\d+),zone,(\d+)>/gi;
@@ -1608,6 +1676,21 @@
             }
             this._states.push({ id: stateId, turnsLeft: turns || 3 });
             console.log(`[SRPG] ${this.name}: 상태 ${stateId} 부여 (${turns}턴)`);
+            // ★ 상태 부여 플로팅 텍스트 피드백
+            if (typeof SrpgManager !== 'undefined' && SrpgManager._battleActive) {
+                const stData = (typeof $dataStates !== 'undefined') ? $dataStates[stateId] : null;
+                const stName = stData ? stData.name : `상태${stateId}`;
+                const sx = this.event ? this.event.x : (this.x || 0);
+                const sy = this.event ? this.event.y : (this.y || 0);
+                const STATE_COLORS = {
+                    32: "#ff6622", 33: "#44aaff", 34: "#88ccff", 35: "#00ccff",
+                    36: "#ffff44", 37: "#ffee00", 38: "#88ff00", 39: "#aa6600",
+                    40: "#ff2222", 41: "#cc8844", 42: "#aaddff", 43: "#ffffaa",
+                    44: "#8844aa", 45: "#664488", 46: "#886644"
+                };
+                const color = STATE_COLORS[stateId] || "#ccddff";
+                SrpgManager._addPopup(sx, sy, `+${stName}`, color, true);
+            }
         }
 
         addState(stateId, turns) {
@@ -1643,7 +1726,16 @@
         }
 
         removeState(stateId) {
+            const had = this._states.some(s => s.id === stateId);
             this._states = this._states.filter(s => s.id !== stateId);
+            // ★ 상태 해제 플로팅 텍스트
+            if (had && typeof SrpgManager !== 'undefined' && SrpgManager._battleActive) {
+                const stData = (typeof $dataStates !== 'undefined') ? $dataStates[stateId] : null;
+                const stName = stData ? stData.name : `상태${stateId}`;
+                const sx = this.event ? this.event.x : (this.x || 0);
+                const sy = this.event ? this.event.y : (this.y || 0);
+                SrpgManager._addPopup(sx, sy, `-${stName}`, "#aaaaaa", true);
+            }
         }
 
         hasState(stateId) {
@@ -3743,7 +3835,18 @@
             const hitType = (() => {
                 const sk = this.getSkillData(skillId);
                 return (sk && sk.hitType != null) ? sk.hitType : 1;
-            })();
+            
+    // ═══ 장판 수풀(Bush) 효과 — Game_CharacterBase 오버라이드 ═══
+    const _orig_refreshBushDepth = Game_CharacterBase.prototype.refreshBushDepth;
+    Game_CharacterBase.prototype.refreshBushDepth = function() {
+        _orig_refreshBushDepth.call(this);
+        // SRPG 장판 위에 있으면 수풀 효과 적용 (하반부 반투명)
+        if (typeof SrpgField !== 'undefined' && SrpgField.hasBushFieldAt(this.x, this.y)) {
+            this._bushDepth = 12;
+        }
+    };
+
+})();
             const predIsPhysical = (hitType === 1);
 
             // 배면/측면 데미지 배율 (예측, 물리만)
@@ -4528,9 +4631,11 @@
                 // 단계: "warning" → "rising" → "falling" → "done"
                 phase: "warning",
                 warningTimer: meta.warningDuration,
-                // 포물선 파라미터 — arcHeight=0이면 45도 기반 동적 계산
+                // 반원 파라미터 — arcHeight=0이면 출발~도착 총 거리 기반 반원
+                _totalDist: Math.sqrt((finalX - from.x) ** 2 + (finalY - from.y) ** 2) || 48,
+                _pathAngle: Math.atan2(finalY - from.y, finalX - from.x),
                 arcHeight: meta.arcHeight > 0 ? meta.arcHeight
-                    : Math.abs(finalX - from.x) * 0.5,
+                    : (Math.sqrt((finalX - from.x) ** 2 + (finalY - from.y) ** 2) || 48) / 2,
                 flightProgress: 0,        // 0 → 1
                 // 3-phase speed: launch(0~출발), flight(상승중), fall(하강)
                 baseFlightSpeed: meta.speed * 0.015,
@@ -4540,8 +4645,8 @@
                 flightSpeed: meta.speed * 0.015,  // active speed (changes per phase)
                 // 카메라 팬
                 cameraPan: meta.cameraPan,
-                originalScrollX: 0,
-                originalScrollY: 0,
+                originalScrollX: $gameMap.displayX(),
+                originalScrollY: $gameMap.displayY(),
                 panDone: false,
                 // 프레임 애니
                 frame: 0, frameTimer: 0,
@@ -4708,10 +4813,7 @@
                     this._updateArtilleryFrame(p);
 
                     // 회전 (낙하감)
-                    if (p.meta.rotate) {
-                        const fallAngle = Math.PI * 0.5 + (p.flightProgress - 0.5) * Math.PI * 0.3;
-                        p.sprite.rotation = fallAngle;
-                    }
+                    // 회전은 _updateArtilleryPosition에서 접선 기반으로 처리
 
                     if (p.flightProgress >= 1) {
                         p.sprite.x = p.finalX;
@@ -4731,13 +4833,22 @@
         },
 
         // 포물선 위치 계산
+        // ★ 반원 궤적 위치 계산 (대각선 틸트 포함)
         _updateArtilleryPosition(p) {
-            const t = p.flightProgress;
-            // 선형 보간 (X, Y) + 포물선 높이 오프셋
+            const t = p.flightProgress;  // 0 → 1
+            const TILT = 0.35;  // 대각선 입체감 계수
+
+            // 직선 보간 (기준선)
             const lerpX = p.fromX + (p.finalX - p.fromX) * t;
             const lerpY = p.fromY + (p.finalY - p.fromY) * t;
-            // 포물선: -4h*t*(t-1) → 최대높이 h at t=0.5
-            const arcY = -4 * p.arcHeight * t * (t - 1);
+
+            // 반원: sin(πt) → 0에서 시작, 0.5에서 최대(=arcHeight), 1에서 0
+            const theta = Math.PI * t;
+            const arcH = p.arcHeight * Math.sin(theta);
+
+            // 오프셋: 항상 위로(-Y) + 대각선 경로 시 수평 틸트(입체감)
+            const yOffset = -arcH;
+            const xOffset = arcH * Math.sin(p._pathAngle) * TILT;
 
             // 화면 스크롤 보정
             const tw = $gameMap.tileWidth();
@@ -4745,8 +4856,18 @@
             const scrOffX = (p.originalScrollX - $gameMap.displayX()) * tw;
             const scrOffY = (p.originalScrollY - $gameMap.displayY()) * th;
 
-            p.sprite.x = lerpX + scrOffX;
-            p.sprite.y = lerpY - arcY + scrOffY;
+            p.sprite.x = lerpX + xOffset + scrOffX;
+            p.sprite.y = lerpY + yOffset + scrOffY;
+
+            // ★ 스프라이트 회전: 경로 접선 방향으로 자동 정렬
+            if (p.meta.rotate) {
+                const pathDx = p.finalX - p.fromX;
+                const pathDy = p.finalY - p.fromY;
+                // 접선 = d(position)/dt
+                const tanX = pathDx + p.arcHeight * Math.PI * Math.cos(theta) * Math.sin(p._pathAngle) * TILT;
+                const tanY = pathDy - p.arcHeight * Math.PI * Math.cos(theta);
+                p.sprite.rotation = Math.atan2(tanY, tanX);
+            }
         },
 
         // Artillery 프레임 애니메이션
@@ -5669,6 +5790,11 @@
             return this._clouds.find(c => c.containsTile(x, y)) || null;
         },
 
+        /** 해당 타일의 모든 구름 반환 (복수) */
+        getCloudsAt(x, y) {
+            return this._clouds.filter(c => c.containsTile(x, y));
+        },
+
         // 해당 타일의 모든 장판 (중첩 가능 — 장판+구름)
         getAllFieldsAt(x, y) {
             const result = [];
@@ -5969,12 +6095,11 @@
         checkUnitFieldStatus(unit) {
             const uid = unit.id || unit.name;
             const tracked = this._fieldAppliedStates[uid];
-            if (!tracked) return;
 
             const ux = unit.event ? unit.event.x : (unit.x || 0);
             const uy = unit.event ? unit.event.y : (unit.y || 0);
 
-            for (let i = tracked.length - 1; i >= 0; i--) {
+            if (tracked) for (let i = tracked.length - 1; i >= 0; i--) {
                 const entry = tracked[i];
                 // 해당 장판이 아직 존재하는지
                 const field = this._surfaces.find(s => s.id === entry.fieldId)
@@ -5994,7 +6119,7 @@
                 }
             }
 
-            if (tracked.length === 0) delete this._fieldAppliedStates[uid];
+            if (tracked && tracked.length === 0) delete this._fieldAppliedStates[uid];
 
             // 장판 밖으로 나온 유닛의 저주 필드 효과 정리
             if (unit._cursedFieldEffects) {
@@ -6443,4 +6568,102 @@
             field.tiles.push(...newTiles);
         },
     };
+    // ─── SRPG 전투 중 맵 이벤트 완전 억제 ───
+    // postDeploy 이외의 전투 페이즈에서는 autorun/parallel/common 이벤트 모두 차단.
+    // ─── SRPG 맵 감지 캐시 ───
+    // 맵에 startBattle 호출 parallel 이벤트가 있으면 _battleActive 전에도 억제
+    var _srpgMapDetected = false;
+    var _srpgMapCheckDone = -1; // 마지막 체크한 맵 ID
+
+    function _checkSrpgMap() {
+        if (!$dataMap || !$dataMap.events) return false;
+        var mapId = $gameMap ? $gameMap.mapId() : -1;
+        if (_srpgMapCheckDone === mapId) return _srpgMapDetected;
+        _srpgMapCheckDone = mapId;
+        _srpgMapDetected = false;
+        for (var i = 0; i < $dataMap.events.length; i++) {
+            var ev = $dataMap.events[i];
+            if (!ev || !ev.pages) continue;
+            for (var pi = 0; pi < ev.pages.length; pi++) {
+                var page = ev.pages[pi];
+                // parallel(4) 또는 autorun(3) + startBattle 스크립트
+                if (page.trigger === 4 || page.trigger === 3) {
+                    var list = page.list || [];
+                    for (var ci = 0; ci < list.length; ci++) {
+                        if (list[ci].code === 355 || list[ci].code === 655) {
+                            var script = (list[ci].parameters || [])[0] || "";
+                            if (script.indexOf("startBattle") >= 0) {
+                                _srpgMapDetected = true;
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    function _srpgShouldSuppressEvents() {
+        if (typeof SrpgManager === 'undefined') return false;
+        // 이미 전투 활성 — 기존 로직
+        if (SrpgManager._battleActive) {
+            const phase = SrpgManager._phase;
+            if (phase === "postDeploy") return false;
+            if (phase === "battleEnd" || phase === "idle") return false;
+            return true;
+        }
+        // 전투 시작 전이지만 SRPG 맵이면 일반 이벤트 억제
+        // (startBattle parallel 이벤트만 통과시킴)
+        if (_checkSrpgMap()) return true;
+        return false;
+    }
+
+    // autorun + starting map event 억제
+    const _Game_Map_updateInterpreter = Game_Map.prototype.updateInterpreter;
+    Game_Map.prototype.updateInterpreter = function() {
+        if (_srpgShouldSuppressEvents()) return;
+        _Game_Map_updateInterpreter.call(this);
+    };
+
+    // parallel 이벤트 억제 (맵 이벤트)
+    // startBattle 스크립트를 가진 이벤트는 억제 예외 (전투 시작 이벤트)
+    const _Game_Event_updateParallel = Game_Event.prototype.updateParallel;
+    Game_Event.prototype.updateParallel = function() {
+        if (_srpgShouldSuppressEvents()) {
+            // 전투 시작 전 사전 억제 모드일 때, startBattle 이벤트는 통과
+            if (!SrpgManager._battleActive && this._srpgStartBattleEvent === undefined) {
+                this._srpgStartBattleEvent = false;
+                var evData = this.event();
+                if (evData && evData.pages) {
+                    for (var pi = 0; pi < evData.pages.length; pi++) {
+                        var list = evData.pages[pi].list || [];
+                        for (var ci = 0; ci < list.length; ci++) {
+                            if ((list[ci].code === 355 || list[ci].code === 655) &&
+                                ((list[ci].parameters || [])[0] || "").indexOf("startBattle") >= 0) {
+                                this._srpgStartBattleEvent = true;
+                                break;
+                            }
+                        }
+                        if (this._srpgStartBattleEvent) break;
+                    }
+                }
+            }
+            if (this._srpgStartBattleEvent) {
+                _Game_Event_updateParallel.call(this);
+                return;
+            }
+            return;
+        }
+        _Game_Event_updateParallel.call(this);
+    };
+
+    // parallel 커먼 이벤트 억제
+    const _Game_CommonEvent_update = Game_CommonEvent.prototype.update;
+    Game_CommonEvent.prototype.update = function() {
+        if (_srpgShouldSuppressEvents()) return;
+        _Game_CommonEvent_update.call(this);
+    };
+
+
 

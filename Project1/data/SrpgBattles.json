@@ -1,0 +1,24 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "섬멸전 기본",
+    "mode": "annihilation",
+    "koPolicy": "recover",
+    "ambush": "none",
+    "objective": "모든 적군의 섬멸",
+    "defeatCondition": "아군의 전멸",
+    "defenseTurns": 0,
+    "defenseTarget": 0,
+    "escapeCount": 0,
+    "escapeTurnLimit": 0,
+    "capCount": 0,
+    "capTurnsRequired": 0,
+    "commanders": {},
+    "escorts": [],
+    "escortFollow": 0,
+    "escortAI": "stay",
+    "victoryEvent": 0,
+    "defeatEvent": 0
+  }
+]

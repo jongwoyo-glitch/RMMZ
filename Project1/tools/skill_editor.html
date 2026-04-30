@@ -929,7 +929,7 @@ function efkPlay() {
     efkStop();
     var url = _efkBasePath + 'effects/' + effectName + '.efkefc';
     var scaleRaw = sel.selectedOptions[0] ? parseInt(sel.selectedOptions[0].dataset.scale) : 100;
-    var scale = Math.min((scaleRaw || 100) / 100, 1.5);
+    var scale = (scaleRaw || 100) / 100;
     var areaCells = state.area.length > 1 ? state.area : null;
     if(efkCache[effectName]) { _efkDoPlay(efkCache[effectName], scale, areaCells); return; }
     var eff = efkCtx.loadEffect(url, 1.0, function(){
@@ -947,22 +947,24 @@ function efkPlay() {
 function _efkDoPlay(eff, scale, areaCells) {
   var GRID_UNIT = 2.0;
   efkHandles = [];
+  // ★ SRPG_Core SrpgAnimScale.calcFromEffectTiles 동일 로직
+  // 범위 바운딩 박스 기준 스케일 = min(maxDim*0.7+0.3, 3.0)
+  var areaScale = 1.0;
   if(areaCells && areaCells.length > 1) {
-    var perScale = Math.min(scale, 1.5) / Math.max(1, Math.sqrt(areaCells.length)*0.8);
-    var cs = Math.min(perScale, 0.9);
+    var mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
     for(var i=0;i<areaCells.length;i++){
-      var wx = areaCells[i].dx * GRID_UNIT;
-      var wy = -areaCells[i].dy * GRID_UNIT;
-      var h = efkCtx.play(eff, wx, wy, 0);
-      if(h) h.setScale(cs, cs, cs);
-      efkHandles.push(h);
+      var dx=areaCells[i].dx, dy=areaCells[i].dy;
+      if(dx<mnX)mnX=dx; if(dx>mxX)mxX=dx;
+      if(dy<mnY)mnY=dy; if(dy>mxY)mxY=dy;
     }
-  } else {
-    var cs2 = Math.min(scale, 1.5);
-    var h2 = efkCtx.play(eff, 0, 0, 0);
-    if(h2) h2.setScale(cs2, cs2, cs2);
-    efkHandles.push(h2);
+    var maxDim = Math.max(mxX-mnX+1, mxY-mnY+1);
+    areaScale = Math.min(maxDim * 0.7 + 0.3, 3.0);
   }
+  var finalScale = scale * areaScale;
+  // 중심에 한 번만 재생 (범위 전체를 커버하는 크기)
+  var h2 = efkCtx.play(eff, 0, 0, 0);
+  if(h2) h2.setScale(finalScale, finalScale, finalScale);
+  efkHandles.push(h2);
   var info = document.getElementById('efk-info');
   var sel = document.getElementById('efk-anim-select');
   var opt = sel.selectedOptions[0];

@@ -1,0 +1,308 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "모험가 길드",
+    "type": "guild",
+    "bgImage": "facility_guild",
+    "actions": [
+      {
+        "id": "quest_board",
+        "name": "의뢰 게시판",
+        "handler": "openQuestBoard"
+      },
+      {
+        "id": "report",
+        "name": "의뢰 보고",
+        "handler": "reportQuest"
+      },
+      {
+        "id": "rank_check",
+        "name": "등급 확인",
+        "handler": "checkRank"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 2,
+    "name": "여행자의 주점",
+    "type": "tavern",
+    "bgImage": "facility_tavern",
+    "actions": [
+      {
+        "id": "drink",
+        "name": "식사",
+        "handler": "orderFood"
+      },
+      {
+        "id": "gossip",
+        "name": "정보 수집",
+        "handler": "gatherInfo"
+      },
+      {
+        "id": "recruit",
+        "name": "동료 모집",
+        "handler": "recruitMember"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 3,
+    "name": "중앙 시장",
+    "type": "shop",
+    "bgImage": "facility_market",
+    "actions": [
+      {
+        "id": "buy",
+        "name": "구매",
+        "handler": "openShop"
+      },
+      {
+        "id": "sell",
+        "name": "판매",
+        "handler": "openSell"
+      },
+      {
+        "id": "appraise",
+        "name": "감정",
+        "handler": "appraiseItem"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 4,
+    "name": "벨포드 대장간",
+    "type": "smithy",
+    "bgImage": "facility_smithy",
+    "actions": [
+      {
+        "id": "repair",
+        "name": "수리",
+        "handler": "repairEquip"
+      },
+      {
+        "id": "upgrade",
+        "name": "강화",
+        "handler": "upgradeEquip"
+      },
+      {
+        "id": "craft",
+        "name": "제작",
+        "handler": "craftItem"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 5,
+    "name": "나그네의 숙소",
+    "type": "inn",
+    "bgImage": "facility_inn",
+    "actions": [
+      {
+        "id": "rest",
+        "name": "숙박",
+        "handler": "restAtInn"
+      },
+      {
+        "id": "meeting",
+        "name": "회의",
+        "handler": "openMeeting"
+      },
+      {
+        "id": "save",
+        "name": "기록",
+        "handler": "openSave"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 6,
+    "name": "산악 용병단",
+    "type": "guild",
+    "bgImage": "facility_guild_highland",
+    "actions": [
+      {
+        "id": "quest_board",
+        "name": "의뢰 게시판",
+        "handler": "openQuestBoard"
+      },
+      {
+        "id": "report",
+        "name": "의뢰 보고",
+        "handler": "reportQuest"
+      },
+      {
+        "id": "rank_check",
+        "name": "등급 확인",
+        "handler": "checkRank"
+      },
+      {
+        "id": "arena",
+        "name": "모의전",
+        "handler": "openArena"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 7,
+    "name": "산골 주점",
+    "type": "tavern",
+    "bgImage": "facility_tavern_highland",
+    "actions": [
+      {
+        "id": "drink",
+        "name": "식사",
+        "handler": "orderFood"
+      },
+      {
+        "id": "gossip",
+        "name": "정보 수집",
+        "handler": "gatherInfo"
+      },
+      {
+        "id": "recruit",
+        "name": "동료 모집",
+        "handler": "recruitMember"
+      },
+      {
+        "id": "gamble",
+        "name": "도박",
+        "handler": "openGamble"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 8,
+    "name": "북부 교역소",
+    "type": "shop",
+    "bgImage": "facility_market_highland",
+    "actions": [
+      {
+        "id": "buy",
+        "name": "구매",
+        "handler": "openShop"
+      },
+      {
+        "id": "sell",
+        "name": "판매",
+        "handler": "openSell"
+      },
+      {
+        "id": "appraise",
+        "name": "감정",
+        "handler": "appraiseItem"
+      },
+      {
+        "id": "trade",
+        "name": "특산물",
+        "handler": "openSpecialTrade"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 9,
+    "name": "화산석 대장간",
+    "type": "smithy",
+    "bgImage": "facility_smithy_highland",
+    "actions": [
+      {
+        "id": "repair",
+        "name": "수리",
+        "handler": "repairEquip"
+      },
+      {
+        "id": "upgrade",
+        "name": "강화",
+        "handler": "upgradeEquip"
+      },
+      {
+        "id": "craft",
+        "name": "제작",
+        "handler": "craftItem"
+      },
+      {
+        "id": "enchant",
+        "name": "부여",
+        "handler": "enchantEquip"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 10,
+    "name": "산장 여관",
+    "type": "inn",
+    "bgImage": "facility_inn_highland",
+    "actions": [
+      {
+        "id": "rest",
+        "name": "숙박",
+        "handler": "restAtInn"
+      },
+      {
+        "id": "meeting",
+        "name": "회의",
+        "handler": "openMeeting"
+      },
+      {
+        "id": "save",
+        "name": "기록",
+        "handler": "openSave"
+      },
+      {
+        "id": "bath",
+        "name": "온천",
+        "handler": "openBath"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  },
+  {
+    "id": 11,
+    "name": "산신 신전",
+    "type": "temple",
+    "bgImage": "facility_temple_highland",
+    "actions": [
+      {
+        "id": "heal",
+        "name": "치료",
+        "handler": "healParty"
+      },
+      {
+        "id": "bless",
+        "name": "축복",
+        "handler": "requestBlessing"
+      },
+      {
+        "id": "donate",
+        "name": "헌금",
+        "handler": "donateGold"
+      },
+      {
+        "id": "divine",
+        "name": "신탁 확인",
+        "handler": "checkDivine"
+      }
+    ],
+    "npcs": [],
+    "mapId": 0
+  }
+]

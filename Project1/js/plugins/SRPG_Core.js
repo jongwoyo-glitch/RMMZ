@@ -132,6 +132,17 @@
  * @text SRPG 전투 종료
  * @desc 진행 중인 SRPG 전투를 종료합니다.
  *
+ * @command SetBattleConfig
+ * @text 전투 시나리오 지정
+ * @desc StartBattle 전에 호출하여 SrpgBattles.json의 시나리오를 동적 지정합니다.
+ *
+ * @arg configId
+ * @text 시나리오 ID
+ * @type number
+ * @min 1
+ * @default 1
+ * @desc SrpgBattles.json에서 사용할 전투 시나리오 번호
+ *
  * @param DefaultMov
  * @text 기본 이동력
  * @type number
@@ -195,6 +206,20 @@
 
     const pluginName = "SRPG_Core";
     const params = PluginManager.parameters(pluginName);
+
+    // ─── SrpgBattles.json 데이터 로딩 — 전투 시나리오 테이블 ───
+    window.$dataSrpgBattles = null;
+    const _DM_loadDatabase = DataManager.loadDatabase;
+    DataManager.loadDatabase = function() {
+        _DM_loadDatabase.call(this);
+        this.loadDataFile("$dataSrpgBattles", "SrpgBattles.json");
+    };
+    const _DM_isDatabaseLoaded = DataManager.isDatabaseLoaded;
+    DataManager.isDatabaseLoaded = function() {
+        if (!_DM_isDatabaseLoaded.call(this)) return false;
+        if (!window.$dataSrpgBattles) return false;
+        return true;
+    };
     const DEFAULT_MOV = Number(params["DefaultMov"] || 4);
     const DEFAULT_ATK_RANGE = Number(params["DefaultAtkRange"] || 1);
     const TILE = Number(params["TileSize"] || 48);
@@ -662,91 +687,134 @@
                 victoryEvent: 0,
                 defeatEvent: 0,
                 deployEnabled: true,
-                objective: ""
+                objective: "",
+                defeatCondition: ""
             };
             if (!note) return params;
 
-            // 전투 모드
-            const modeMatch = note.match(/<srpgBattleMode:(\w+)>/i);
-            if (modeMatch) params.mode = modeMatch[1];
-
-            // KO 정책
-            const koMatch = note.match(/<srpgKoPolicy:(\w+)>/i);
-            if (koMatch) params.koPolicy = koMatch[1];
-
-            // 기습
-            const ambushMatch = note.match(/<srpgAmbush:(\w+)>/i);
-            if (ambushMatch) params.ambush = ambushMatch[1];
-
-            // 대장전
-            const cmdRe = /<srpgCommander:(\d+):(\d+)>/gi;
-            let m;
-            while ((m = cmdRe.exec(note)) !== null) {
-                params.commanders[Number(m[1])] = Number(m[2]);
+            // ─── Phase 1: SrpgBattles.json에서 시나리오 로드 (우선) ───
+            const configMatch = note.match(/<srpgBattleConfig:(\d+)>/i);
+            if (configMatch && window.$dataSrpgBattles) {
+                const cfgId = Number(configMatch[1]);
+                const cfg = window.$dataSrpgBattles[cfgId];
+                if (cfg) {
+                    // 시나리오 귀속 필드만 복사 (맵 귀속 필드는 건드리지 않음)
+                    const SCENARIO_KEYS = [
+                        "mode", "koPolicy", "ambush", "objective", "defeatCondition",
+                        "defenseTurns", "defenseTarget", "escapeCount", "escapeTurnLimit",
+                        "capCount", "capTurnsRequired", "commanders", "escorts",
+                        "escortFollow", "escortAI", "victoryEvent", "defeatEvent"
+                    ];
+                    for (const k of SCENARIO_KEYS) {
+                        if (cfg[k] !== undefined && cfg[k] !== null) {
+                            params[k] = (typeof cfg[k] === "object")
+                                ? JSON.parse(JSON.stringify(cfg[k]))
+                                : cfg[k];
+                        }
+                    }
+                    console.log("[BattleModeChecker] Loaded SrpgBattles #" + cfgId + ": " + (cfg.name || cfg.mode));
+                } else {
+                    console.warn("[BattleModeChecker] SrpgBattles #" + cfgId + " not found!");
+                }
             }
 
-            // 호위전
-            const escortMatch = note.match(/<srpgEscort:([^>]+)>/i);
-            if (escortMatch) params.escorts = escortMatch[1].split(",").map(Number);
-            const escortFollowMatch = note.match(/<srpgEscortFollow:(\d+)>/i);
-            if (escortFollowMatch) params.escortFollow = Number(escortFollowMatch[1]);
-            const escortGoalMatch = note.match(/<srpgEscortGoal:(\d+),(\d+)>/i);
-            if (escortGoalMatch) params.escortGoal = { x: Number(escortGoalMatch[1]), y: Number(escortGoalMatch[2]) };
-            const escortAIMatch = note.match(/<srpgEscortAI:(\w+)>/i);
-            if (escortAIMatch) params.escortAI = escortAIMatch[1];
-
-            // 깃발전
-            const flagMatch = note.match(/<srpgFlag:(\d+),(\d+)>/i);
-            if (flagMatch) params.flagPos = { x: Number(flagMatch[1]), y: Number(flagMatch[2]) };
-            const flagBaseRe = /<srpgFlagBase:(\d+):(\d+),(\d+)>/gi;
-            while ((m = flagBaseRe.exec(note)) !== null) {
-                params.flagBases[Number(m[1])] = { x: Number(m[2]), y: Number(m[3]) };
+            // ─── Phase 2: 맵 노트태그 파싱 (SrpgBattles 미사용 시 폴백) ───
+            // SrpgBattles로 이미 로드된 경우에도 맵 노트태그가 있으면 덮어쓰기 가능
+            if (!configMatch) {
+                // 시나리오 귀속 필드 — SrpgBattles가 없을 때만 맵 노트에서 파싱
+                const modeMatch = note.match(/<srpgBattleMode:(\w+)>/i);
+                if (modeMatch) params.mode = modeMatch[1];
+                const koMatch = note.match(/<srpgKoPolicy:(\w+)>/i);
+                if (koMatch) params.koPolicy = koMatch[1];
+                const ambushMatch = note.match(/<srpgAmbush:(\w+)>/i);
+                if (ambushMatch) params.ambush = ambushMatch[1];
+                const cmdRe = /<srpgCommander:(\d+):(\d+)>/gi;
+                let m;
+                while ((m = cmdRe.exec(note)) !== null) {
+                    params.commanders[Number(m[1])] = Number(m[2]);
+                }
+                const escortMatch = note.match(/<srpgEscort:([^>]+)>/i);
+                if (escortMatch) params.escorts = escortMatch[1].split(",").map(Number);
+                const escortFollowMatch = note.match(/<srpgEscortFollow:(\d+)>/i);
+                if (escortFollowMatch) params.escortFollow = Number(escortFollowMatch[1]);
+                const escortGoalMatch = note.match(/<srpgEscortGoal:(\d+),(\d+)>/i);
+                if (escortGoalMatch) params.escortGoal = { x: Number(escortGoalMatch[1]), y: Number(escortGoalMatch[2]) };
+                const escortAIMatch = note.match(/<srpgEscortAI:(\w+)>/i);
+                if (escortAIMatch) params.escortAI = escortAIMatch[1];
+                const flagMatch = note.match(/<srpgFlag:(\d+),(\d+)>/i);
+                if (flagMatch) params.flagPos = { x: Number(flagMatch[1]), y: Number(flagMatch[2]) };
+                const flagBaseRe = /<srpgFlagBase:(\d+):(\d+),(\d+)>/gi;
+                while ((m = flagBaseRe.exec(note)) !== null) {
+                    params.flagBases[Number(m[1])] = { x: Number(m[2]), y: Number(m[3]) };
+                }
+                const capCountMatch = note.match(/<srpgCapCount:(\d+)>/i);
+                if (capCountMatch) params.capCount = Number(capCountMatch[1]);
+                const capTurnsMatch = note.match(/<srpgCapTurns:(\d+)>/i);
+                if (capTurnsMatch) params.capTurnsRequired = Number(capTurnsMatch[1]);
+                const defTurnsMatch = note.match(/<srpgDefenseTurns:(\d+)>/i);
+                if (defTurnsMatch) params.defenseTurns = Number(defTurnsMatch[1]);
+                const defTargetMatch = note.match(/<srpgDefenseTarget:(\d+)>/i);
+                if (defTargetMatch) params.defenseTarget = Number(defTargetMatch[1]);
+                const escCountMatch = note.match(/<srpgEscapeCount:(\d+)>/i);
+                if (escCountMatch) params.escapeCount = Number(escCountMatch[1]);
+                const escLimitMatch = note.match(/<srpgEscapeTurnLimit:(\d+)>/i);
+                if (escLimitMatch) params.escapeTurnLimit = Number(escLimitMatch[1]);
+                const vicMatch = note.match(/<srpgVictoryEvent:(\d+)>/i);
+                if (vicMatch) params.victoryEvent = Number(vicMatch[1]);
+                const defMatch = note.match(/<srpgDefeatEvent:(\d+)>/i);
+                if (defMatch) params.defeatEvent = Number(defMatch[1]);
+                const objMatch = note.match(/<srpgObjective:([^>]+)>/i);
+                if (objMatch) params.objective = objMatch[1].trim();
+                const defCondMatch = note.match(/<srpgDefeatCondition:([^>]+)>/i);
+                if (defCondMatch) params.defeatCondition = defCondMatch[1].trim();
             }
 
-            // 점령전
-            const capRe = /<srpgCapPoint:(\d+),(\d+)>/gi;
-            while ((m = capRe.exec(note)) !== null) {
-                params.capPoints.push({ x: Number(m[1]), y: Number(m[2]), owner: 0, gauge: 0 });
-            }
-            const capCountMatch = note.match(/<srpgCapCount:(\d+)>/i);
-            if (capCountMatch) params.capCount = Number(capCountMatch[1]);
-            const capTurnsMatch = note.match(/<srpgCapTurns:(\d+)>/i);
-            if (capTurnsMatch) params.capTurnsRequired = Number(capTurnsMatch[1]);
-
-            // 방어전
-            const defTurnsMatch = note.match(/<srpgDefenseTurns:(\d+)>/i);
-            if (defTurnsMatch) params.defenseTurns = Number(defTurnsMatch[1]);
-            const defTargetMatch = note.match(/<srpgDefenseTarget:(\d+)>/i);
-            if (defTargetMatch) params.defenseTarget = Number(defTargetMatch[1]);
-            const spawnRe = /<srpgSpawnWave:(\d+),(\d+),(\d+),(\d+)>/gi;
-            while ((m = spawnRe.exec(note)) !== null) {
-                params.spawnWaves.push({
-                    turn: Number(m[1]), enemyId: Number(m[2]),
-                    x: Number(m[3]), y: Number(m[4]), spawned: false
-                });
-            }
-
-            // 도망전
-            const escRegionMatch = note.match(/<srpgEscapeRegion:(\d+)>/i);
-            if (escRegionMatch) params.escapeRegion = Number(escRegionMatch[1]);
-            const escCountMatch = note.match(/<srpgEscapeCount:(\d+)>/i);
-            if (escCountMatch) params.escapeCount = Number(escCountMatch[1]);
-            const escLimitMatch = note.match(/<srpgEscapeTurnLimit:(\d+)>/i);
-            if (escLimitMatch) params.escapeTurnLimit = Number(escLimitMatch[1]);
-
-            // 이벤트
-            const vicMatch = note.match(/<srpgVictoryEvent:(\d+)>/i);
-            if (vicMatch) params.victoryEvent = Number(vicMatch[1]);
-            const defMatch = note.match(/<srpgDefeatEvent:(\d+)>/i);
-            if (defMatch) params.defeatEvent = Number(defMatch[1]);
-
-            // 배치 페이즈 활성화 여부
+            // ─── Phase 3: 맵 귀속 필드 (항상 맵 노트에서 파싱) ───
+            // 배치 페이즈
             const deployMatch = note.match(/<srpgDeployEnabled:(true|false)>/i);
             if (deployMatch) params.deployEnabled = deployMatch[1].toLowerCase() === "true";
 
-            // 전투 목표 텍스트
-            const objMatch = note.match(/<srpgObjective:([^>]+)>/i);
-            if (objMatch) params.objective = objMatch[1].trim();
+            // 좌표 기반 맵 귀속 데이터 (점령 거점, 깃발, 탈출구, 스폰)
+            const capRe = /<srpgCapPoint:(\d+),(\d+)>/gi;
+            let mc;
+            while ((mc = capRe.exec(note)) !== null) {
+                params.capPoints.push({ x: Number(mc[1]), y: Number(mc[2]), owner: 0, gauge: 0 });
+            }
+            const escRegionMatch = note.match(/<srpgEscapeRegion:(\d+)>/i);
+            if (escRegionMatch) params.escapeRegion = Number(escRegionMatch[1]);
+            const spawnRe = /<srpgSpawnWave:(\d+),(\d+),(\d+),(\d+)>/gi;
+            while ((mc = spawnRe.exec(note)) !== null) {
+                params.spawnWaves.push({
+                    turn: Number(mc[1]), enemyId: Number(mc[2]),
+                    x: Number(mc[3]), y: Number(mc[4]), spawned: false
+                });
+            }
+
+            // ─── Phase 4: 자동 기본값 (승리/패배 조건 텍스트) ───
+            if (!params.objective) {
+                const defaultObj = {
+                    annihilation: "모든 적군의 섬멸",
+                    commander: "적 대장 처치",
+                    defense: params.defenseTurns + "턴 방어",
+                    escape: "아군 " + params.escapeCount + "명 탈출",
+                    capture: "거점 점령",
+                    escort: "호위 대상 보호",
+                    flag: "적 깃발 탈취",
+                };
+                params.objective = defaultObj[params.mode] || "적 섬멸";
+            }
+            if (!params.defeatCondition) {
+                const defaultDef = {
+                    annihilation: "아군의 전멸",
+                    commander: "아군 대장 전사",
+                    defense: "방어 거점 함락",
+                    escape: "턴 제한 초과",
+                    capture: "아군 전멸",
+                    escort: "호위 대상 전사",
+                    flag: "아군 깃발 탈취당함",
+                };
+                params.defeatCondition = defaultDef[params.mode] || "아군 전멸";
+            }
 
             // 스폰존 기반 증원 (zone 모드): <srpgSpawnWave:턴,적ID,zone,팀ID>
             const spawnZoneRe = /<srpgSpawnWave:(\d+),(\d+),zone,(\d+)>/gi;
@@ -1608,6 +1676,21 @@
             }
             this._states.push({ id: stateId, turnsLeft: turns || 3 });
             console.log(`[SRPG] ${this.name}: 상태 ${stateId} 부여 (${turns}턴)`);
+            // ★ 상태 부여 플로팅 텍스트 피드백
+            if (typeof SrpgManager !== 'undefined' && SrpgManager._battleActive) {
+                const stData = (typeof $dataStates !== 'undefined') ? $dataStates[stateId] : null;
+                const stName = stData ? stData.name : `상태${stateId}`;
+                const sx = this.event ? this.event.x : (this.x || 0);
+                const sy = this.event ? this.event.y : (this.y || 0);
+                const STATE_COLORS = {
+                    32: "#ff6622", 33: "#44aaff", 34: "#88ccff", 35: "#00ccff",
+                    36: "#ffff44", 37: "#ffee00", 38: "#88ff00", 39: "#aa6600",
+                    40: "#ff2222", 41: "#cc8844", 42: "#aaddff", 43: "#ffffaa",
+                    44: "#8844aa", 45: "#664488", 46: "#886644"
+                };
+                const color = STATE_COLORS[stateId] || "#ccddff";
+                SrpgManager._addPopup(sx, sy, `+${stName}`, color, true);
+            }
         }
 
         addState(stateId, turns) {
@@ -1643,7 +1726,16 @@
         }
 
         removeState(stateId) {
+            const had = this._states.some(s => s.id === stateId);
             this._states = this._states.filter(s => s.id !== stateId);
+            // ★ 상태 해제 플로팅 텍스트
+            if (had && typeof SrpgManager !== 'undefined' && SrpgManager._battleActive) {
+                const stData = (typeof $dataStates !== 'undefined') ? $dataStates[stateId] : null;
+                const stName = stData ? stData.name : `상태${stateId}`;
+                const sx = this.event ? this.event.x : (this.x || 0);
+                const sy = this.event ? this.event.y : (this.y || 0);
+                SrpgManager._addPopup(sx, sy, `-${stName}`, "#aaaaaa", true);
+            }
         }
 
         hasState(stateId) {
@@ -3743,7 +3835,18 @@
             const hitType = (() => {
                 const sk = this.getSkillData(skillId);
                 return (sk && sk.hitType != null) ? sk.hitType : 1;
-            })();
+            
+    // ═══ 장판 수풀(Bush) 효과 — Game_CharacterBase 오버라이드 ═══
+    const _orig_refreshBushDepth = Game_CharacterBase.prototype.refreshBushDepth;
+    Game_CharacterBase.prototype.refreshBushDepth = function() {
+        _orig_refreshBushDepth.call(this);
+        // SRPG 장판 위에 있으면 수풀 효과 적용 (하반부 반투명)
+        if (typeof SrpgField !== 'undefined' && SrpgField.hasBushFieldAt(this.x, this.y)) {
+            this._bushDepth = 12;
+        }
+    };
+
+})();
             const predIsPhysical = (hitType === 1);
 
             // 배면/측면 데미지 배율 (예측, 물리만)
@@ -4528,9 +4631,11 @@
                 // 단계: "warning" → "rising" → "falling" → "done"
                 phase: "warning",
                 warningTimer: meta.warningDuration,
-                // 포물선 파라미터 — arcHeight=0이면 45도 기반 동적 계산
+                // 반원 파라미터 — arcHeight=0이면 출발~도착 총 거리 기반 반원
+                _totalDist: Math.sqrt((finalX - from.x) ** 2 + (finalY - from.y) ** 2) || 48,
+                _pathAngle: Math.atan2(finalY - from.y, finalX - from.x),
                 arcHeight: meta.arcHeight > 0 ? meta.arcHeight
-                    : Math.abs(finalX - from.x) * 0.5,
+                    : (Math.sqrt((finalX - from.x) ** 2 + (finalY - from.y) ** 2) || 48) / 2,
                 flightProgress: 0,        // 0 → 1
                 // 3-phase speed: launch(0~출발), flight(상승중), fall(하강)
                 baseFlightSpeed: meta.speed * 0.015,
@@ -4540,8 +4645,8 @@
                 flightSpeed: meta.speed * 0.015,  // active speed (changes per phase)
                 // 카메라 팬
                 cameraPan: meta.cameraPan,
-                originalScrollX: 0,
-                originalScrollY: 0,
+                originalScrollX: $gameMap.displayX(),
+                originalScrollY: $gameMap.displayY(),
                 panDone: false,
                 // 프레임 애니
                 frame: 0, frameTimer: 0,
@@ -4708,10 +4813,7 @@
                     this._updateArtilleryFrame(p);
 
                     // 회전 (낙하감)
-                    if (p.meta.rotate) {
-                        const fallAngle = Math.PI * 0.5 + (p.flightProgress - 0.5) * Math.PI * 0.3;
-                        p.sprite.rotation = fallAngle;
-                    }
+                    // 회전은 _updateArtilleryPosition에서 접선 기반으로 처리
 
                     if (p.flightProgress >= 1) {
                         p.sprite.x = p.finalX;
@@ -4731,13 +4833,22 @@
         },
 
         // 포물선 위치 계산
+        // ★ 반원 궤적 위치 계산 (대각선 틸트 포함)
         _updateArtilleryPosition(p) {
-            const t = p.flightProgress;
-            // 선형 보간 (X, Y) + 포물선 높이 오프셋
+            const t = p.flightProgress;  // 0 → 1
+            const TILT = 0.35;  // 대각선 입체감 계수
+
+            // 직선 보간 (기준선)
             const lerpX = p.fromX + (p.finalX - p.fromX) * t;
             const lerpY = p.fromY + (p.finalY - p.fromY) * t;
-            // 포물선: -4h*t*(t-1) → 최대높이 h at t=0.5
-            const arcY = -4 * p.arcHeight * t * (t - 1);
+
+            // 반원: sin(πt) → 0에서 시작, 0.5에서 최대(=arcHeight), 1에서 0
+            const theta = Math.PI * t;
+            const arcH = p.arcHeight * Math.sin(theta);
+
+            // 오프셋: 항상 위로(-Y) + 대각선 경로 시 수평 틸트(입체감)
+            const yOffset = -arcH;
+            const xOffset = arcH * Math.sin(p._pathAngle) * TILT;
 
             // 화면 스크롤 보정
             const tw = $gameMap.tileWidth();
@@ -4745,8 +4856,18 @@
             const scrOffX = (p.originalScrollX - $gameMap.displayX()) * tw;
             const scrOffY = (p.originalScrollY - $gameMap.displayY()) * th;
 
-            p.sprite.x = lerpX + scrOffX;
-            p.sprite.y = lerpY - arcY + scrOffY;
+            p.sprite.x = lerpX + xOffset + scrOffX;
+            p.sprite.y = lerpY + yOffset + scrOffY;
+
+            // ★ 스프라이트 회전: 경로 접선 방향으로 자동 정렬
+            if (p.meta.rotate) {
+                const pathDx = p.finalX - p.fromX;
+                const pathDy = p.finalY - p.fromY;
+                // 접선 = d(position)/dt
+                const tanX = pathDx + p.arcHeight * Math.PI * Math.cos(theta) * Math.sin(p._pathAngle) * TILT;
+                const tanY = pathDy - p.arcHeight * Math.PI * Math.cos(theta);
+                p.sprite.rotation = Math.atan2(tanY, tanX);
+            }
         },
 
         // Artillery 프레임 애니메이션
@@ -5669,6 +5790,11 @@
             return this._clouds.find(c => c.containsTile(x, y)) || null;
         },
 
+        /** 해당 타일의 모든 구름 반환 (복수) */
+        getCloudsAt(x, y) {
+            return this._clouds.filter(c => c.containsTile(x, y));
+        },
+
         // 해당 타일의 모든 장판 (중첩 가능 — 장판+구름)
         getAllFieldsAt(x, y) {
             const result = [];
@@ -5969,12 +6095,11 @@
         checkUnitFieldStatus(unit) {
             const uid = unit.id || unit.name;
             const tracked = this._fieldAppliedStates[uid];
-            if (!tracked) return;
 
             const ux = unit.event ? unit.event.x : (unit.x || 0);
             const uy = unit.event ? unit.event.y : (unit.y || 0);
 
-            for (let i = tracked.length - 1; i >= 0; i--) {
+            if (tracked) for (let i = tracked.length - 1; i >= 0; i--) {
                 const entry = tracked[i];
                 // 해당 장판이 아직 존재하는지
                 const field = this._surfaces.find(s => s.id === entry.fieldId)
@@ -5994,7 +6119,7 @@
                 }
             }
 
-            if (tracked.length === 0) delete this._fieldAppliedStates[uid];
+            if (tracked && tracked.length === 0) delete this._fieldAppliedStates[uid];
 
             // 장판 밖으로 나온 유닛의 저주 필드 효과 정리
             if (unit._cursedFieldEffects) {
@@ -6443,6 +6568,104 @@
             field.tiles.push(...newTiles);
         },
     };
+    // ─── SRPG 전투 중 맵 이벤트 완전 억제 ───
+    // postDeploy 이외의 전투 페이즈에서는 autorun/parallel/common 이벤트 모두 차단.
+    // ─── SRPG 맵 감지 캐시 ───
+    // 맵에 startBattle 호출 parallel 이벤트가 있으면 _battleActive 전에도 억제
+    var _srpgMapDetected = false;
+    var _srpgMapCheckDone = -1; // 마지막 체크한 맵 ID
+
+    function _checkSrpgMap() {
+        if (!$dataMap || !$dataMap.events) return false;
+        var mapId = $gameMap ? $gameMap.mapId() : -1;
+        if (_srpgMapCheckDone === mapId) return _srpgMapDetected;
+        _srpgMapCheckDone = mapId;
+        _srpgMapDetected = false;
+        for (var i = 0; i < $dataMap.events.length; i++) {
+            var ev = $dataMap.events[i];
+            if (!ev || !ev.pages) continue;
+            for (var pi = 0; pi < ev.pages.length; pi++) {
+                var page = ev.pages[pi];
+                // parallel(4) 또는 autorun(3) + startBattle 스크립트
+                if (page.trigger === 4 || page.trigger === 3) {
+                    var list = page.list || [];
+                    for (var ci = 0; ci < list.length; ci++) {
+                        if (list[ci].code === 355 || list[ci].code === 655) {
+                            var script = (list[ci].parameters || [])[0] || "";
+                            if (script.indexOf("startBattle") >= 0) {
+                                _srpgMapDetected = true;
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    function _srpgShouldSuppressEvents() {
+        if (typeof SrpgManager === 'undefined') return false;
+        // 이미 전투 활성 — 기존 로직
+        if (SrpgManager._battleActive) {
+            const phase = SrpgManager._phase;
+            if (phase === "postDeploy") return false;
+            if (phase === "battleEnd" || phase === "idle") return false;
+            return true;
+        }
+        // 전투 시작 전이지만 SRPG 맵이면 일반 이벤트 억제
+        // (startBattle parallel 이벤트만 통과시킴)
+        if (_checkSrpgMap()) return true;
+        return false;
+    }
+
+    // autorun + starting map event 억제
+    const _Game_Map_updateInterpreter = Game_Map.prototype.updateInterpreter;
+    Game_Map.prototype.updateInterpreter = function() {
+        if (_srpgShouldSuppressEvents()) return;
+        _Game_Map_updateInterpreter.call(this);
+    };
+
+    // parallel 이벤트 억제 (맵 이벤트)
+    // startBattle 스크립트를 가진 이벤트는 억제 예외 (전투 시작 이벤트)
+    const _Game_Event_updateParallel = Game_Event.prototype.updateParallel;
+    Game_Event.prototype.updateParallel = function() {
+        if (_srpgShouldSuppressEvents()) {
+            // 전투 시작 전 사전 억제 모드일 때, startBattle 이벤트는 통과
+            if (!SrpgManager._battleActive && this._srpgStartBattleEvent === undefined) {
+                this._srpgStartBattleEvent = false;
+                var evData = this.event();
+                if (evData && evData.pages) {
+                    for (var pi = 0; pi < evData.pages.length; pi++) {
+                        var list = evData.pages[pi].list || [];
+                        for (var ci = 0; ci < list.length; ci++) {
+                            if ((list[ci].code === 355 || list[ci].code === 655) &&
+                                ((list[ci].parameters || [])[0] || "").indexOf("startBattle") >= 0) {
+                                this._srpgStartBattleEvent = true;
+                                break;
+                            }
+                        }
+                        if (this._srpgStartBattleEvent) break;
+                    }
+                }
+            }
+            if (this._srpgStartBattleEvent) {
+                _Game_Event_updateParallel.call(this);
+                return;
+            }
+            return;
+        }
+        _Game_Event_updateParallel.call(this);
+    };
+
+    // parallel 커먼 이벤트 억제
+    const _Game_CommonEvent_update = Game_CommonEvent.prototype.update;
+    Game_CommonEvent.prototype.update = function() {
+        if (_srpgShouldSuppressEvents()) return;
+        _Game_CommonEvent_update.call(this);
+    };
+
+
 
 // ─── SRPG_SM.js ─────────────────────────────────────────────────────────────
 // 빌드 순서: 2/3 (중간 계층 — 메인 상태머신)
@@ -6503,6 +6726,7 @@
         _battleActive: false,
         _battleMode: "annihilation",
         _battleModeParams: null,
+        _pendingBattleConfigId: 0, // 이벤트 커맨드로 설정된 전투 시나리오 ID
         _koActorIds: [],
         _escapedCount: 0,
         _turnNumber: 0,
@@ -6550,7 +6774,23 @@
             // ─── 맵 노트 파싱: 팀 관계 + 전투 모드 ───
             const mapNote = $dataMap ? ($dataMap.note || "") : "";
             SrpgAlliance.parseMapNote(mapNote);
-            this._battleModeParams = BattleModeChecker.parseMapNote(mapNote);
+            // 이벤트 커맨드로 setBattleConfig(id)가 호출된 경우 해당 ID 우선 사용
+            let effectiveNote = mapNote;
+            if (this._pendingBattleConfigId > 0) {
+                // 맵 노트에 srpgBattleConfig가 없으면 동적으로 삽입
+                if (!/<srpgBattleConfig:\d+>/i.test(effectiveNote)) {
+                    effectiveNote += "\n<srpgBattleConfig:" + this._pendingBattleConfigId + ">";
+                } else {
+                    // 이미 있으면 교체
+                    effectiveNote = effectiveNote.replace(
+                        /<srpgBattleConfig:\d+>/i,
+                        "<srpgBattleConfig:" + this._pendingBattleConfigId + ">"
+                    );
+                }
+                console.log("[SRPG] Dynamic battle config override: #" + this._pendingBattleConfigId);
+                this._pendingBattleConfigId = 0;
+            }
+            this._battleModeParams = BattleModeChecker.parseMapNote(effectiveNote);
             this._battleMode = this._battleModeParams.mode;
             // 리전 기반 구역 스캔 + 병합
             if ($dataMap) {
@@ -6588,9 +6828,8 @@
                 if (u.event) this._unitMap.set(u.event, u);
             }
             console.log("[SRPG] Battle started. Units:", this._units.length, "Mode:", this._battleMode);
-            this._showBanner("전투 시작!", "#ffdd44");
-            this._phase = "banner";
-            this._subPhase = "startBanner";
+            // 배치 페이즈를 먼저 진행, 배너는 배치 완료 후 표시
+            this._enterDeployOrBattle();
 
             // UI 초기화
             this._turnPredictDirty = true;
@@ -6674,18 +6913,36 @@
             const ambushed = this._ambushTeam && !SrpgAlliance.isPlayerTeam(this._ambushTeam);
             if (deployEnabled && this._hasDeployableUnits() && !ambushed) {
                 this._phase = "deployment";
-                this._subPhase = "selectUnit";
+                this._subPhase = "selectUnit"; // selectUnit → placeUnit → confirm
                 this._deployUnits = this.allyUnits().slice();
-                this._deployPlaced = [];
-                this._deploySelectedIdx = 0;
+                this._deployStatus = {}; // idx → 'waiting'|'holding'|'placed'
+                this._deployPositions = {}; // idx → {x,y} 배치 확정 좌표
+                this._deployInitialPos = {}; // idx → {x,y} 원래 이벤트 좌표
+                this._deploySelectedIdx = 0; // 첫 유닛 자동 선택
                 this._deployRegion = this._getDeployRegion();
+                this._deployConfirmOpen = false; // 확인 모달 오픈 여부
+                // 배치 커서 초기 위치: 배치 구역 중앙
+                this._deployCursorX = 0;
+                this._deployCursorY = 0;
+                this._initDeployCursorCenter();
                 this._inputDelay = 15;
+                // 초기 위치 저장 + 유닛을 맵 밖으로 이동 (대기 상태)
+                for (let i = 0; i < this._deployUnits.length; i++) {
+                    const u = this._deployUnits[i];
+                    this._deployInitialPos[i] = { x: u.event.x, y: u.event.y };
+                    this._deployStatus[i] = "waiting";
+                    // 맵 밖으로 이동 + 투명 처리 (완전 숨김)
+                    u.event.setPosition(-10, -10);
+                    u.event.setTransparent(true);
+                }
                 console.log("[SRPG] Entering deployment phase. Units:", this._deployUnits.length);
             } else {
                 if (!deployEnabled) console.log("[SRPG] Deployment disabled by notetag.");
                 else if (ambushed) console.log("[SRPG] Deployment skipped — player is ambushed.");
-                this._phase = "turnAdvance";
-                this._subPhase = "none";
+                // 배치 스킵 시에도 이벤트 대기 후 배너 표시
+                this._phase = "postDeploy";
+                this._subPhase = "waitEvents";
+                this._postDeployWait = 10;
             }
         },
 
@@ -6743,79 +7000,484 @@
                 return;
             }
 
-            // 현재 선택 유닛 하이라이트
-            const selectedUnit = allies[this._deploySelectedIdx];
-            if (!selectedUnit) { this._finishDeployment(); return; }
-
-            // 키보드 입력
-            if (Input.isTriggered("left") || Input.isTriggered("up")) {
-                this._deploySelectedIdx = (this._deploySelectedIdx - 1 + allies.length) % allies.length;
-                SoundManager.playCursor();
-                this._uiDirty = true;
-            }
-            if (Input.isTriggered("right") || Input.isTriggered("down")) {
-                this._deploySelectedIdx = (this._deploySelectedIdx + 1) % allies.length;
-                SoundManager.playCursor();
-                this._uiDirty = true;
+            // 마우스 엣지 스크롤 (브라우즈와 동일)
+            this._browseEdgeScroll();
+            // 확인 모달이 열려있으면 모달 입력만 처리
+            if (this._deployConfirmOpen) {
+                this._updateDeployConfirm();
+                return;
             }
 
-            // 마우스/터치 클릭 → 배치 위치 지정
-            if (TouchInput.isTriggered()) {
-                const tx = $gameMap.canvasToMapX(TouchInput.x);
-                const ty = $gameMap.canvasToMapY(TouchInput.y);
-
-                // 배치 타일 클릭 → 유닛 이동
-                if (this._isDeployTile(tx, ty)) {
-                    // 해당 위치에 이미 다른 유닛이 있는지 체크
-                    const occupant = this.unitAt(tx, ty);
-                    if (!occupant || occupant === selectedUnit) {
-                        // 이동 (unitAt은 event 위치 기반이므로 별도 점유 관리 불필요)
-                        selectedUnit.event.setPosition(tx, ty);
-                        // 다음 유닛으로
-                        if (!this._deployPlaced.includes(this._deploySelectedIdx)) {
-                            this._deployPlaced.push(this._deploySelectedIdx);
+            // ─── subPhase: selectUnit (유닛 리스트에서 선택) ───
+            if (this._subPhase === "selectUnit") {
+                // 키보드: 상하로 유닛 선택
+                if (Input.isTriggered("up")) {
+                    this._deployMoveSelection(-1);
+                }
+                if (Input.isTriggered("down")) {
+                    this._deployMoveSelection(1);
+                }
+                // OK → 선택한 유닛을 홀딩 모드(placeUnit)로 전환
+                if (Input.isTriggered("ok") && this._deploySelectedIdx >= 0) {
+                    this._deployEnterHolding(this._deploySelectedIdx);
+                }
+                // 마우스/터치
+                if (TouchInput.isTriggered()) {
+                    const hitIdx = this._deployHitTestPanel(TouchInput.x, TouchInput.y);
+                    if (hitIdx >= 0) {
+                        if (this._deployStatus[hitIdx] === "placed") {
+                            // 배치 완료 유닛 재배치 (커서를 해당 유닛 위치로)
+                            this._deployCursorX = allies[hitIdx].event.x;
+                            this._deployCursorY = allies[hitIdx].event.y;
+                            this._deployEnterHolding(hitIdx);
+                        } else if (this._deployStatus[hitIdx] === "waiting") {
+                            this._deploySelectedIdx = hitIdx;
+                            this._deployEnterHolding(hitIdx);
                         }
-                        this._deploySelectedIdx = (this._deploySelectedIdx + 1) % allies.length;
+                        this._uiDirty = true;
+                    } else {
+                        // 맵 클릭: 배치된 유닛 클릭 → 재배치
+                        const tx = $gameMap.canvasToMapX(TouchInput.x);
+                        const ty = $gameMap.canvasToMapY(TouchInput.y);
+                        for (let i = 0; i < allies.length; i++) {
+                            if (this._deployStatus[i] === "placed" && allies[i].event.x === tx && allies[i].event.y === ty) {
+                                this._deployCursorX = tx;
+                                this._deployCursorY = ty;
+                                this._deployEnterHolding(i);
+                                break;
+                            }
+                        }
+                        // 배치 구역 빈 타일 클릭 → 현재 선택 유닛이 waiting이면 바로 배치 모드
+                        if (this._deploySelectedIdx >= 0 && this._deployStatus[this._deploySelectedIdx] === "waiting") {
+                            if (this._isDeployTile(tx, ty) && !this.unitAt(tx, ty)) {
+                                this._deployCursorX = tx;
+                                this._deployCursorY = ty;
+                                this._deployEnterHolding(this._deploySelectedIdx);
+                            }
+                        }
+                    }
+                }
+                // ESC/Cancel → 전원 배치 완료 확인
+                if (Input.isTriggered("cancel") || Input.isTriggered("shift")) {
+                    if (this._deployAllPlaced()) {
+                        this._deployConfirmOpen = true;
+                        this._deployConfirmIdx = 0;
                         SoundManager.playOk();
                         this._uiDirty = true;
                     } else {
                         SoundManager.playBuzzer();
                     }
                 }
-                // 아군 유닛 클릭 → 선택 변경
-                else {
-                    for (let i = 0; i < allies.length; i++) {
-                        if (allies[i].event.x === tx && allies[i].event.y === ty) {
-                            this._deploySelectedIdx = i;
+            }
+            // ─── subPhase: placeUnit (홀딩 모드 — 액터=커서, 맵에서 자리 선택) ───
+            else if (this._subPhase === "placeUnit") {
+                const holdUnit = allies[this._deploySelectedIdx];
+                if (!holdUnit) { this._subPhase = "selectUnit"; return; }
+
+                // 키보드: 방향키로 액터 커서 이동 (배치 구역 내)
+                let dx = 0, dy = 0;
+                if (Input.isTriggered("left"))  dx = -1;
+                if (Input.isTriggered("right")) dx = 1;
+                if (Input.isTriggered("up"))    dy = -1;
+                if (Input.isTriggered("down"))  dy = 1;
+                if (dx !== 0 || dy !== 0) {
+                    const nx = holdUnit.event.x + dx;
+                    const ny = holdUnit.event.y + dy;
+                    if (this._isDeployTile(nx, ny)) {
+                        const occ = this.unitAt(nx, ny);
+                        if (!occ || occ === holdUnit) {
+                            holdUnit.event.setPosition(nx, ny);
+                            this._deployCursorX = nx;
+                            this._deployCursorY = ny;
+                            // 화면 자동 추적: 유닛이 화면 밖으로 나가면 스크롤
+                            this._deployScrollToTile(nx, ny);
                             SoundManager.playCursor();
                             this._uiDirty = true;
-                            break;
                         }
                     }
                 }
-            }
 
-            // Enter/OK → 배치 확정
-            if (Input.isTriggered("ok")) {
-                this._finishDeployment();
-            }
+                // ── 마우스 호버: 배치 구역 내 타일로 유닛 미리보기 이동 ──
+                {
+                    const hx = $gameMap.canvasToMapX(TouchInput.x);
+                    const hy = $gameMap.canvasToMapY(TouchInput.y);
+                    if (this._isDeployTile(hx, hy) &&
+                        (hx !== holdUnit.event.x || hy !== holdUnit.event.y)) {
+                        const occ = this.unitAt(hx, hy);
+                        if (!occ || occ === holdUnit) {
+                            holdUnit.event.setPosition(hx, hy);
+                            this._deployCursorX = hx;
+                            this._deployCursorY = hy;
+                            this._uiDirty = true;
+                        }
+                    }
+                }
 
-            // ESC/Cancel → 배치 리셋 (전원 초기 위치로)
-            if (Input.isTriggered("cancel")) {
-                // 초기 위치는 이미 이벤트 원래 위치이므로 리셋 불필요
-                // 단순히 "정말 시작?" 확인 생략하고 진행
-                this._finishDeployment();
+                // 마우스/터치 클릭
+                if (TouchInput.isTriggered()) {
+                    const tx = $gameMap.canvasToMapX(TouchInput.x);
+                    const ty = $gameMap.canvasToMapY(TouchInput.y);
+                    const panelHit = this._deployHitTestPanel(TouchInput.x, TouchInput.y);
+                    if (panelHit >= 0 && panelHit !== this._deploySelectedIdx) {
+                        // 다른 유닛 패널 클릭 → 현재 취소 + 새 유닛으로 전환
+                        this._deployCancelHolding(this._deploySelectedIdx);
+                        if (this._deployStatus[panelHit] === "placed") {
+                            this._deployCursorX = allies[panelHit].event.x;
+                            this._deployCursorY = allies[panelHit].event.y;
+                        }
+                        this._deployEnterHolding(panelHit);
+                    } else if (this._isDeployTile(tx, ty)) {
+                        const occ = this.unitAt(tx, ty);
+                        if (!occ || occ === holdUnit) {
+                            // 배치 확정: 클릭 위치로 이동 후 확정
+                            holdUnit.event.setPosition(tx, ty);
+                            this._deployCursorX = tx;
+                            this._deployCursorY = ty;
+                            this._deployStatus[this._deploySelectedIdx] = "placed";
+                            this._deployPositions[this._deploySelectedIdx] = { x: tx, y: ty };
+                            SoundManager.playOk();
+                            this._deployAutoSelectNext();
+                            this._uiDirty = true;
+                        } else {
+                            SoundManager.playBuzzer();
+                        }
+                    }
+                }
+
+                // OK → 현재 위치에 배치 확정
+                if (Input.isTriggered("ok")) {
+                    const hx = holdUnit.event.x;
+                    const hy = holdUnit.event.y;
+                    if (this._isDeployTile(hx, hy)) {
+                        const occ = this.unitAt(hx, hy);
+                        if (!occ || occ === holdUnit) {
+                            this._deployStatus[this._deploySelectedIdx] = "placed";
+                            this._deployPositions[this._deploySelectedIdx] = { x: hx, y: hy };
+                            this._deployCursorX = hx;
+                            this._deployCursorY = hy;
+                            SoundManager.playOk();
+                            this._deployAutoSelectNext();
+                            this._uiDirty = true;
+                        }
+                    }
+                }
+
+                // ESC → 홀딩 취소, 유닛 리스트로 복귀
+                if (Input.isTriggered("cancel")) {
+                    this._deployCancelHolding(this._deploySelectedIdx);
+                    SoundManager.playCancel();
+                    this._uiDirty = true;
+                }
             }
         },
 
-        _finishDeployment() {
-            this._phase = "turnAdvance";
-            this._subPhase = "none";
-            this._deployUnits = null;
-            this._deployPlaced = null;
-            this._deployRegion = null;
+        /** 유닛 선택 인덱스 이동 */
+        _deployMoveSelection(dir) {
+            const len = this._deployUnits.length;
+            if (len === 0) return;
+            if (this._deploySelectedIdx < 0) {
+                this._deploySelectedIdx = dir > 0 ? 0 : len - 1;
+            } else {
+                this._deploySelectedIdx = (this._deploySelectedIdx + dir + len) % len;
+            }
+            SoundManager.playCursor();
             this._uiDirty = true;
-            console.log("[SRPG] Deployment complete. Starting battle.");
+        },
+
+        /** 유닛을 홀딩 모드로 진입 — 커서 위치에 스프라이트 표시 */
+        _deployEnterHolding(idx) {
+            const u = this._deployUnits[idx];
+            if (!u) return;
+            this._deploySelectedIdx = idx;
+            this._subPhase = "placeUnit";
+            if (this._deployStatus[idx] === "placed") {
+                // 이미 배치된 유닛 → 현재 위치에서 재배치 (커서도 동기화)
+                this._deployCursorX = u.event.x;
+                this._deployCursorY = u.event.y;
+            } else {
+                // 대기 유닛 → 커서 위치에 배치 (점유 중이면 근처 빈 타일)
+                let cx = this._deployCursorX;
+                let cy = this._deployCursorY;
+                const occ = this.unitAt(cx, cy);
+                if (occ && occ !== u) {
+                    const empty = this._deployFindEmptyTileNear(cx, cy);
+                    if (empty) { cx = empty.x; cy = empty.y; }
+                }
+                u.event.setPosition(cx, cy);
+                this._deployCursorX = cx;
+                this._deployCursorY = cy;
+            }
+            this._deployStatus[idx] = "holding";
+            u.event.setTransparent(false);
+            SoundManager.playOk();
+            this._uiDirty = true;
+        },
+
+        /** 홀딩 취소 — 유닛을 맵 밖으로 */
+        _deployCancelHolding(idx) {
+            const u = this._deployUnits[idx];
+            if (!u) return;
+            this._deployStatus[idx] = "waiting";
+            u.event.setPosition(-10, -10);
+            u.event.setTransparent(true); // 다시 숨김
+            delete this._deployPositions[idx];
+            this._subPhase = "selectUnit";
+        },
+
+        /** 배치 가능 구역의 빈 타일 찾기 */
+        _deployFindEmptyTile() {
+            if (!this._deployRegion) return null;
+            for (const key of this._deployRegion) {
+                const parts = key.split(",");
+                const tx = Number(parts[0]);
+                const ty = Number(parts[1]);
+                if (!this.unitAt(tx, ty)) return { x: tx, y: ty };
+            }
+            return null;
+        },
+
+        /** (cx,cy) 근처에서 빈 배치 타일 찾기 (맨해튼 거리순) */
+        _deployFindEmptyTileNear(cx, cy) {
+            if (!this._deployRegion) return this._deployFindEmptyTile();
+            let best = null, bestDist = 9999;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                const tx = Number(p[0]), ty = Number(p[1]);
+                if (this.unitAt(tx, ty)) continue;
+                const d = Math.abs(tx - cx) + Math.abs(ty - cy);
+                if (d < bestDist) { bestDist = d; best = { x: tx, y: ty }; }
+            }
+            return best || this._deployFindEmptyTile();
+        },
+
+        /** 배치 구역 중앙 좌표로 커서 초기화 */
+        _initDeployCursorCenter() {
+            if (!this._deployRegion || this._deployRegion.size === 0) return;
+            let sumX = 0, sumY = 0, count = 0;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                sumX += Number(p[0]); sumY += Number(p[1]); count++;
+            }
+            // 중앙 좌표 계산 후 가장 가까운 배치 타일 찾기
+            const avgX = Math.round(sumX / count);
+            const avgY = Math.round(sumY / count);
+            let best = null, bestDist = 9999;
+            for (const key of this._deployRegion) {
+                const p = key.split(",");
+                const tx = Number(p[0]), ty = Number(p[1]);
+                const d = Math.abs(tx - avgX) + Math.abs(ty - avgY);
+                if (d < bestDist) { bestDist = d; best = { x: tx, y: ty }; }
+            }
+            if (best) {
+                this._deployCursorX = best.x;
+                this._deployCursorY = best.y;
+                // 배치 시작 시 커서 위치로 화면 이동
+                this._deployScrollToTile(best.x, best.y);
+            }
+        },
+
+        /** 타일 좌표가 화면 밖이면 부드럽게 스크롤 */
+        _deployScrollToTile(tx, ty) {
+            const tw = $gameMap.tileWidth();
+            const th = $gameMap.tileHeight();
+            const margin = 3; // 화면 가장자리에서 3타일 여유
+            const dx = $gameMap.displayX();
+            const dy = $gameMap.displayY();
+            const screenW = $gameMap.screenTileX();
+            const screenH = $gameMap.screenTileY();
+            let newDx = dx, newDy = dy;
+            // 좌우 범위 체크
+            if (tx < dx + margin) newDx = tx - margin;
+            else if (tx > dx + screenW - margin - 1) newDx = tx - screenW + margin + 1;
+            // 상하 범위 체크
+            if (ty < dy + margin) newDy = ty - margin;
+            else if (ty > dy + screenH - margin - 1) newDy = ty - screenH + margin + 1;
+            // 맵 범위 제한
+            const maxDx = $gameMap.width() - screenW;
+            const maxDy = $gameMap.height() - screenH;
+            newDx = Math.max(0, Math.min(maxDx, newDx));
+            newDy = Math.max(0, Math.min(maxDy, newDy));
+            if (newDx !== dx || newDy !== dy) {
+                $gameMap._displayX = newDx;
+                $gameMap._displayY = newDy;
+            }
+        },
+
+        /** 다음 미배치 유닛 자동 선택 → selectUnit 복귀 (자동 holding 진입 없음) */
+        _deployAutoSelectNext() {
+            const len = this._deployUnits.length;
+            // 전부 배치됨 → 확인 모달
+            if (this._deployAllPlaced()) {
+                this._subPhase = "selectUnit";
+                this._deploySelectedIdx = 0;
+                this._deployConfirmOpen = true;
+                this._deployConfirmIdx = 0;
+                this._uiDirty = true;
+                return;
+            }
+            // 다음 waiting 유닛 찾기 → selectUnit 상태로 하이라이트만
+            for (let d = 1; d <= len; d++) {
+                const ni = (this._deploySelectedIdx + d) % len;
+                if (this._deployStatus[ni] === "waiting") {
+                    this._deploySelectedIdx = ni;
+                    this._subPhase = "selectUnit";
+                    this._uiDirty = true;
+                    return;
+                }
+            }
+            // fallback
+            this._subPhase = "selectUnit";
+            this._deploySelectedIdx = 0;
+        },
+
+        /** 모든 유닛이 placed 상태인지 확인 */
+        _deployAllPlaced() {
+            for (let i = 0; i < this._deployUnits.length; i++) {
+                if (this._deployStatus[i] !== "placed") return false;
+            }
+            return true;
+        },
+
+        /** 확인 모달 입력 처리 */
+        _updateDeployConfirm() {
+            if (Input.isTriggered("left") || Input.isTriggered("up")) {
+                this._deployConfirmIdx = 0;
+                SoundManager.playCursor();
+                this._uiDirty = true;
+            }
+            if (Input.isTriggered("right") || Input.isTriggered("down")) {
+                this._deployConfirmIdx = 1;
+                SoundManager.playCursor();
+                this._uiDirty = true;
+            }
+            // 마우스 클릭 → 버튼 히트테스트는 UI에서 처리하고 SM에 결과만 전달
+            if (TouchInput.isTriggered()) {
+                const hitBtn = this._deployConfirmHitTest(TouchInput.x, TouchInput.y);
+                if (hitBtn >= 0) {
+                    this._deployConfirmIdx = hitBtn;
+                    this._deployConfirmSelect();
+                    return;
+                }
+            }
+            if (Input.isTriggered("ok")) {
+                this._deployConfirmSelect();
+            }
+            if (Input.isTriggered("cancel")) {
+                this._deployConfirmOpen = false;
+                SoundManager.playCancel();
+                this._uiDirty = true;
+            }
+        },
+
+        /** 확인 모달 선택 처리 */
+        _deployConfirmSelect() {
+            if (this._deployConfirmIdx === 0) {
+                // 확정 → 전투 시작
+                SoundManager.playOk();
+                this._finishDeployment();
+            } else {
+                // 다시 배치 → 전원 리셋
+                SoundManager.playCancel();
+                this._deployConfirmOpen = false;
+                for (let i = 0; i < this._deployUnits.length; i++) {
+                    this._deployStatus[i] = "waiting";
+                    this._deployUnits[i].event.setPosition(-10, -10);
+                    this._deployUnits[i].event.setTransparent(true);
+                    delete this._deployPositions[i];
+                }
+                this._deploySelectedIdx = -1;
+                this._subPhase = "selectUnit";
+                this._uiDirty = true;
+            }
+        },
+
+        /** 확인 모달 버튼 히트테스트 (화면 좌표 → 버튼 인덱스) */
+        _deployConfirmHitTest(sx, sy) {
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
+            const mw = Math.round(280 * _rs);
+            const mh = Math.round(130 * _rs);
+            const mx = (Graphics.width - mw) / 2;
+            const my = (Graphics.height - mh) / 2;
+            const btnW = Math.round(100 * _rs);
+            const btnH = Math.round(32 * _rs);
+            const btnY = my + mh - Math.round(50 * _rs);
+            const gap = Math.round(20 * _rs);
+            const bx0 = mx + (mw - btnW * 2 - gap) / 2;
+            const bx1 = bx0 + btnW + gap;
+            if (sy >= btnY && sy <= btnY + btnH) {
+                if (sx >= bx0 && sx <= bx0 + btnW) return 0;
+                if (sx >= bx1 && sx <= bx1 + btnW) return 1;
+            }
+            return -1;
+        },
+
+        /** 유닛 리스트 패널 히트테스트 (화면 좌표 → 유닛 인덱스) */
+        _deployHitTestPanel(sx, sy) {
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
+            const pw = Math.round(180 * _rs);
+            const px = Graphics.width - pw - Math.round(10 * _rs);
+            const py = Math.round(60 * _rs);
+            const itemH = Math.round(48 * _rs);
+            const gap = Math.round(4 * _rs);
+            if (sx < px || sx > px + pw) return -1;
+            const allies = this._deployUnits;
+            if (!allies) return -1;
+            for (let i = 0; i < allies.length; i++) {
+                const iy = py + i * (itemH + gap);
+                if (sy >= iy && sy <= iy + itemH) return i;
+            }
+            return -1;
+        },
+
+        _finishDeployment() {
+            // 모든 유닛 투명 해제
+            if (this._deployUnits) {
+                for (const u of this._deployUnits) {
+                    if (u && u.event) u.event.setTransparent(false);
+                }
+            }
+            // 배치 데이터 정리
+            this._deployUnits = null;
+            this._deployStatus = null;
+            this._deployPositions = null;
+            this._deployInitialPos = null;
+            this._deployRegion = null;
+            this._deployConfirmOpen = false;
+            this._deployCursorX = 0;
+            this._deployCursorY = 0;
+            this._uiDirty = true;
+            // 배치 완료 → postDeploy: 맵 이벤트(대사) 실행 대기 후 배너
+            this._phase = "postDeploy";
+            this._subPhase = "waitEvents";
+            this._postDeployWait = 10; // 이벤트 트리거 대기 프레임
+            console.log("[SRPG] Deployment complete. Waiting for map events...");
+        },
+
+
+        /** 배치 완료 후 맵 이벤트 실행 대기 → "전투 시작!" 배너 */
+        _updatePostDeploy() {
+            // 이벤트 트리거 대기 (autorun 이벤트가 시작할 시간 확보)
+            if (this._postDeployWait > 0) {
+                this._postDeployWait--;
+                return;
+            }
+            // 맵 인터프리터가 실행 중이면 대기 (대사/이벤트 완료까지)
+            if ($gameMap && $gameMap._interpreter && $gameMap._interpreter.isRunning()) {
+                return;
+            }
+            // 이벤트 완료 → "전투 시작!" + 목표 배너 표시 (새 UI 시스템)
+            console.log("[SRPG] Map events done. Showing battle start banner.");
+            const obj = (this._battleModeParams && this._battleModeParams.objective) || "";
+            const defCond = (this._battleModeParams && this._battleModeParams.defeatCondition) || "";
+            const sm = this;
+            this._phase = "banner";
+            this._subPhase = "newBattleBanner";
+            SrpgUI.showBattleBanner("전투 시작!", obj, defCond, function() {
+                console.log("[SRPG] Battle banner done. Starting turns.");
+                sm._phase = "turnAdvance";
+                sm._subPhase = "none";
+                sm._uiDirty = true;
+            });
         },
 
         endBattle() {
@@ -6835,6 +7497,7 @@
             this._battleActive = false;
             this._battleMode = "annihilation";
             this._battleModeParams = null;
+            this._pendingBattleConfigId = 0;
             this._phase = "idle";
             this._subPhase = "none";
             this._currentUnit = null;
@@ -7110,6 +7773,10 @@
                 }
                 return; // 배너 중에는 다른 입력 차단
             }
+            // 새 UI 배너 활성 중 입력 차단
+            if (SrpgUI.isBattleBannerActive && SrpgUI.isBattleBannerActive()) {
+                return;
+            }
 
             // 입력 딜레이
             if (this._inputDelay > 0) {
@@ -7122,7 +7789,7 @@
             // (이중 타이머 감소 방지)
 
             // 승패 체크 — BattleModeChecker로 모드별 판정
-            if (this._phase !== "idle" && this._phase !== "banner" && this._phase !== "battleEnd" && this._phase !== "deployment") {
+            if (this._phase !== "idle" && this._phase !== "banner" && this._phase !== "battleEnd" && this._phase !== "deployment" && this._phase !== "postDeploy") {
                 const result = BattleModeChecker.check(this._battleMode, this);
                 if (result === "defeat") {
                     this._lastBattleResult = "defeat";
@@ -7145,10 +7812,12 @@
 
             switch (this._phase) {
                 case "deployment": this._updateDeployment(); break;
+                case "postDeploy": this._updatePostDeploy(); break;
                 case "turnAdvance": this._updateTurnAdvance(); break;
                 case "playerTurn": this._updatePlayerTurn(); break;
                 case "enemyTurn": this._updateEnemyTurn(); break;
                 case "combat": this._updateCombat(); break;
+                case "banner": break; // 새 UI 배너 활성 중 — 콜백 대기
                 case "battleEnd": break;
             }
 
@@ -7183,19 +7852,38 @@
         _onBannerDone() {
             this._uiDirty = true; // 배너 종료 시 강제 UI 갱신
             if (this._subPhase === "startBanner") {
-                // 전투 목표 배너 표시 (있으면)
+                // 전투 목표 배너 표시 (있으면) — 새 UI 시스템으로 대체
+                const objective = this._battleModeParams && this._battleModeParams.objective;
+                if (objective) {
+                    const sm2 = this;
+                    this._phase = "banner";
+                    this._subPhase = "newBattleBanner";
+                    const defCond2 = (this._battleModeParams && this._battleModeParams.defeatCondition) || "";
+                    SrpgUI.showBattleBanner("전투 시작!", objective, defCond2, function() {
+                        sm2._phase = "turnAdvance";
+                        sm2._subPhase = "none";
+                        sm2._uiDirty = true;
+                    });
+                    return;
+                }
+                // 목표 없으면 바로 턴 진행
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
+            } else if (this._subPhase === "objectiveBanner") {
+                // 목표 배너 종료 → 턴 진행
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
+            } else if (this._subPhase === "postDeployBanner") {
+                // 배치 후 "전투 시작!" 배너 종료 → 목표 배너 or 턴 진행
                 const objective = this._battleModeParams && this._battleModeParams.objective;
                 if (objective) {
                     this._subPhase = "objectiveBanner";
                     this._bannerText = objective;
-                    this._bannerTimer = 120; // 2초
+                    this._bannerTimer = 120;
                     return;
                 }
-                // 목표 없으면 바로 배치/전투
-                this._enterDeployOrBattle();
-            } else if (this._subPhase === "objectiveBanner") {
-                // 목표 배너 종료 → 배치/전투 진입
-                this._enterDeployOrBattle();
+                this._phase = "turnAdvance";
+                this._subPhase = "none";
             } else if (this._subPhase === "victory" || this._subPhase === "defeat") {
                 this._phase = "battleEnd";
                 this.endBattle();
@@ -7213,7 +7901,7 @@
                 } else if (this._currentUnit) {
                     this._phase = "enemyTurn";
                     this._subPhase = "thinking";
-                    this._enemyThinkTimer = 30;
+                    this._enemyThinkTimer = 10;
                 }
             }
         },
@@ -7341,6 +8029,14 @@
                 this._atkRange = [];
                 this._inputDelay = 15;
                 this._uiDirty = true;
+                // ── 아군 턴 시작 시 첫 아군 유닛 위치로 카메라 이동 ──
+                if (roundUnits.length > 0) {
+                    const firstAlly = roundUnits[0];
+                    $gamePlayer.locate(firstAlly.x, firstAlly.y);
+                    $gamePlayer.center(firstAlly.x, firstAlly.y);
+                    this._browseCursorX = firstAlly.x;
+                    this._browseCursorY = firstAlly.y;
+                }
             } else {
                 this._enemyPhaseIndex = 0;
                 this._startNextEnemyInPhase();
@@ -7397,7 +8093,7 @@
                     $gamePlayer.center(u.x, u.y);
                     this._phase = "enemyTurn";
                     this._subPhase = "thinking";
-                    this._enemyThinkTimer = 30;
+                    this._enemyThinkTimer = 10;
                     return;
                 }
             }
@@ -7585,8 +8281,11 @@
         // ─── 브라우즈: 유닛에 커서를 설정하고 범위 표시 ───
         // ─── 브라우즈: 마우스 화면 가장자리 스크롤 ───
         _browseEdgeScroll() {
-            const edgeMargin = 30;  // 가장자리 감지 영역 (px)
-            const scrollSpeed = 0.15; // 스크롤 속도 (타일/프레임)
+            const edgeMargin = 50;  // 가장자리 감지 영역 (px) — 넓은 반투명 테두리
+            const speedTable = [0, 0.05, 0.08, 0.12, 0.15, 0.20, 0.28];
+            const speedIdx = (typeof ConfigManager !== "undefined" && ConfigManager.srpgScrollSpeed != null)
+                ? ConfigManager.srpgScrollSpeed : 4;
+            const scrollSpeed = speedTable[speedIdx] || 0.15;
             const mx = TouchInput.x, my = TouchInput.y;
             // 마우스가 화면 밖이거나 (0,0)이면 스킵
             if ((mx <= 0 && my <= 0) || mx < 0 || my < 0) return;
@@ -7597,6 +8296,13 @@
             else if (mx > Graphics.width - edgeMargin) sdx = scrollSpeed;
             if (my < edgeMargin) sdy = -scrollSpeed;
             else if (my > Graphics.height - edgeMargin) sdy = scrollSpeed;
+
+            // UI 레이어에 스크롤 존 상태 전달
+            if (typeof SrpgUI !== "undefined") {
+                SrpgUI._scrollEdgeDirs = { left: mx < edgeMargin, right: mx > Graphics.width - edgeMargin,
+                    up: my < edgeMargin, down: my > Graphics.height - edgeMargin };
+                SrpgUI._scrollEdgeMargin = edgeMargin;
+            }
 
             if (sdx !== 0 || sdy !== 0) {
                 // 맵 범위 제한 (scrollDown/scrollRight 등 사용)
@@ -7873,7 +8579,10 @@
                 }
             }
 
-            // 경로 이동 완료 → 행동 메뉴
+            // 경로 이동 완료 → 장판 효과 체크 + 행동 메뉴
+            if (typeof SrpgField !== "undefined") {
+                SrpgField.checkUnitFieldStatus(unit);
+            }
             $gamePlayer.locate(unit.x, unit.y);
             this._openActionMenu();
         },
@@ -9398,35 +10107,26 @@
         },
 
         _handleCombatPreview() {
-            // ─── 버튼 영역 (UI 그리기에서 캐시됨) ───
-            const ba = this._pvBtnArea;
+            // ─── 타일 재클릭 / 우클릭 방식 ───
+            const tw = $gameMap.tileWidth(), th = $gameMap.tileHeight();
+            const ox = $gameMap.displayX() * tw, oy = $gameMap.displayY() * th;
             const mx = TouchInput.x, my = TouchInput.y;
-            let hoverConfirm = false, hoverCancel = false;
+            const hoverTileX = Math.floor((mx + ox) / tw);
+            const hoverTileY = Math.floor((my + oy) / th);
+            const tgtX = this._targetTileX, tgtY = this._targetTileY;
 
-            if (ba) {
-                hoverConfirm = (mx >= ba.confirmX && mx <= ba.confirmX + ba.btnW && my >= ba.btnY && my <= ba.btnY + ba.btnH);
-                hoverCancel = (mx >= ba.cancelX && mx <= ba.cancelX + ba.btnW && my >= ba.btnY && my <= ba.btnY + ba.btnH);
-            }
-
-            // 호버 상태 변경 시 UI 갱신
-            if (hoverConfirm !== this._pvHoverConfirm || hoverCancel !== this._pvHoverCancel) {
-                this._pvHoverConfirm = hoverConfirm;
-                this._pvHoverCancel = hoverCancel;
-                this._uiDirty = true;
-            }
+            // 마우스 위치를 UI에 전달 (툴팁용)
+            this._pvMouseX = mx;
+            this._pvMouseY = my;
 
             // ─── 클릭/터치 ───
             if (TouchInput.isTriggered()) {
-                if (hoverConfirm) {
+                // 대상 타일을 다시 클릭 → 공격 실행
+                if (hoverTileX === tgtX && hoverTileY === tgtY) {
                     this._executeCombat();
                     return;
                 }
-                if (hoverCancel) {
-                    this._subPhase = "selectTarget";
-                    this._inputDelay = 8;
-                    return;
-                }
-                // 버튼 외부 클릭 → 취소
+                // 다른 타일 클릭 → 취소 (selectTarget으로 복귀)
                 this._subPhase = "selectTarget";
                 this._inputDelay = 8;
                 return;
@@ -9487,7 +10187,56 @@
             const hitTarget = result.actualTarget || def;
 
             if (result.missed) {
-                // 회피! — "MISS" 팝업 표시
+                // ─── 투사체가 있는 원거리 공격의 Miss → 빗나감 연출 ───
+                if (projMeta && result.isRanged) {
+                    this._phase = "combat";
+                    this._subPhase = "projectile";
+                    this._combatAnimTimer = 999;
+                    this._projTimeout = 0;
+
+                    // 타겟 주변 1~2타일 오프셋 (빗나간 착탄지)
+                    const offsets = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1},
+                                     {dx:1,dy:1},{dx:-1,dy:-1},{dx:1,dy:-1},{dx:-1,dy:1},
+                                     {dx:2,dy:0},{dx:0,dy:2},{dx:-2,dy:0},{dx:0,dy:-2}];
+                    const pick = offsets[Math.floor(Math.random() * offsets.length)];
+                    const missX = def.x + pick.dx;
+                    const missY = def.y + pick.dy;
+                    const missTgt = { x: missX, y: missY, event: { screenX: () => {
+                        const tw2 = $gameMap.tileWidth();
+                        return Math.round((missX + 0.5) * tw2 - $gameMap.displayX() * tw2);
+                    }, screenY: () => {
+                        const th2 = $gameMap.tileHeight();
+                        return Math.round((missY + 0.5) * th2 - $gameMap.displayY() * th2);
+                    }}};
+
+                    const onMissImpact = () => {
+                        this._addPopup(def.x, def.y, "MISS!", "#88aaff");
+                        try { AudioManager.playSe({name: "Evasion1", volume: 80, pitch: 110, pan: 0}); } catch(e) {}
+                        // 빗나간 착탄 이펙트 (축소 + 작게)
+                        if (projMeta.impactAnimId > 0) {
+                            const _tw = $gameMap ? $gameMap.tileWidth() : 48;
+                            SrpgAnimScale.setScale(_tw * 0.8);
+                            const missEvt = this.unitAt(missX, missY);
+                            if (missEvt && missEvt.event) {
+                                $gameTemp.requestAnimation([missEvt.event], projMeta.impactAnimId);
+                            }
+                        }
+                        this._combatAnimTimer = 35;
+                        this._subPhase = "animating";
+                    };
+
+                    if (projMeta.type === "projectile") {
+                        SrpgProjectile.fireProjectile(atk, missTgt, projMeta, onMissImpact);
+                    } else if (projMeta.type === "hitray") {
+                        SrpgProjectile.fireHitray(atk, missTgt, projMeta, onMissImpact);
+                    } else if (projMeta.type === "artillery") {
+                        SrpgProjectile.fireArtillery(atk, missTgt, projMeta, onMissImpact);
+                    }
+                    try { AudioManager.playSe({name: "Bow1", volume: 80, pitch: 100, pan: 0}); } catch(e) {}
+                    return;
+                }
+
+                // ─── 근접/투사체 없는 Miss → 기존 즉시 팝업 ───
                 this._addPopup(def.x, def.y, "MISS!", "#88aaff");
                 try {
                     if (AudioManager && AudioManager.playSe) {
@@ -10137,6 +10886,14 @@
                 this._moveRange = [];
                 this._atkRange = [];
                 this._inputDelay = 10;
+                // ── 남은 아군 중 첫 유닛으로 카메라 이동 ──
+                if (remaining.length > 0) {
+                    const nextAlly = remaining[0];
+                    $gamePlayer.locate(nextAlly.x, nextAlly.y);
+                    $gamePlayer.center(nextAlly.x, nextAlly.y);
+                    this._browseCursorX = nextAlly.x;
+                    this._browseCursorY = nextAlly.y;
+                }
             } else if (this._phaseRounds &&
                        this._currentRoundIndex < this._phaseRounds.length - 1) {
                 // 현재 라운드 완료, 다음 라운드 존재 → 다음 라운드 시작
@@ -10204,7 +10961,7 @@
                     this._enemyShowTimer--;
                     if (this._enemyShowTimer <= 0) {
                         this._subPhase = "enemyShowRange";
-                        this._enemyShowTimer = 25;
+                        this._enemyShowTimer = 10;
                         this._uiDirty = true;
                     }
                     break;
@@ -10229,7 +10986,7 @@
                             }
                         }
                         this._subPhase = "enemyShowAction";
-                        this._enemyActionTimer = 30;
+                        this._enemyActionTimer = 12;
                         this._uiDirty = true;
                     }
                     break;
@@ -10441,7 +11198,7 @@
                 this._enemyActionMsg = "대기";
             }
 
-            this._enemyShowTimer = 40;
+            this._enemyShowTimer = 15;
             this._subPhase = "showDecision";
             this._uiDirty = true;
         },
@@ -10464,7 +11221,7 @@
                     // 이동 없이 바로 행동
                     this._currentUnit.hasMoved = true;
                     this._subPhase = "enemyShowAction";
-                    this._enemyActionTimer = 30;
+                    this._enemyActionTimer = 12;
                     this._uiDirty = true;
                 }
             }
@@ -10576,7 +11333,7 @@
                 hitTarget.refreshTint();
                 unit.refreshTint();
 
-                this._combatAnimTimer = 60;
+                this._combatAnimTimer = 25;
                 this._subPhase = "enemyActing";
                 this._uiDirty = true;
                 this._turnPredictDirty = true;
@@ -10707,9 +11464,24 @@
                 }
                 this._toSlots = [];
                 this._toPortraitCache = {};
+
+            // 스크롤 존 오버레이 초기화 (화면 고정, Scene_Map 자식)
+            // — stage(Scene_Map)는 init 시점에 아직 없으므로 _pendingScrollZoneInit 플래그로 지연
+            this._pendingScrollZoneInit = true;
+            this._pendingBannerInit = true;
                 // 메뉴 텍스트 정리
                 if (this._menuTextWrap && !this._menuTextWrap._destroyed) {
                     this._menuTextWrap.removeChildren();
+                }
+                // 기존 팝업 스프라이트 정리 (scene 복귀 시 고아 방지)
+                if (SM._damagePopups) {
+                    for (const p of SM._damagePopups) {
+                        if (p.sprite) {
+                            if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                            if (!p.sprite._destroyed) p.sprite.destroy();
+                        }
+                    }
+                    SM._damagePopups.length = 0;
                 }
                 console.log("[SRPG] SrpgUI re-initializing (scene recreated)");
             }
@@ -10860,6 +11632,18 @@
             this._updateEnemyVisionOverlay();
             // 배치 페이즈 오버레이
             this._updateDeploymentOverlay();
+            // 스크롤 존 오버레이 (지연 초기화 + 매 프레임 갱신)
+            if (this._pendingScrollZoneInit) {
+                const stage = SceneManager._scene;
+                if (stage) {
+                    this._initScrollZone(stage);
+                    this._initBattleBanner(stage);
+                    this._pendingScrollZoneInit = false;
+                    this._pendingBannerInit = false;
+                }
+            }
+            this._updateScrollZone();
+            this._updateBattleBanner();
         },
 
         clearAll() {
@@ -10872,6 +11656,15 @@
             if (this._hudGfx) this._hudGfx.clear();
             if (this._miniArrowGfx) this._miniArrowGfx.clear();
             if (this._toGfx) this._toGfx.clear();
+            // 스크롤 존 + 배너 정리
+            if (this._scrollZoneGfx) this._scrollZoneGfx.clear();
+            this._scrollEdgeDirs = null;
+            if (this._prevCursorStyle) { document.body.style.cursor = ""; this._prevCursorStyle = null; }
+            if (this._battleBanner && this._battleBanner.container) {
+                if (this._battleBanner.container.parent) this._battleBanner.container.parent.removeChild(this._battleBanner.container);
+                if (!this._battleBanner.container._destroyed) this._battleBanner.container.destroy({ children: true });
+                this._battleBanner = null;
+            }
             // 턴오더 슬롯 제거
             for (const s of this._toSlots) {
                 if (s.container && s.container.parent) s.container.parent.removeChild(s.container);
@@ -10884,6 +11677,16 @@
                 t.destroy();
             }
             this._textPool = {};
+            // 팝업 스프라이트 전체 제거
+            if (SM._damagePopups) {
+                for (const p of SM._damagePopups) {
+                    if (p.sprite) {
+                        if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                        if (!p.sprite._destroyed) p.sprite.destroy();
+                    }
+                }
+                SM._damagePopups.length = 0;
+            }
             // 메뉴 텍스트 제거
             if (this._menuTextWrap) this._menuTextWrap.removeChildren();
             this._initialized = false;
@@ -11414,10 +12217,15 @@
 
         // ─── 적군 시야 오버레이 (은신 유닛 턴에 표시) ───
 
-        // ─── 배치 페이즈 오버레이 ───
+        // ─── 배치 페이즈 오버레이 (v2 — 유닛 리스트 + 홀딩/배치 시각) ───
         _deployOverlayWrap: null,
         _deployOverlaySprites: {},
         _deploySelectedSprite: null,
+        _deployPanelContainer: null,
+        _deployPanelItems: [],
+        _deployConfirmContainer: null,
+        _deployHeaderText: null,
+        _deployHintText: null,
 
         _updateDeploymentOverlay() {
             const SM = window.SrpgManager || window.SM;
@@ -11428,11 +12236,12 @@
 
             const tilemap = this._tilemap;
             if (!tilemap) return;
+            const _rs = Math.min(Graphics.width / 816, Graphics.height / 624);
 
-            // 컨테이너 생성
+            // 타일맵 오버레이 컨테이너
             if (!this._deployOverlayWrap) {
                 this._deployOverlayWrap = new PIXI.Container();
-                this._deployOverlayWrap.zIndex = -1; // 액터 스프라이트 아래
+                this._deployOverlayWrap.zIndex = -1;
                 tilemap.addChild(this._deployOverlayWrap);
             }
 
@@ -11442,7 +12251,7 @@
             if (!deployRegion) return;
 
             const PAD = 1, CUT = 3;
-            // 배치 가능 타일 하이라이트 (팔각형, 기존 그리드 디자인과 통일)
+            // ─── 배치 가능 타일 하이라이트 ───
             const needed = new Set();
             for (const key of deployRegion) {
                 needed.add(key);
@@ -11463,7 +12272,6 @@
                     this._deployOverlaySprites[key] = g;
                 }
             }
-            // 불필요한 스프라이트 제거
             for (const key in this._deployOverlaySprites) {
                 if (!needed.has(key)) {
                     this._deployOverlayWrap.removeChild(this._deployOverlaySprites[key]);
@@ -11472,10 +12280,23 @@
                 }
             }
 
-            // 선택된 유닛 강조 (노란색 깜빡임 — alpha만 매 프레임 변경)
-            if (SM._deployUnits && SM._deploySelectedIdx >= 0) {
-                const selUnit = SM._deployUnits[SM._deploySelectedIdx];
-                if (selUnit) {
+            // ─── 배치 커서 위치 하이라이트 ───
+            // placeUnit: 홀딩 유닛 위치에 노란 깜빡임
+            // selectUnit: 커서 대기 위치에 은은한 표시 (다음 배치 위치 프리뷰)
+            const showCursor = SM._deployUnits && SM._deploySelectedIdx >= 0;
+            if (showCursor) {
+                let cursorX = -1, cursorY = -1;
+                if (SM._subPhase === "placeUnit") {
+                    const selUnit = SM._deployUnits[SM._deploySelectedIdx];
+                    if (selUnit && selUnit.event.x >= 0) {
+                        cursorX = selUnit.event.x;
+                        cursorY = selUnit.event.y;
+                    }
+                } else if (SM._subPhase === "selectUnit" && typeof SM._deployCursorX === "number") {
+                    cursorX = SM._deployCursorX;
+                    cursorY = SM._deployCursorY;
+                }
+                if (cursorX >= 0 && cursorY >= 0) {
                     if (!this._deploySelectedSprite) {
                         this._deploySelectedSprite = new PIXI.Graphics();
                         this._deploySelectedSprite.beginFill(0xffdd44, 0.45);
@@ -11486,19 +12307,357 @@
                         this._deploySelectedSprite.lineStyle(0);
                         this._deployOverlayWrap.addChild(this._deploySelectedSprite);
                     }
-                    // alpha만 변경 (Graphics 재생성 없음)
-                    this._deploySelectedSprite.alpha = 0.5 + Math.sin(Date.now() / 200) * 0.35;
-                    this._deploySelectedSprite.x = selUnit.event.x * tw;
-                    this._deploySelectedSprite.y = selUnit.event.y * th;
+                    const isPlacing = SM._subPhase === "placeUnit";
+                    this._deploySelectedSprite.alpha = isPlacing
+                        ? 0.5 + Math.sin(Date.now() / 200) * 0.35   // 배치 중: 강한 깜빡임
+                        : 0.25 + Math.sin(Date.now() / 400) * 0.15; // 대기 중: 은은한 표시
+                    this._deploySelectedSprite.x = cursorX * tw;
+                    this._deploySelectedSprite.y = cursorY * th;
                     this._deploySelectedSprite.visible = true;
+                } else if (this._deploySelectedSprite) {
+                    this._deploySelectedSprite.visible = false;
                 }
+            } else if (this._deploySelectedSprite) {
+                this._deploySelectedSprite.visible = false;
             }
 
-            // 배치 안내 텍스트 (화면 하단)
-            // TODO: Phase 10 에서 별도 HUD 창으로 대체
+            // ─── 스프라이트 시각 효과: 반투명/그레이톤 ───
+            this._updateDeploySpriteTints(SM);
+
+            // ─── 우측 유닛 리스트 패널 (PIXI, 화면 고정) ───
+            this._updateDeployPanel(SM, _rs);
+
+            // ─── 상단 헤더 "배치 페이즈" ───
+            this._updateDeployHeader(_rs);
+
+            // ─── 하단 조작 힌트 ───
+            this._updateDeployHint(SM, _rs);
+
+            // ─── 확인 모달 ───
+            this._updateDeployConfirmModal(SM, _rs);
+        },
+
+        /** 배치 페이즈 스프라이트 반투명/그레이톤 처리 */
+        _updateDeploySpriteTints(SM) {
+            if (!SM._deployUnits || !SM._deployStatus) return;
+            const spriteset = SceneManager._scene._spriteset;
+            if (!spriteset) return;
+            const charSprites = spriteset._characterSprites || [];
+            for (let i = 0; i < SM._deployUnits.length; i++) {
+                const u = SM._deployUnits[i];
+                if (!u || !u.event) continue;
+                const status = SM._deployStatus[i];
+                // 해당 이벤트의 Sprite_Character 찾기
+                for (const cs of charSprites) {
+                    if (cs._character === u.event) {
+                        if (status === "holding") {
+                            // 반투명
+                            cs.alpha = 0.55;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
+                        } else if (status === "placed") {
+                            // 불투명 + 그레이톤 색조
+                            cs.alpha = 1.0;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0x888899;
+                        } else {
+                            // waiting — 맵 밖이므로 보이지 않음
+                            cs.alpha = 1.0;
+                            if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
+                        }
+                        break;
+                    }
+                }
+            }
+        },
+
+        /** 우측 유닛 리스트 패널 */
+        _updateDeployPanel(SM, _rs) {
+            const pw = Math.round(180 * _rs);
+            const px = Graphics.width - pw - Math.round(10 * _rs);
+            const py = Math.round(60 * _rs);
+            const itemH = Math.round(48 * _rs);
+            const gap = Math.round(4 * _rs);
+            const faceSize = Math.round(36 * _rs);
+            const allies = SM._deployUnits;
+            if (!allies) return;
+
+            // 컨테이너 생성 (화면 고정 — stage에 추가)
+            if (!this._deployPanelContainer) {
+                this._deployPanelContainer = new PIXI.Container();
+                this._deployPanelContainer.zIndex = 9999;
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployPanelContainer);
+            }
+
+            const pc = this._deployPanelContainer;
+            // 매 프레임 재그리기 (항목 수 변동 가능)
+            while (pc.children.length > 0) pc.removeChildAt(0);
+            this._deployPanelItems = [];
+
+            // 패널 배경
+            const bg = new PIXI.Graphics();
+            const totalH = allies.length * (itemH + gap) - gap + Math.round(10 * _rs);
+            bg.beginFill(0x000000, 0.6);
+            bg.drawRoundedRect(px - Math.round(6 * _rs), py - Math.round(6 * _rs),
+                pw + Math.round(12 * _rs), totalH + Math.round(12 * _rs), Math.round(6 * _rs));
+            bg.endFill();
+            pc.addChild(bg);
+
+            for (let i = 0; i < allies.length; i++) {
+                const u = allies[i];
+                const status = SM._deployStatus ? SM._deployStatus[i] : "waiting";
+                const iy = py + i * (itemH + gap);
+                const isSelected = (i === SM._deploySelectedIdx);
+
+                const itemG = new PIXI.Graphics();
+                // 아이템 배경
+                const bgColor = isSelected ? 0x446688 : (status === "placed" ? 0x334433 : 0x222233);
+                const bgAlpha = isSelected ? 0.85 : 0.7;
+                itemG.beginFill(bgColor, bgAlpha);
+                itemG.drawRoundedRect(px, iy, pw, itemH, Math.round(4 * _rs));
+                itemG.endFill();
+                // 선택 테두리
+                if (isSelected) {
+                    itemG.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.9);
+                    itemG.drawRoundedRect(px, iy, pw, itemH, Math.round(4 * _rs));
+                    itemG.lineStyle(0);
+                }
+                pc.addChild(itemG);
+
+                // 페이스 아이콘 (비트맵 로드 — 캐시된 PIXI.Sprite)
+                const faceX = px + Math.round(6 * _rs);
+                const faceY = iy + (itemH - faceSize) / 2;
+                const faceBg = new PIXI.Graphics();
+                faceBg.beginFill(0x111122, 0.8);
+                faceBg.drawRoundedRect(faceX, faceY, faceSize, faceSize, Math.round(3 * _rs));
+                faceBg.endFill();
+                pc.addChild(faceBg);
+
+                // 페이스 초상화 로드 (비동기 대응)
+                {
+                    // 스튜디오 지정 페이스 우선, 없으면 바닐라 플레이스홀더
+                    let faceName = u._faceName || "";
+                    let faceIdx = u._faceIndex || 0;
+                    if (!faceName && u.actorId > 0 && $dataActors[u.actorId]) {
+                        faceName = $dataActors[u.actorId].faceName || "";
+                        faceIdx = $dataActors[u.actorId].faceIndex || 0;
+                    }
+                    if (!faceName) {
+                        // 플레이스홀더: 바닐라 Actor1의 0번 페이스
+                        faceName = "Actor1";
+                        faceIdx = 0;
+                    }
+                    const faceBitmap = ImageManager.loadFace(faceName);
+                    const _drawFace = function() {
+                        const source = faceBitmap._canvas || faceBitmap._image;
+                        if (!source) return;
+                        const fw = 144, fh = 144;
+                        const fcol = faceIdx % 4, frow = Math.floor(faceIdx / 4);
+                        const canvas = document.createElement("canvas");
+                        canvas.width = faceSize; canvas.height = faceSize;
+                        const ctx2 = canvas.getContext("2d");
+                        ctx2.drawImage(source, fcol * fw, frow * fh, fw, fh,
+                            0, 0, faceSize, faceSize);
+                        const faceSprite = new PIXI.Sprite(PIXI.Texture.from(canvas));
+                        faceSprite.x = faceX;
+                        faceSprite.y = faceY;
+                        if (status === "placed") faceSprite.tint = 0x888899;
+                        pc.addChild(faceSprite);
+                    };
+                    if (faceBitmap.isReady()) {
+                        _drawFace();
+                    } else {
+                        faceBitmap.addLoadListener(_drawFace);
+                    }
+                }
+
+                // 이름 텍스트
+                const nameX = faceX + faceSize + Math.round(8 * _rs);
+                const nameStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(13 * _rs),
+                    fontWeight: isSelected ? "bold" : "normal",
+                    fill: status === "placed" ? "#88aa88" : (isSelected ? "#ffdd44" : "#ffffff"),
+                });
+                const nameText = new PIXI.Text(u.name || "???", nameStyle);
+                nameText.x = nameX;
+                nameText.y = iy + Math.round(6 * _rs);
+                pc.addChild(nameText);
+
+                // 상태 표시
+                const statusLabel = status === "placed" ? "배치 완료" : (status === "holding" ? "배치 중..." : "대기");
+                const statusColor = status === "placed" ? "#66aa66" : (status === "holding" ? "#ffdd44" : "#888888");
+                const statusStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(10 * _rs),
+                    fill: statusColor,
+                });
+                const statusText = new PIXI.Text(statusLabel, statusStyle);
+                statusText.x = nameX;
+                statusText.y = iy + Math.round(26 * _rs);
+                pc.addChild(statusText);
+
+                // 배치 완료 체크마크
+                if (status === "placed") {
+                    const checkStyle = new PIXI.TextStyle({
+                        fontFamily: "sans-serif",
+                        fontSize: Math.round(16 * _rs),
+                        fontWeight: "bold",
+                        fill: "#66cc66",
+                    });
+                    const checkText = new PIXI.Text("V", checkStyle);
+                    checkText.x = px + pw - Math.round(20 * _rs);
+                    checkText.y = iy + (itemH - Math.round(16 * _rs)) / 2;
+                    pc.addChild(checkText);
+                }
+
+                this._deployPanelItems.push({ x: px, y: iy, w: pw, h: itemH, idx: i });
+            }
+        },
+
+        /** 상단 "배치 페이즈" 헤더 */
+        _updateDeployHeader(_rs) {
+            if (!this._deployHeaderText) {
+                this._deployHeaderText = new PIXI.Text("", new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(20 * _rs),
+                    fontWeight: "bold",
+                    fill: "#ffdd44",
+                    stroke: "#000000",
+                    strokeThickness: Math.round(3 * _rs),
+                }));
+                this._deployHeaderText.anchor.set(0.5, 0);
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployHeaderText);
+            }
+            this._deployHeaderText.text = "-- 배치 페이즈 --";
+            this._deployHeaderText.x = Graphics.width / 2;
+            this._deployHeaderText.y = Math.round(12 * _rs);
+            this._deployHeaderText.visible = true;
+        },
+
+        /** 하단 조작 힌트 */
+        _updateDeployHint(SM, _rs) {
+            if (!this._deployHintText) {
+                this._deployHintText = new PIXI.Text("", new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(12 * _rs),
+                    fill: "#cccccc",
+                    stroke: "#000000",
+                    strokeThickness: Math.round(2 * _rs),
+                }));
+                this._deployHintText.anchor.set(0.5, 1);
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployHintText);
+            }
+            let hint = "";
+            if (SM._subPhase === "selectUnit") {
+                const allPlaced = SM._deployAllPlaced ? SM._deployAllPlaced() : false;
+                hint = allPlaced
+                    ? "[Shift/ESC] 배치 확정  |  유닛 클릭으로 재배치"
+                    : "[Up/Down] 유닛 선택  |  [OK] 배치 시작  |  맵 클릭으로 바로 배치";
+            } else if (SM._subPhase === "placeUnit") {
+                hint = "[방향키] 위치 이동  |  [OK/클릭] 배치 확정  |  [ESC] 취소";
+            }
+            this._deployHintText.text = hint;
+            this._deployHintText.x = Graphics.width / 2;
+            this._deployHintText.y = Graphics.height - Math.round(12 * _rs);
+            this._deployHintText.visible = true;
+        },
+
+        /** 확인 모달 렌더링 */
+        _updateDeployConfirmModal(SM, _rs) {
+            if (!SM._deployConfirmOpen) {
+                if (this._deployConfirmContainer) {
+                    this._deployConfirmContainer.visible = false;
+                }
+                return;
+            }
+
+            if (!this._deployConfirmContainer) {
+                this._deployConfirmContainer = new PIXI.Container();
+                this._deployConfirmContainer.zIndex = 10000;
+                const stage = SceneManager._scene;
+                if (stage) stage.addChild(this._deployConfirmContainer);
+            }
+
+            const mc = this._deployConfirmContainer;
+            while (mc.children.length > 0) mc.removeChildAt(0);
+            mc.visible = true;
+
+            const mw = Math.round(280 * _rs);
+            const mh = Math.round(130 * _rs);
+            const mx = (Graphics.width - mw) / 2;
+            const my = (Graphics.height - mh) / 2;
+
+            // 반투명 배경 오버레이
+            const dimBg = new PIXI.Graphics();
+            dimBg.beginFill(0x000000, 0.4);
+            dimBg.drawRect(0, 0, Graphics.width, Graphics.height);
+            dimBg.endFill();
+            mc.addChild(dimBg);
+
+            // 모달 박스
+            const box = new PIXI.Graphics();
+            box.beginFill(0x1a1a2e, 0.95);
+            box.drawRoundedRect(mx, my, mw, mh, Math.round(8 * _rs));
+            box.endFill();
+            box.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.7);
+            box.drawRoundedRect(mx, my, mw, mh, Math.round(8 * _rs));
+            box.lineStyle(0);
+            mc.addChild(box);
+
+            // 제목
+            const titleStyle = new PIXI.TextStyle({
+                fontFamily: "sans-serif",
+                fontSize: Math.round(16 * _rs),
+                fontWeight: "bold",
+                fill: "#ffffff",
+            });
+            const title = new PIXI.Text("배치를 확정하시겠습니까?", titleStyle);
+            title.anchor.set(0.5, 0);
+            title.x = mx + mw / 2;
+            title.y = my + Math.round(18 * _rs);
+            mc.addChild(title);
+
+            // 버튼
+            const btnW = Math.round(100 * _rs);
+            const btnH = Math.round(32 * _rs);
+            const btnY = my + mh - Math.round(50 * _rs);
+            const gapB = Math.round(20 * _rs);
+            const bx0 = mx + (mw - btnW * 2 - gapB) / 2;
+            const bx1 = bx0 + btnW + gapB;
+            const confirmIdx = SM._deployConfirmIdx || 0;
+
+            const labels = ["확정", "다시 배치"];
+            const xs = [bx0, bx1];
+            for (let b = 0; b < 2; b++) {
+                const isSel = (b === confirmIdx);
+                const btnG = new PIXI.Graphics();
+                btnG.beginFill(isSel ? 0x446688 : 0x222233, 0.9);
+                btnG.drawRoundedRect(xs[b], btnY, btnW, btnH, Math.round(4 * _rs));
+                btnG.endFill();
+                if (isSel) {
+                    btnG.lineStyle(Math.round(2 * _rs), 0xffdd44, 0.9);
+                    btnG.drawRoundedRect(xs[b], btnY, btnW, btnH, Math.round(4 * _rs));
+                    btnG.lineStyle(0);
+                }
+                mc.addChild(btnG);
+                const btnStyle = new PIXI.TextStyle({
+                    fontFamily: "sans-serif",
+                    fontSize: Math.round(13 * _rs),
+                    fontWeight: isSel ? "bold" : "normal",
+                    fill: isSel ? "#ffdd44" : "#aaaaaa",
+                });
+                const btnText = new PIXI.Text(labels[b], btnStyle);
+                btnText.anchor.set(0.5, 0.5);
+                btnText.x = xs[b] + btnW / 2;
+                btnText.y = btnY + btnH / 2;
+                mc.addChild(btnText);
+            }
         },
 
         _clearDeploymentOverlay() {
+            // 타일맵 오버레이
             if (this._deployOverlayWrap) {
                 for (const key in this._deployOverlaySprites) {
                     this._deployOverlaySprites[key].destroy();
@@ -11513,6 +12672,46 @@
                 }
                 this._deployOverlayWrap.destroy();
                 this._deployOverlayWrap = null;
+            }
+            // 패널 컨테이너
+            if (this._deployPanelContainer) {
+                if (this._deployPanelContainer.parent) {
+                    this._deployPanelContainer.parent.removeChild(this._deployPanelContainer);
+                }
+                this._deployPanelContainer.destroy({ children: true });
+                this._deployPanelContainer = null;
+            }
+            this._deployPanelItems = [];
+            // 헤더 텍스트
+            if (this._deployHeaderText) {
+                if (this._deployHeaderText.parent) this._deployHeaderText.parent.removeChild(this._deployHeaderText);
+                this._deployHeaderText.destroy();
+                this._deployHeaderText = null;
+            }
+            // 힌트 텍스트
+            if (this._deployHintText) {
+                if (this._deployHintText.parent) this._deployHintText.parent.removeChild(this._deployHintText);
+                this._deployHintText.destroy();
+                this._deployHintText = null;
+            }
+            // 확인 모달
+            if (this._deployConfirmContainer) {
+                if (this._deployConfirmContainer.parent) this._deployConfirmContainer.parent.removeChild(this._deployConfirmContainer);
+                this._deployConfirmContainer.destroy({ children: true });
+                this._deployConfirmContainer = null;
+            }
+            // 스프라이트 틴트 복원
+            this._restoreDeploySpriteTints();
+        },
+
+        /** 배치 완료 후 스프라이트 틴트/알파 원래대로 복원 */
+        _restoreDeploySpriteTints() {
+            const spriteset = SceneManager._scene ? SceneManager._scene._spriteset : null;
+            if (!spriteset) return;
+            const charSprites = spriteset._characterSprites || [];
+            for (const cs of charSprites) {
+                cs.alpha = 1.0;
+                if (cs._srpgPSprite) cs._srpgPSprite.tint = 0xffffff;
             }
         },
 
@@ -12239,22 +13438,25 @@
             }
 
             if (isArtillery) {
-                // ── 곡선 경로 (포물선) ──
+                // ── 곡선 경로 (반원) ──
                 const lineColor = isBlocked ? 0xff4444 : 0x44ff66;
                 const lineAlpha = isBlocked ? 0.5 : 0.6;
-                // 45도 기반 동적 arcHeight (수평 픽셀거리 * 0.5)
-                const hDist = Math.sqrt((dx - ax) ** 2 + (dy - ay) ** 2);
-                const arcHeight = projMeta.arcHeight > 0 ? projMeta.arcHeight : hDist * 0.5;
+                // 반원: 총 거리 기반 arcHeight
+                const totalDist = Math.sqrt((dx - ax) ** 2 + (dy - ay) ** 2) || 1;
+                const arcHeight = projMeta.arcHeight > 0 ? projMeta.arcHeight : totalDist * 0.5;
+                const pathAngle = Math.atan2(dy - ay, dx - ax);
+                const TILT = 0.35;
                 const steps = 24;
 
                 g.lineStyle(2.5, lineColor, lineAlpha);
                 for (let i = 0; i <= steps; i++) {
                     const t = i / steps;
-                    const px = ax + (dx - ax) * t;
-                    // 포물선: y = baseY - 4*h*t*(1-t)
-                    const baseY = ay + (dy - ay) * t;
-                    const arcY = -4 * (arcHeight * 0.3) * t * (1 - t); // 미리보기는 축소 스케일
-                    const py = baseY + arcY;
+                    const lx = ax + (dx - ax) * t;
+                    const ly = ay + (dy - ay) * t;
+                    // 반원 오프셋 (미리보기는 0.3 축소)
+                    const arcH = (arcHeight * 0.3) * Math.sin(Math.PI * t);
+                    const px = lx + arcH * Math.sin(pathAngle) * TILT;
+                    const py = ly - arcH;
                     if (i === 0) g.moveTo(px, py);
                     else g.lineTo(px, py);
                 }
@@ -12327,8 +13529,7 @@
         //  전투 프리뷰 — 텍스트 포함
         // =================================================================
         _drawCombatPreview(g) {
-            // 전투 프리뷰 모달 비활성화 — HP/MP 바 위에 직접 표시
-            // 확인/취소 버튼만 대상 유닛 근처에 작게 표시
+            // 전투 프리뷰 — 투사체 경로 + 커서 근처 툴팁
             if (!SM._combatPrediction) return;
             const def = SM._selectedTarget;
             if (!def || !def.event) return;
@@ -12336,42 +13537,32 @@
             // ── 투사체 예상 경로 오버레이 ──
             this._drawProjectilePathPreview(g);
 
-            const tw = $gameMap.tileWidth();
-            const th = $gameMap.tileHeight();
-            // screenX/Y는 스크롤 보정된 화면좌표이므로, 컨테이너 오프셋 적용 후
-            // 맵픽셀 좌표로 변환 (scrollOffset을 다시 더함)
-            const _scrollOX = $gameMap.displayX() * tw;
-            const _scrollOY = $gameMap.displayY() * th;
-            const sx = def.event.screenX() + _scrollOX;
-            const sy = def.event.screenY() - th - 30 + _scrollOY; // 바 위쪽
+            // ── 커서 근처 조작 툴팁 ──
+            const mx = SM._pvMouseX || TouchInput.x;
+            const my = SM._pvMouseY || TouchInput.y;
+            const _scrollOX = $gameMap.displayX() * $gameMap.tileWidth();
+            const _scrollOY = $gameMap.displayY() * $gameMap.tileHeight();
+            // 마우스 화면좌표를 맵 컨테이너 좌표로 변환
+            const tipX = mx + _scrollOX + 16;
+            const tipY = my + _scrollOY - 8;
 
             const rs = RS();
-            const btnW = Math.round(50 * rs), btnH = Math.round(22 * rs);
-            const confirmX = sx - btnW - 4;
-            const cancelX = sx + 4;
-            const btnY = sy - btnH - 4;
+            const fontSize = Math.round(11 * rs);
+            const tipStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif", fontSize: fontSize,
+                fill: "#ffffff", dropShadow: true, dropShadowColor: "#000000",
+                dropShadowBlur: 2, dropShadowDistance: 1
+            });
+            const tipText = new PIXI.Text("클릭: 공격  |  우클릭: 취소", tipStyle);
+            const pw = tipText.width + 12, ph = tipText.height + 6;
 
-            // 확인 버튼
-            g.beginFill(SM._pvHoverConfirm ? 0x44aa44 : 0x336633, 0.88);
-            g.lineStyle(1, 0x55cc55, 0.6);
-            g.drawRoundedRect(confirmX, btnY, btnW, btnH, 3); g.endFill();
-            g.lineStyle(0);
-            // 취소 버튼
-            g.beginFill(SM._pvHoverCancel ? 0xaa4444 : 0x663333, 0.88);
-            g.lineStyle(1, 0xcc5555, 0.6);
-            g.drawRoundedRect(cancelX, btnY, btnW, btnH, 3); g.endFill();
-            g.lineStyle(0);
+            // 배경
+            g.beginFill(0x000000, 0.55);
+            g.drawRoundedRect(tipX, tipY, pw, ph, 4);
+            g.endFill();
 
-            // 버튼 텍스트
-            const cTxt = new PIXI.Text("확인", new PIXI.TextStyle(_TS.pvBtn));
-            cTxt.x = confirmX + (btnW - 26) / 2; cTxt.y = btnY + 3;
-            this._menuTextWrap.addChild(cTxt);
-            const xTxt = new PIXI.Text("취소", new PIXI.TextStyle(_TS.pvBtn));
-            xTxt.x = cancelX + (btnW - 26) / 2; xTxt.y = btnY + 3;
-            this._menuTextWrap.addChild(xTxt);
-
-            // 버튼 영역을 SM에 캐시 (입력 처리용)
-            SM._pvBtnArea = { confirmX, cancelX, btnY, btnW, btnH };
+            tipText.x = tipX + 6; tipText.y = tipY + 3;
+            this._menuTextWrap.addChild(tipText);
         },
 
         // ─── 방향 전환 화살표 ───
@@ -12456,37 +13647,54 @@
         _updatePopups() {
             if (!SM._damagePopups) return;
             const tw = $gameMap.tileWidth(), th = $gameMap.tileHeight();
+            const MAX_LIFE = 300; // 안전장치: 최대 5초 (300프레임)
             for (let i = SM._damagePopups.length - 1; i >= 0; i--) {
                 const p = SM._damagePopups[i];
+                // 생성 시간 기록 (최초 1회)
+                if (p._born === undefined) p._born = 0;
+                p._born++;
                 // 스프라이트 미생성 시 새로 만듦
-                if (!p.sprite && this._tilemap) {
-                    const isShout = p.isShout;
-                    const rs = RS();
-                    const fontSize = Math.round((isShout ? 15 : 20) * rs);
-                    const fillColor = typeof p.color === "string" ? p.color : "#ffffff";
-                    const style = new PIXI.TextStyle({
-                        fontFamily: "sans-serif",
-                        fontSize,
-                        fontWeight: "bold",
-                        fill: fillColor,
-                        stroke: isShout ? "#222244" : "#000000",
-                        strokeThickness: Math.round((isShout ? 4 : 3) * rs),
-                        ...(isShout ? { dropShadow: false } : {}),
-                    });
-                    p.sprite = new PIXI.Text(String(p.text), style);
-                    p.sprite.anchor.set(0.5, 1);
-                    p.sprite.x = p.x * tw + tw / 2;
-                    // 외침은 유닛 머리 위(타일 상단보다 위), 데미지는 타일 중앙
-                    p.sprite.y = isShout ? (p.y * th - th * 0.3) : (p.y * th);
-                    p.sprite.z = 10;
-                    this._overlayWrap.addChild(p.sprite);
+                if (!p.sprite && this._tilemap && this._overlayWrap) {
+                    try {
+                        const isShout = p.isShout;
+                        const rs = RS();
+                        const fontSize = Math.round((isShout ? 15 : 20) * rs);
+                        const fillColor = typeof p.color === "string" ? p.color : "#ffffff";
+                        const style = new PIXI.TextStyle({
+                            fontFamily: "sans-serif",
+                            fontSize,
+                            fontWeight: "bold",
+                            fill: fillColor,
+                            stroke: isShout ? "#222244" : "#000000",
+                            strokeThickness: Math.round((isShout ? 4 : 3) * rs),
+                            ...(isShout ? { dropShadow: false } : {}),
+                        });
+                        p.sprite = new PIXI.Text(String(p.text), style);
+                        p.sprite.anchor.set(0.5, 1);
+                        p.sprite.x = p.x * tw + tw / 2;
+                        p.sprite.y = isShout ? (p.y * th - th * 0.3) : (p.y * th);
+                        p.sprite.z = 10;
+                        this._overlayWrap.addChild(p.sprite);
+                    } catch (e) {
+                        console.warn("[SRPG] Popup sprite creation failed:", e);
+                        SM._damagePopups.splice(i, 1);
+                        continue;
+                    }
                 }
                 p.timer--;
-                if (p.timer <= 0) {
-                    if (p.sprite && p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
-                    if (p.sprite) p.sprite.destroy();
+                // 안전장치: 최대 수명 초과 OR 타이머 이상값 → 강제 제거
+                if (p.timer <= 0 || p._born > MAX_LIFE || isNaN(p.timer)) {
+                    if (p.sprite) {
+                        if (p.sprite.parent) p.sprite.parent.removeChild(p.sprite);
+                        if (!p.sprite._destroyed) p.sprite.destroy();
+                    }
                     SM._damagePopups.splice(i, 1);
                 } else if (p.sprite) {
+                    // 스프라이트가 고아(orphaned)인 경우 강제 제거
+                    if (p.sprite._destroyed || !p.sprite.parent) {
+                        SM._damagePopups.splice(i, 1);
+                        continue;
+                    }
                     p.sprite.y -= (p.isShout ? 0.4 : 0.8);
                     p.sprite.alpha = Math.min(1, p.timer / 15);
                 }
@@ -12513,15 +13721,25 @@
             return;
         }
 
-        // ── 투명도: 턴 종료 유닛 0.75, 그 외 1.0 (피/아 무관, 매 프레임 적용) ──
+        // ── 턴 종료/비페이즈 유닛 시각 피드백 (tint + alpha) ──
         const isCurrentUnit = (unit === SM._currentUnit);
         const isFinished = SM._finishedUnits && SM._finishedUnits.includes(unit);
+        // 아군 페이즈에서 _phaseUnits에 속하지 않는 아군 = 비활성
+        const isAllyPhase = (SM._phase === "playerTurn");
+        const isInPhase = !SM._phaseUnits || SM._phaseUnits.includes(unit);
+        const isNonPhaseAlly = isAllyPhase && unit.team === "actor" && !isInPhase;
         if (isCurrentUnit) {
             this.alpha = 1.0;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0xffffff;
         } else if (isFinished) {
             this.alpha = 0.75;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0x888899;
+        } else if (isNonPhaseAlly) {
+            this.alpha = 0.65;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0x777788;
         } else {
             this.alpha = 1.0;
+            if (this._srpgPSprite) this._srpgPSprite.tint = 0xffffff;
         }
 
         if (PORTRAIT_MODE && unit.hasPortrait()) {
@@ -12581,6 +13799,12 @@
         this._srpgDmgText.anchor.set(0.5, 1);
         this._srpgDmgText.visible = false;
         this.addChild(this._srpgDmgText);
+
+        // ─── 선택 표시: 역삼각형 마커 (▼) ───
+        this._srpgPMarker = new PIXI.Graphics();
+        this._srpgPMarker.visible = false;
+        this.addChild(this._srpgPMarker);
+        this._srpgPMarkerDrawn = false;
 
         this._srpgPLoadImage(unit);
     };
@@ -12747,8 +13971,57 @@
         const glow = this._srpgPGlow;
         const fx = SrpgFX.getEffectsForUnit(unit);
 
-        // 호버링 애니메이션
-        if (isSelected && !SrpgFX.hasActiveEffect(unit)) {
+        // ─── 장판 수풀 효과: 초상화 하반부 반투명 처리 ───
+        const onBushField = (typeof SrpgField !== 'undefined') &&
+            SrpgField.hasBushFieldAt(unit.x, unit.y);
+        if (onBushField && spr.texture && spr.texture.valid) {
+            const texH = spr.texture.height;
+            const bushCut = Math.floor(texH * 0.25); // 하단 25% 잠김
+            if (!this._srpgPBushMask) {
+                // 반투명 마스크용 서브스프라이트 생성
+                this._srpgPBushBottom = new Sprite();
+                this._srpgPBushBottom.anchor.set(0.5, 1);
+                this.addChild(this._srpgPBushBottom);
+            }
+            // 상단 부분: 원본 영역 잘라서 표시
+            const topH = texH - bushCut;
+            spr.setFrame(0, 0, spr.texture.width, topH);
+            spr.anchor.set(0.5, topH / texH); // 앵커를 하단 잘린 높이 기준으로
+            // 하단 부분: 반투명
+            const bot = this._srpgPBushBottom;
+            bot.texture = spr.texture;
+            bot.setFrame(0, topH, spr.texture.width, bushCut);
+            bot.anchor.set(0.5, 0);
+            bot.scale.set(spr.scale.x, spr.scale.y);
+            bot.alpha = 0.35;
+            bot.tint = spr.tint;
+            bot.y = spr.y;
+            bot.x = spr.x;
+            bot.visible = true;
+            this._srpgPBushMask = true;
+        } else if (this._srpgPBushMask) {
+            // 수풀 효과 해제 — 원래 프레임 복원
+            if (spr.texture && spr.texture.valid) {
+                spr.setFrame(0, 0, spr.texture.width, spr.texture.height);
+                spr.anchor.set(0.5, 1);
+            }
+            if (this._srpgPBushBottom) {
+                this._srpgPBushBottom.visible = false;
+            }
+            this._srpgPBushMask = false;
+        }
+
+        // ─── 행동 가능 여부 판별 ───
+        const isFinished = SM._finishedUnits && SM._finishedUnits.includes(unit);
+        const isAllyPhase = (SM._phase === "playerTurn");
+        const isInPhase = !SM._phaseUnits || SM._phaseUnits.includes(unit);
+        const isNonPhaseAlly = isAllyPhase && unit.team === "actor" && !isInPhase;
+        const canActNow = unit.team === "actor" && !isFinished && !isNonPhaseAlly;
+
+        // ─── 호버링 애니메이션 ───
+        // 활동 가능 아군: 바운스 O / 활동 불가 아군: 바운스 X / 선택: 바운스 O
+        const shouldBounce = isSelected || (canActNow && !SrpgFX.hasActiveEffect(unit));
+        if (shouldBounce && !SrpgFX.hasActiveEffect(unit)) {
             this._srpgPHover += 0.06;
             const hoverY = Math.sin(this._srpgPHover) * 4;
             spr.y = hoverY + fx.offsetY;
@@ -12764,12 +14037,42 @@
         spr.x = fx.offsetX;
         glow.x = fx.offsetX;
 
-        // 글로우 (선택 시 팀 컬러)
+        // 글로우 (선택 시 팀 컬러 외곽선 강조)
         glow.visible = isSelected && !SrpgFX.hasActiveEffect(unit);
         if (glow.visible) {
             const tc = unit.teamColor().fill;
             glow.tint = tc;
             glow.alpha = 0.35 + Math.sin(this._srpgPHover * 1.5) * 0.2;
+        }
+
+        // ─── 역삼각형 마커 (선택된 아군 위) ───
+        const marker = this._srpgPMarker;
+        if (marker) {
+            marker.visible = isSelected && !SrpgFX.hasActiveEffect(unit);
+            if (marker.visible) {
+                // 마커를 한 번만 그리기 (크기 고정)
+                if (!this._srpgPMarkerDrawn) {
+                    marker.clear();
+                    const mSize = 6;
+                    marker.beginFill(0xFFDD00, 0.95);
+                    marker.lineStyle(1.5, 0x000000, 0.6);
+                    marker.moveTo(-mSize, -mSize * 1.2);
+                    marker.lineTo(mSize, -mSize * 1.2);
+                    marker.lineTo(0, mSize * 0.4);
+                    marker.closePath();
+                    marker.endFill();
+                    marker.anchor && marker.anchor.set(0.5, 0.5);
+                    this._srpgPMarkerDrawn = true;
+                }
+                // 위치: 스프라이트 상단 위쪽으로 간격
+                const sprH = (spr.texture && spr.texture.valid) ? spr.texture.height * (spr.scale ? spr.scale.y : 1) : 48;
+                const markerGap = 8;
+                const hoverY = Math.sin(this._srpgPHover) * 4;
+                marker.x = fx.offsetX;
+                marker.y = -sprH - markerGap + hoverY + fx.offsetY;
+                // 부드러운 펄스 (투명도)
+                marker.alpha = 0.7 + Math.sin(this._srpgPHover * 2.0) * 0.3;
+            }
         }
 
         // 투명도는 상위 Sprite_Character.update에서 this.alpha로 직접 제어
@@ -13001,6 +14304,7 @@
         if (this._srpgPGlow) { this.removeChild(this._srpgPGlow); this._srpgPGlow = null; }
         this._srpgPShadow = null;
         if (this._srpgPTargetGlow) { this.removeChild(this._srpgPTargetGlow); this._srpgPTargetGlow = null; }
+        if (this._srpgPMarker) { this.removeChild(this._srpgPMarker); this._srpgPMarker.destroy(); this._srpgPMarker = null; this._srpgPMarkerDrawn = false; }
         if (this._srpgPWhiteOverlay) { this.removeChild(this._srpgPWhiteOverlay); this._srpgPWhiteOverlay = null; }
         // HP/MP 바 정리 (통합 Graphics)
         if (this._srpgHpBar) { this.removeChild(this._srpgHpBar); this._srpgHpBar = null; }
@@ -13090,13 +14394,18 @@
         }
     };
 
-    // Sprite_Animation.updateEffectGeometry 후킹 — SRPG 스케일 적용
+    // Sprite_Animation.updateEffectGeometry 후킹 — SRPG 타일 기반 절대 스케일
     const _origUpdateEffectGeo = Sprite_Animation.prototype.updateEffectGeometry;
     Sprite_Animation.prototype.updateEffectGeometry = function() {
         _origUpdateEffectGeo.call(this);
         if (this._srpgScale && this._handle) {
+            // _srpgScale = 목표 타일 영역의 픽셀 크기 (예: 48, 96, 144...)
+            // 네이티브 스케일 = animation.scale/100 (DB 설정, 화면 전체 기준)
+            // 타일 비율 = targetPx / (화면높이 × 0.5) → 화면 반 기준 대비 타일 비율
             const baseScale = this._animation.scale / 100;
-            const finalScale = baseScale * this._srpgScale;
+            const screenRef = Graphics.height * 0.5; // 이펙트 기본 커버리지 ≈ 화면 절반
+            const tileRatio = this._srpgScale / screenRef;
+            const finalScale = baseScale * tileRatio;
             this._handle.setScale(finalScale, finalScale, finalScale);
         }
     };
@@ -13105,8 +14414,9 @@
     window.SrpgAnimScale = {
         // 이펙트 타일(area) 목록에서 바운딩 최대 치수(타일 수) 계산
         calcFromEffectTiles(tiles) {
-            if (!tiles || tiles.length === 0) return 1.5;
-            if (tiles.length === 1) return 1.5;  // 1그리드 → 1+0.5 = 1.5배
+            // 반환값 = 목표 영역 픽셀 크기 (절대값)
+            const tw = $gameMap ? $gameMap.tileWidth() : 48;
+            if (!tiles || tiles.length <= 1) return tw;  // 1타일 = 타일 1개 크기
 
             let minX = Infinity, maxX = -Infinity;
             let minY = Infinity, maxY = -Infinity;
@@ -13121,17 +14431,18 @@
             const width = maxX - minX + 1;
             const height = maxY - minY + 1;
             const maxDim = Math.max(width, height);
-            return maxDim + 0.5;  // 최대 치수 + 0.5 패딩
+            return tw * maxDim;  // 타일 수 × 타일 픽셀 크기
         },
 
         // 스킬/유닛 조합으로 스케일 계산
         calcForSkill(unit, skill, targetX, targetY) {
-            if (!skill) return 1.5;  // 기본 공격 = 1타일
+            const tw = $gameMap ? $gameMap.tileWidth() : 48;
+            if (!skill) return tw;  // 기본 공격 = 1타일 픽셀 크기
             const meta = SrpgSkillMeta.getRange(unit, skill);
             if (meta.area && meta.area.length > 1) {
                 return this.calcFromEffectTiles(meta.area);
             }
-            return 1.5;  // 단일 타일
+            return tw;  // 단일 타일
         },
 
         // $gameTemp에 스케일 설정 (requestAnimation 직전 호출)
@@ -13190,6 +14501,295 @@
         SM.endBattle();
     });
 
+    /**
+     * SetBattleConfig — 이벤트 커맨드로 전투 시나리오 ID를 동적 지정
+     * StartBattle 전에 호출하면 해당 SrpgBattles 설정을 사용
+     * @param {string} configId - SrpgBattles.json 인덱스
+     */
+    PluginManager.registerCommand(pluginName, "SetBattleConfig", (args) => {
+        const id = Number(args.configId || 0);
+        if (id > 0 && window.$dataSrpgBattles && window.$dataSrpgBattles[id]) {
+            SM._pendingBattleConfigId = id;
+            console.log("[SRPG] SetBattleConfig: #" + id + " (" + window.$dataSrpgBattles[id].name + ")");
+        } else {
+            console.warn("[SRPG] SetBattleConfig: invalid id=" + id);
+        }
+    });
+
+
+
+    // =========================================================================
+    //  스크롤 경계 영역 시각 피드백 — 반투명 테두리 + 커서 변형
+    // =========================================================================
+
+    // HUD 업데이트에서 매 프레임 호출
+    const SrpgUI_proto = SrpgUI;
+
+    // 스크롤 존 오버레이 (Scene_Map 자식 — 화면 고정)
+    SrpgUI._scrollZoneGfx = null;
+    SrpgUI._scrollEdgeDirs = null;
+    SrpgUI._scrollEdgeMargin = 50;
+    SrpgUI._prevCursorStyle = null;
+
+    SrpgUI._initScrollZone = function(stage) {
+        if (this._scrollZoneGfx) {
+            if (this._scrollZoneGfx.parent) this._scrollZoneGfx.parent.removeChild(this._scrollZoneGfx);
+            if (!this._scrollZoneGfx._destroyed) this._scrollZoneGfx.destroy();
+        }
+        this._scrollZoneGfx = new PIXI.Graphics();
+        this._scrollZoneGfx.zIndex = 9990;
+        if (stage && !stage.sortableChildren) stage.sortableChildren = true;
+        if (stage) stage.addChild(this._scrollZoneGfx);
+    };
+
+    SrpgUI._updateScrollZone = function() {
+        const g = this._scrollZoneGfx;
+        if (!g) return;
+        g.clear();
+
+        const dirs = this._scrollEdgeDirs;
+        if (!dirs) {
+            // 전투 비활성 — 커서 복원
+            if (this._prevCursorStyle) {
+                document.body.style.cursor = "";
+                this._prevCursorStyle = null;
+            }
+            return;
+        }
+
+        const m = this._scrollEdgeMargin || 50;
+        const w = Graphics.width, h = Graphics.height;
+        const color = 0x4488CC;
+        const alpha = 0.18;
+
+        // 활성 방향의 테두리만 그리기
+        if (dirs.left)  g.beginFill(color, alpha).drawRect(0, 0, m, h).endFill();
+        if (dirs.right) g.beginFill(color, alpha).drawRect(w - m, 0, m, h).endFill();
+        if (dirs.up)    g.beginFill(color, alpha).drawRect(0, 0, w, m).endFill();
+        if (dirs.down)  g.beginFill(color, alpha).drawRect(0, h - m, w, m).endFill();
+
+        // 항상 edge 영역이면 테두리 표시 (활성 여부와 무관하게 존재 감지)
+        const anyActive = dirs.left || dirs.right || dirs.up || dirs.down;
+
+        // CSS 커서 변형
+        if (anyActive) {
+            let cursor = "default";
+            if (dirs.left && dirs.up)        cursor = "nw-resize";
+            else if (dirs.right && dirs.up)   cursor = "ne-resize";
+            else if (dirs.left && dirs.down)  cursor = "sw-resize";
+            else if (dirs.right && dirs.down) cursor = "se-resize";
+            else if (dirs.left)               cursor = "w-resize";
+            else if (dirs.right)              cursor = "e-resize";
+            else if (dirs.up)                 cursor = "n-resize";
+            else if (dirs.down)               cursor = "s-resize";
+            document.body.style.cursor = cursor;
+            this._prevCursorStyle = cursor;
+        } else {
+            if (this._prevCursorStyle) {
+                document.body.style.cursor = "";
+                this._prevCursorStyle = null;
+            }
+        }
+    };
+
+    // =========================================================================
+    //  전투 시작 + 목표 배너 UI (화면 중앙 페이드인/아웃)
+    // =========================================================================
+
+    SrpgUI._battleBanner = null; // { phase, timer, maxTimer, texts, container }
+
+    SrpgUI._initBattleBanner = function(stage) {
+        if (this._battleBanner && this._battleBanner.container) {
+            if (this._battleBanner.container.parent)
+                this._battleBanner.container.parent.removeChild(this._battleBanner.container);
+            if (!this._battleBanner.container._destroyed)
+                this._battleBanner.container.destroy({ children: true });
+        }
+        this._battleBanner = null;
+        this._bannerStage = stage;
+    };
+
+    /**
+     * 전투 시작 배너 표시 — SM에서 호출
+     * @param {string} title - "전투 시작" 등
+     * @param {string} objective - 승리 조건 텍스트
+     * @param {string} [defeatCondition] - 패배 조건 텍스트
+     * @param {Function} [callback] - 배너 완료 후 콜백
+     */
+    SrpgUI.showBattleBanner = function(title, objective, defeatCondition, callback) {
+        let stage = this._bannerStage;
+        // _bannerStage가 아직 없으면 SceneManager에서 직접 획득 시도
+        if (!stage && SceneManager._scene) {
+            this._bannerStage = SceneManager._scene;
+            stage = this._bannerStage;
+            console.log("[SrpgUI] showBattleBanner: _bannerStage was null, recovered from SceneManager.");
+        }
+        if (!stage) {
+            console.warn("[SrpgUI] showBattleBanner: No stage available. Calling callback immediately.");
+            if (callback) callback();
+            return;
+        }
+
+        // sortableChildren 활성화 (zIndex 적용)
+        if (!stage.sortableChildren) stage.sortableChildren = true;
+        const c = new PIXI.Container();
+        c.zIndex = 10001;
+        c.alpha = 0;
+        stage.addChild(c);
+        console.log("[SrpgUI] Battle banner container added to stage. children=" + stage.children.length);
+
+        const w = Graphics.width, h = Graphics.height;
+        const hasConditions = !!(objective || defeatCondition);
+
+        // 반투명 배경 밴드 (화면 중앙) — 조건 텍스트가 있으면 더 넓게
+        const bandH = Math.round(h * (hasConditions ? 0.40 : 0.22));
+        const bandY = Math.round((h - bandH) / 2);
+        const bg = new PIXI.Graphics();
+        bg.beginFill(0x000000, 0.65);
+        bg.drawRect(0, bandY, w, bandH);
+        bg.endFill();
+        c.addChild(bg);
+
+        // 레이아웃 계산: 조건 텍스트가 있으면 title을 위로, 없으면 중앙
+        const titleYRatio = hasConditions ? 0.28 : 0.5;
+
+        // 제목 텍스트
+        const titleStyle = new PIXI.TextStyle({
+            fontFamily: "Arial, sans-serif",
+            fontSize: Math.round(h * 0.065),
+            fontWeight: "bold",
+            fill: "#FFD700",
+            stroke: "#000000",
+            strokeThickness: 4,
+            dropShadow: true,
+            dropShadowColor: "#000000",
+            dropShadowDistance: 3,
+            align: "center",
+        });
+        const titleText = new PIXI.Text(title, titleStyle);
+        titleText.anchor.set(0.5, 0.5);
+        titleText.x = w / 2;
+        titleText.y = bandY + bandH * titleYRatio;
+        c.addChild(titleText);
+
+        // 승리 조건 (녹색 라벨 + 흰색 텍스트)
+        if (objective) {
+            const winLabelStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.028),
+                fontWeight: "bold",
+                fill: "#66FF66",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+            });
+            const winLabel = new PIXI.Text("\u25B6 \uC2B9\uB9AC \uC870\uAC74", winLabelStyle); // ▶ 승리 조건
+            winLabel.anchor.set(0.5, 0.5);
+            winLabel.x = w / 2;
+            winLabel.y = bandY + bandH * 0.52;
+            c.addChild(winLabel);
+
+            const winStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.032),
+                fill: "#FFFFFF",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+                wordWrap: true,
+                wordWrapWidth: w * 0.7,
+            });
+            const winText = new PIXI.Text(objective, winStyle);
+            winText.anchor.set(0.5, 0.5);
+            winText.x = w / 2;
+            winText.y = bandY + bandH * 0.62;
+            c.addChild(winText);
+        }
+
+        // 패배 조건 (적색 라벨 + 흰색 텍스트)
+        if (defeatCondition) {
+            const loseLabelStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.028),
+                fontWeight: "bold",
+                fill: "#FF6666",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+            });
+            const loseLabel = new PIXI.Text("\u25B6 \uD328\uBC30 \uC870\uAC74", loseLabelStyle); // ▶ 패배 조건
+            loseLabel.anchor.set(0.5, 0.5);
+            loseLabel.x = w / 2;
+            loseLabel.y = bandY + bandH * 0.74;
+            c.addChild(loseLabel);
+
+            const loseStyle = new PIXI.TextStyle({
+                fontFamily: "Arial, sans-serif",
+                fontSize: Math.round(h * 0.032),
+                fill: "#FFCCCC",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center",
+                wordWrap: true,
+                wordWrapWidth: w * 0.7,
+            });
+            const loseText = new PIXI.Text(defeatCondition, loseStyle);
+            loseText.anchor.set(0.5, 0.5);
+            loseText.x = w / 2;
+            loseText.y = bandY + bandH * 0.84;
+            c.addChild(loseText);
+        }
+
+        // 애니메이션 상태
+        // phase: fadeIn(30f) → hold(90f) → fadeOut(30f)
+        this._battleBanner = {
+            phase: "fadeIn",
+            timer: 0,
+            fadeInFrames: 30,
+            holdFrames: 90,
+            fadeOutFrames: 30,
+            container: c,
+            callback: callback || null,
+        };
+    };
+
+    SrpgUI._updateBattleBanner = function() {
+        const b = this._battleBanner;
+        if (!b || !b.container) return false; // 배너 없음
+
+        b.timer++;
+        const c = b.container;
+
+        if (b.phase === "fadeIn") {
+            c.alpha = Math.min(1, b.timer / b.fadeInFrames);
+            if (b.timer >= b.fadeInFrames) {
+                b.phase = "hold";
+                b.timer = 0;
+            }
+        } else if (b.phase === "hold") {
+            c.alpha = 1;
+            if (b.timer >= b.holdFrames) {
+                b.phase = "fadeOut";
+                b.timer = 0;
+            }
+        } else if (b.phase === "fadeOut") {
+            c.alpha = Math.max(0, 1 - b.timer / b.fadeOutFrames);
+            if (b.timer >= b.fadeOutFrames) {
+                // 배너 종료
+                if (c.parent) c.parent.removeChild(c);
+                if (!c._destroyed) c.destroy({ children: true });
+                const cb = b.callback;
+                this._battleBanner = null;
+                if (cb) cb();
+                return false; // 완료
+            }
+        }
+        return true; // 아직 진행 중
+    };
+
+    SrpgUI.isBattleBannerActive = function() {
+        return !!this._battleBanner;
+    };
 
     // =========================================================================
     //  SRPG 이동속도 옵션 — ConfigManager + Window_Options 확장
@@ -13274,6 +14874,42 @@
             return;
         }
         _Window_Options_cursorLeft.call(this);
+    };
+
+
+    // =========================================================================
+    //  SRPG 스크롤 속도 옵션 — ConfigManager + Window_Options 확장
+    // =========================================================================
+
+    const _DEFAULT_SCROLL_SPEED = 4;
+    ConfigManager.srpgScrollSpeed = _DEFAULT_SCROLL_SPEED;
+
+    const _ConfigManager_makeData2 = ConfigManager.makeData;
+    ConfigManager.makeData = function() {
+        const config = _ConfigManager_makeData2.call(this);
+        config.srpgScrollSpeed = this.srpgScrollSpeed;
+        return config;
+    };
+
+    const _ConfigManager_applyData2 = ConfigManager.applyData;
+    ConfigManager.applyData = function(config) {
+        _ConfigManager_applyData2.call(this, config);
+        this.srpgScrollSpeed = config.srpgScrollSpeed != null
+            ? Number(config.srpgScrollSpeed).clamp(1, 6)
+            : _DEFAULT_SCROLL_SPEED;
+    };
+
+    // --- Window_Options 확장: SRPG 스크롤 속도 항목 추가 ---
+    const _Window_Options_addGeneralOptions2 = Window_Options.prototype.addGeneralOptions;
+    Window_Options.prototype.addGeneralOptions = function() {
+        _Window_Options_addGeneralOptions2.call(this);
+        this.addCommand("SRPG 스크롤속도", "srpgScrollSpeed");
+    };
+
+    // srpgScrollSpeed도 isSrpgSpeedSymbol에 포함
+    const _isSrpgSpeedSymbol = Window_Options.prototype.isSrpgSpeedSymbol;
+    Window_Options.prototype.isSrpgSpeedSymbol = function(symbol) {
+        return symbol === "srpgScrollSpeed" || _isSrpgSpeedSymbol.call(this, symbol);
     };
 
 })(); // ── IIFE 끝 ──

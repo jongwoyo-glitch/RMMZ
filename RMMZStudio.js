@@ -948,7 +948,10 @@ const GitHubAdapter = {
                             ${createField('name', '이름', 'text', item.name || '')}
                             ${createField('surname', '성씨', 'text', item.surname || '')}
                         </div>
-                        ${createField('nickname', '별명', 'text', item.nickname || '')}
+                        <div class="formInline">
+                            ${createField('nickname', '별명', 'text', item.nickname || '')}
+                            <div class="formGroup"><label>성별</label><select data-field="gender" id="field_gender" onchange="UI._syncGenderToGaho(this.value)"><option value="m"${(item.gender||'m')==='m'?' selected':''}>남</option><option value="f"${item.gender==='f'?' selected':''}>여</option></select></div>
+                        </div>
                         ${createField('classId', '직업', 'number', item.classId || 1)}
                         <div class="formInline">
                             ${createField('initialLevel', '초기 레벨', 'number', item.initialLevel || 1)}
@@ -2307,7 +2310,7 @@ const GitHubAdapter = {
                 const _ntv = (tag) => { const m = note.match(new RegExp('<' + tag + ':([^>]+)>', 'i')); return m ? m[1].trim() : null; };
                 const pillarStr = _ntv('gahoPillars') || '';
                 const race = _ntv('gahoRace') || 'human';
-                const gender = _ntv('gahoGender') || 'm';
+                const gender = item.gender || _ntv('gahoGender') || 'm';
 
                 const G = window.GahoSystem;
                 if (!G) return `<div class="formSection"><div class="formSectionHeader">가호(원국)</div><div class="formSectionContent"><span style="color:#888">GahoSystem.js 플러그인이 로드되지 않았습니다.</span></div></div>`;
@@ -2319,10 +2322,7 @@ const GitHubAdapter = {
                     <div class="formSectionContent" id="gahoSectionContent">
                     <div class="gaho-controls">
                         <select id="gahoRace" onchange="UI.syncGahoNote()">${raceOpts}</select>
-                        <span id="gahoGenderBtns">
-                            <button class="gaho-gender-btn ${gender==='m'?'active':''}" data-gdr="m" onclick="UI._setGahoGender('m')">♂</button>
-                            <button class="gaho-gender-btn ${gender==='f'?'active':''}" data-gdr="f" onclick="UI._setGahoGender('f')">♀</button>
-                        </span>
+
                         <button onclick="UI._gahoRandom()" title="랜덤 생성">🎲 랜덤</button>
                         <button onclick="UI._showGahoDesignModal()" title="설계 생성">🔧 설계</button>
                     </div>`;
@@ -2595,7 +2595,7 @@ const GitHubAdapter = {
                 note = note.trim();
                 const p = pillarStr !== undefined ? pillarStr : (note.match(/<gahoPillars:([^>]+)>/i)?.[1] || '');
                 const r = race !== undefined ? race : (document.getElementById('gahoRace')?.value || 'human');
-                const g = gender !== undefined ? gender : (document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm');
+                const g = gender !== undefined ? gender : (item?.gender || 'm');
                 const b = birthStr !== undefined ? birthStr : '';
                 if (p) note += `\n<gahoPillars:${p}>`;
                 note += `\n<gahoRace:${r}>`;
@@ -2608,9 +2608,18 @@ const GitHubAdapter = {
                 this.renderDBForm();
             },
 
-            _setGahoGender(g) {
-                document.querySelectorAll('.gaho-gender-btn').forEach(b => b.classList.toggle('active', b.dataset.gdr === g));
+            _syncGenderToGaho(g) {
+                // 기본 정보 성별 변경 → gahoGender 노트태그 갱신 + 전체 재렌더링
                 this.syncGahoNote(undefined, undefined, g);
+                this.renderDBForm();
+            },
+
+            _setGahoGender(g) {
+                // 설계 모달 등에서 성별 변경 → item.gender + 노트태그 + 재렌더링
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                if (item) item.gender = g;
+                this.syncGahoNote(undefined, undefined, g);
+                this.renderDBForm();
             },
 
             _setGahoHairLen(hlId) {
@@ -2629,7 +2638,8 @@ const GitHubAdapter = {
             _gahoRandom() {
                 const G = window.GahoSystem; if (!G) return;
                 const race = document.getElementById('gahoRace')?.value || 'human';
-                const gender = document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm';
+                const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                const gender = item?.gender || 'm';
                 const result = G.randomGenerate(race, gender);
                 const birthStr = result.birth ? `${result.birth.year},${result.birth.month},${result.birth.day},${result.birth.hour}` : '';
                 this.syncGahoNote(result.pillarStr, race, gender, birthStr);
@@ -2638,7 +2648,7 @@ const GitHubAdapter = {
             _showGahoDesignModal() {
                 const G = window.GahoSystem; if (!G) return;
                 const currentRace = document.getElementById('gahoRace')?.value || 'human';
-                const currentGender = document.querySelector('.gaho-gender-btn.active')?.dataset?.gdr || 'm';
+                const currentGender = State.database[State.currentDBTab]?.[State.currentDBItem]?.gender || 'm';
                 const dm = { el:'fire', gender:currentGender, race:currentRace, mode:'sipsung', vals:[0,0,0,0,0] };
 
                 function getAxes() {
@@ -5927,14 +5937,26 @@ const GitHubAdapter = {
                 const actorId = State.currentDBItem;
                 const st = this._portraitState || {};
                 try {
-                    const resp = await fetch('/api/list?path=img/standing');
-                    const files = await resp.json();
-                    const pngs = (files.files || []).filter(f => f.endsWith('.png')).map(f => f.replace('.png',''));
+                    const allFiles = await UI._listFiles('img/standing');
+                    const pngs = (allFiles || []).filter(f => f.endsWith('.png')).map(f => f.replace('.png',''));
                     if (pngs.length === 0) { alert('img/standing에 이미지 파일이 없습니다.'); return; }
 
+                    // 성별 기반 필터링 (body/outfit 슬롯)
+                    const item = State.database[State.currentDBTab]?.[State.currentDBItem];
+                    const gender = item?.gender || 'm';
+                    const genderSlots = ['body', 'outfit'];
+                    let filtered = pngs;
+                    if (genderSlots.includes(slot)) {
+                        const myTag = gender === 'f' ? '_f_' : '_m_';
+                        const otherTag = gender === 'f' ? '_m_' : '_f_';
+                        // 내 성별 태그 포함 or 어떤 성별 태그도 없는 공용 파일
+                        filtered = pngs.filter(f => !f.includes(otherTag));
+                    }
+
                     let html = '<div style="max-height:300px;overflow-y:auto;">';
-                    for (const f of pngs) {
-                        html += '<div class="pickerRow" onclick="UI._pickerState.selected=\'' + f + '\'; UI._pickerState.callback(\'' + f + '\'); UI.closePicker();">' + f + '</div>';
+                    for (const f of filtered) {
+                        const badge = f.includes('_m_') ? ' <span style="color:#59f;font-size:10px;">♂</span>' : f.includes('_f_') ? ' <span style="color:#f59;font-size:10px;">♀</span>' : '';
+                        html += '<div class="pickerRow" onclick="UI._pickerState.selected=\'' + f + '\'; UI._pickerState.callback(\'' + f + '\'); UI.closePicker();">' + f + badge + '</div>';
                     }
                     html += '</div>';
 
@@ -7352,6 +7374,40 @@ const GitHubAdapter = {
                     ctx.fillText(evName, ex + TS/2, ey + TS/2 + 4);
                     ctx.restore();
                 });
+
+
+                // ── 파티 초기 위치 마커 ──
+                const sys = State.database?.system;
+                if (sys && sys.startMapId === (typeof State.currentMap === 'number' ? State.currentMap : parseInt(String(State.currentMap).replace('Map','').replace('.json','')))) {
+                    const sx = (sys.startX || 0) * TS;
+                    const sy = (sys.startY || 0) * TS;
+                    ctx.save();
+                    // 반투명 파란 원형 배경
+                    ctx.fillStyle = 'rgba(30, 144, 255, 0.45)';
+                    ctx.beginPath();
+                    ctx.arc(sx + TS/2, sy + TS/2, TS/2 - 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // 테두리
+                    ctx.strokeStyle = '#1e90ff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    // 삼각형 (아래 방향 화살표 — 캐릭터 위치를 가리킴)
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.moveTo(sx + TS/2 - 8, sy + 10);
+                    ctx.lineTo(sx + TS/2 + 8, sy + 10);
+                    ctx.lineTo(sx + TS/2, sy + 28);
+                    ctx.closePath();
+                    ctx.fill();
+                    // "S" 텍스트
+                    ctx.fillStyle = '#1e90ff';
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#000';
+                    ctx.shadowBlur = 2;
+                    ctx.fillText('S', sx + TS/2, sy + 43);
+                    ctx.restore();
+                }
 
                 // Apply pan transform
                 UI._applyCanvasTransform();
@@ -9101,46 +9157,7 @@ const GitHubAdapter = {
                     }, { passive: false });
                 })();
 
-                // --- Context menu (이벤트 모드) ---
-                wrap.addEventListener('contextmenu', (e) => {
-                    if (State.mapEditMode !== 'event') return;
-                    e.preventDefault();
-                    const mapData = State.maps[State.currentMap];
-                    if (!mapData) return;
-                    const [mx, my] = UI._tileAtEvent(e);
-                    const w = mapData.width, h = mapData.height;
-                    if (mx < 0 || mx >= w || my < 0 || my >= h) return;
-
-                    const events = mapData.events || [];
-                    let foundIdx = -1;
-                    events.forEach((ev, i) => { if (ev && ev.x === mx && ev.y === my) foundIdx = i; });
-
-                    UI._closeContextMenu();
-                    const menu = document.createElement('div');
-                    menu.className = 'ctx-menu';
-                    const items = [];
-                    if (foundIdx >= 0) {
-                        items.push({ label: '이벤트 편집', action: () => { UI._closeContextMenu(); UI._editEvent(foundIdx); } });
-                        items.push({ label: '이벤트 복제', action: () => { UI._closeContextMenu(); UI._duplicateEvent(foundIdx); } });
-                        items.push({ sep: true });
-                        items.push({ label: '이벤트 삭제', action: () => { UI._closeContextMenu(); UI._deleteEvent(foundIdx); } });
-                    } else {
-                        items.push({ label: '새 이벤트 추가', action: () => { UI._closeContextMenu(); UI._addEvent(mx, my); } });
-                    }
-                    items.forEach(it => {
-                        if (it.sep) { const s = document.createElement('div'); s.className = 'ctx-menu-sep'; menu.appendChild(s); }
-                        else {
-                            const d = document.createElement('div'); d.className = 'ctx-menu-item'; d.textContent = it.label;
-                            if (it.action) d.onclick = it.action; menu.appendChild(d);
-                        }
-                    });
-                    menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
-                    document.body.appendChild(menu);
-                    setTimeout(() => {
-                        const handler = (ev2) => { if (!menu.contains(ev2.target)) { UI._closeContextMenu(); document.removeEventListener('mousedown', handler); } };
-                        document.addEventListener('mousedown', handler);
-                    }, 0);
-                });
+                // --- Context menu (이벤트 모드) --- REMOVED: merged into _showMapContextMenu
 
                 // --- Pointer leave ---
                 wrap.addEventListener('pointerleave', (e) => {
@@ -9257,9 +9274,19 @@ const GitHubAdapter = {
                     items.push({ label: `타일 (${mx}, ${my})`, disabled: true });
                     items.push({ sep: true });
                     if (evHere) {
+                        const evIdx = events.indexOf(evHere);
                         items.push({ label: '이벤트 편집: ' + (evHere.name || 'EV'), action: () => {
-                            // Could navigate to event editor
                             UI._closeContextMenu();
+                            UI._editEvent(evIdx);
+                        }});
+                        items.push({ label: '이벤트 복제', action: () => {
+                            UI._closeContextMenu();
+                            UI._duplicateEvent(evIdx);
+                        }});
+                        items.push({ sep: true });
+                        items.push({ label: '이벤트 삭제', action: () => {
+                            UI._closeContextMenu();
+                            UI._deleteEvent(evIdx);
                         }});
                     } else {
                         items.push({ label: '새 이벤트 생성', action: () => {
@@ -9273,6 +9300,34 @@ const GitHubAdapter = {
                             }});
                         }
                         items.push({ label: 'SRPG 컨트롤러 생성', action: () => { UI._closeContextMenu(); UI._srpgAutoGenController(); } });
+                    }
+                    items.push({ sep: true });
+                }
+                if (inBounds) {
+                    const curMapId = (typeof State.currentMap === 'number' ? State.currentMap : parseInt(String(State.currentMap).replace('Map','').replace('.json','')));
+                    const sys = State.database?.system; const isCurStart = sys && sys.startMapId === curMapId && sys.startX === mx && sys.startY === my;
+                    items.push({ label: isCurStart ? '\u2713 초기 위치 (현재)' : '\u25b6 초기 위치 설정', action: () => {
+                        UI._closeContextMenu();
+                        if (!State.database?.system) return;
+                        State.database.system.startMapId = curMapId;
+                        State.database.system.startX = mx;
+                        State.database.system.startY = my;
+                        State.dirty = true;
+                        UI.drawMap();
+                        UI.showToast('초기 위치: Map' + String(curMapId).padStart(3,'0') + ' (' + mx + ', ' + my + ')');
+                    }});
+                    // 거점 진입점 배치 (Locations.json 기반)
+                    items.push({ label: '\u25c9 거점 진입점 배치...', action: () => {
+                        UI._closeContextMenu();
+                        UI._hubPlaceEntryPoint(curMapId, mx, my);
+                    }});
+                    // 기존 진입점 삭제 (해당 타일에 $MapMarker 이벤트가 있을 때)
+                    if (evHere && evHere.pages && evHere.pages[0] && evHere.pages[0].image &&
+                        evHere.pages[0].image.characterName === '$MapMarker') {
+                        items.push({ label: '\u2716 진입점 삭제', action: () => {
+                            UI._closeContextMenu();
+                            UI._hubRemoveEntryPoint(curMapId, mx, my);
+                        }});
                     }
                     items.push({ sep: true });
                 }
@@ -9613,6 +9668,12 @@ const GitHubAdapter = {
                 if (UI._srpgPanelVisible) {
                     if (tileC) tileC.style.display = 'none';
                     if (srpgC) srpgC.style.display = '';
+                    // 거점 패널 숨기기
+                    var hubC2 = document.getElementById('hubPanelContainer');
+                    if (hubC2) hubC2.style.display = 'none';
+                    UI._hubPanelVisible = false;
+                    var hubBtn2 = document.getElementById('btnHubPanel');
+                    if (hubBtn2) { hubBtn2.style.background = '#27ae60'; hubBtn2.style.borderColor = '#2ecc71'; }
                     if (btn) { btn.style.background = '#e94560'; btn.style.borderColor = '#ff6b81'; }
                     var mapData = State.maps[State.currentMap];
                     if (mapData) UI._refreshSrpgUnitPalette(mapData);
@@ -9623,6 +9684,887 @@ const GitHubAdapter = {
                     // deactivate placement mode
                     if (UI._srpgPlaceUnit) { UI._srpgPlaceUnit._active = false; UI._srpgPlaceUnit = null; }
                 }
+            },
+
+
+            // ─── 거점(Hub) 패널 ───
+            _hubPanelVisible: false,
+            _hubLocations: null,   // cached $dataLocations
+            _hubFacilities: null,  // cached $dataFacilities
+
+            mapToggleHubPanel() {
+                UI._hubPanelVisible = !UI._hubPanelVisible;
+                var tileC = document.getElementById('tilePaletteContainer');
+                var srpgC = document.getElementById('srpgPanelContainer');
+                var hubC = document.getElementById('hubPanelContainer');
+                var btn = document.getElementById('btnHubPanel');
+                if (UI._hubPanelVisible) {
+                    // 다른 패널 숨기기
+                    if (tileC) tileC.style.display = 'none';
+                    if (srpgC) srpgC.style.display = 'none';
+                    if (hubC) hubC.style.display = '';
+                    if (btn) { btn.style.background = '#e94560'; btn.style.borderColor = '#ff6b81'; }
+                    // SRPG 패널도 비활성화
+                    UI._srpgPanelVisible = false;
+                    var srpgBtn = document.getElementById('btnSrpgPanel');
+                    if (srpgBtn) { srpgBtn.style.background = '#8e44ad'; srpgBtn.style.borderColor = '#9b59b6'; }
+                    UI._refreshHubPanel();
+                } else {
+                    if (tileC) tileC.style.display = '';
+                    if (hubC) hubC.style.display = 'none';
+                    if (btn) { btn.style.background = '#27ae60'; btn.style.borderColor = '#2ecc71'; }
+                }
+            },
+
+            async _loadHubData() {
+                if (UI._hubLocations && UI._hubFacilities) return;
+                try {
+                    var locText = await UI._readProjectFileText('data/Locations.json');
+                    UI._hubLocations = locText ? JSON.parse(locText) : [null];
+                    var facText = await UI._readProjectFileText('data/Facilities.json');
+                    UI._hubFacilities = facText ? JSON.parse(facText) : [null];
+                } catch(e) {
+                    console.warn('Hub data load failed:', e);
+                    UI._hubLocations = [null];
+                    UI._hubFacilities = [null];
+                }
+                // 핫스팟 타입 정의 로드 (plugins.js에서 HubSystem 파라미터 파싱)
+                if (!window._hubHotspotTypes) {
+                    try {
+                        var pluginsData = State.plugins;
+                        if (!pluginsData) {
+                            var pText = await UI._readProjectFileText('js/plugins.js');
+                            if (pText) {
+                                var match = pText.match(/var\s+\$plugins\s*=\s*(\[.+\]);?/s);
+                                if (match) pluginsData = JSON.parse(match[1]);
+                            }
+                        }
+                        if (pluginsData) {
+                            for (var pi = 0; pi < pluginsData.length; pi++) {
+                                if (pluginsData[pi].name === 'HubSystem' && pluginsData[pi].parameters) {
+                                    var rawTypes = pluginsData[pi].parameters.HotspotTypes;
+                                    if (rawTypes) {
+                                        var parsed = JSON.parse(rawTypes);
+                                        window._hubHotspotTypes = parsed.map(function(catStr) {
+                                            var cat = typeof catStr === 'string' ? JSON.parse(catStr) : catStr;
+                                            var facilities = JSON.parse(cat.facilities || '[]').map(function(facStr) {
+                                                var fac = typeof facStr === 'string' ? JSON.parse(facStr) : facStr;
+                                                var grades = JSON.parse(fac.grades || '[]').map(function(gStr) {
+                                                    return typeof gStr === 'string' ? JSON.parse(gStr) : gStr;
+                                                });
+                                                return { name: fac.name, id: fac.id, icon: fac.icon || 'hs_guild', grades: grades };
+                                            });
+                                            return { category: cat.category, facilities: facilities };
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    } catch(e) { console.warn('HotspotTypes parse failed:', e); }
+                    if (!window._hubHotspotTypes) window._hubHotspotTypes = [];
+                }
+            },
+
+            async _refreshHubPanel() {
+                await UI._loadHubData();
+                var pal = document.getElementById('hubPanelContainer');
+                if (!pal) return;
+                var mapId = State.currentMap;
+                var mapData = State.maps[mapId];
+                if (!mapData) { pal.innerHTML = '<p style="color:#888;padding:8px;">맵을 선택하세요</p>'; return; }
+
+                // 현재 맵에 연결된 거점/시설 찾기
+                var linkedLoc = null, linkedFac = null;
+                for (var i = 1; i < UI._hubLocations.length; i++) {
+                    if (UI._hubLocations[i] && UI._hubLocations[i].mapId === mapId) { linkedLoc = UI._hubLocations[i]; break; }
+                }
+                for (var i = 1; i < UI._hubFacilities.length; i++) {
+                    if (UI._hubFacilities[i] && UI._hubFacilities[i].mapId === mapId) { linkedFac = UI._hubFacilities[i]; break; }
+                }
+
+                var h = '<div style="padding:8px;">';
+                h += '<h3 style="color:#2ecc71;margin:0 0 8px 0;font-size:14px;">🏠 거점 설정</h3>';
+                h += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">맵 #' + mapId + ': ' + (mapData.displayName || '(이름없음)') + '</div>';
+
+                // 거점 연결 상태
+                if (linkedLoc) {
+                    h += UI._renderHubLocationPanel(linkedLoc, mapId);
+                } else if (linkedFac) {
+                    h += UI._renderHubFacilityPanel(linkedFac, mapId);
+                } else {
+                    h += '<div style="border:1px dashed #555;border-radius:4px;padding:12px;text-align:center;margin-bottom:8px;">';
+                    h += '<div style="color:#888;margin-bottom:8px;">이 맵에 연결된 거점/시설이 없습니다</div>';
+                    h += '<button onclick="UI._hubAssignLocation(' + mapId + ')" style="background:#27ae60;color:#fff;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;margin-right:4px;">거점 연결</button>';
+                    h += '<button onclick="UI._hubAssignFacility(' + mapId + ')" style="background:#2980b9;color:#fff;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;">시설 연결</button>';
+                    h += '</div>';
+                }
+
+                // 전체 거점/시설 목록
+                h += '<hr style="border-color:#444;margin:12px 0;">';
+                h += '<div style="font-size:12px;color:#e94560;font-weight:bold;margin-bottom:4px;">전체 거점 목록</div>';
+                for (var i = 1; i < UI._hubLocations.length; i++) {
+                    var loc = UI._hubLocations[i];
+                    if (!loc) continue;
+                    var mapLabel = loc.mapId > 0 ? ('맵#' + loc.mapId) : '미연결';
+                    var isCurrent = (loc.mapId === mapId);
+                    h += '<div style="display:flex;justify-content:space-between;padding:2px 4px;font-size:11px;' + (isCurrent ? 'color:#2ecc71;font-weight:bold;' : 'color:#ccc;') + '">';
+                    h += '<span>' + loc.id + '. ' + loc.name + '</span><span style="color:#888;">' + mapLabel + '</span></div>';
+                }
+                h += '<div style="font-size:12px;color:#3498db;font-weight:bold;margin:8px 0 4px 0;">전체 시설 목록</div>';
+                for (var i = 1; i < UI._hubFacilities.length; i++) {
+                    var fac = UI._hubFacilities[i];
+                    if (!fac) continue;
+                    var mapLabel = fac.mapId > 0 ? ('맵#' + fac.mapId) : '미연결';
+                    var isCurrent = (fac.mapId === mapId);
+                    h += '<div style="display:flex;justify-content:space-between;padding:2px 4px;font-size:11px;' + (isCurrent ? 'color:#3498db;font-weight:bold;' : 'color:#ccc;') + '">';
+                    h += '<span>' + fac.id + '. ' + fac.name + '</span><span style="color:#888;">' + mapLabel + '</span></div>';
+                }
+
+                h += '</div>';
+                pal.innerHTML = h;
+                // 거점 패널 초기화 (드롭다운 + 캔버스 + 마커)
+                if (linkedLoc) {
+                    setTimeout(function() { UI._hubInitLocationUI(linkedLoc.id); }, 50);
+                }
+            },
+
+            _renderHubLocationPanel(loc, mapId) {
+                var h = '<div style="border:1px solid #27ae60;border-radius:4px;padding:8px;margin-bottom:8px;background:rgba(39,174,96,0.1);">';
+                h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+                h += '<span style="color:#2ecc71;font-weight:bold;font-size:13px;">📍 ' + loc.name + '</span>';
+                h += '<button onclick="UI._hubUnlinkLocation(' + loc.id + ')" style="background:#c0392b;color:#fff;border:none;border-radius:3px;padding:2px 6px;font-size:10px;cursor:pointer;">연결 해제</button>';
+                h += '</div>';
+
+                // 기본 정보 — 지역
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">지역</label><input type="text" value="' + (loc.region||'') + '" onchange="UI._hubUpdateLoc(' + loc.id + ',\x27region\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px;width:100%;"></div>';
+
+                // 배경 이미지 — 드롭다운 (img/hub/ 파일 목록)
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">배경 이미지</label>';
+                h += '<select id="_hubBgSel_' + loc.id + '" onchange="UI._hubUpdateLoc(' + loc.id + ',\x27bgImage\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px;font-size:11px;width:100%;">';
+                h += '<option value="">(없음)</option>';
+                h += '</select>';
+                h += '<button onclick="UI._hubUploadBgImage(' + loc.id + ')" style="margin-top:2px;background:#2980b9;color:#fff;border:none;border-radius:3px;padding:2px 6px;font-size:10px;cursor:pointer;width:100%;">📁 이미지 업로드</button>';
+                h += '</div>';
+
+                // 유형 드롭다운
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">유형</label>';
+                h += '<select onchange="UI._hubUpdateLoc(' + loc.id + ',\x27type\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px;font-size:11px;">';
+                var types = ['town','village','camp','fortress','port','cave','ruins'];
+                for (var t = 0; t < types.length; t++) {
+                    h += '<option value="' + types[t] + '"' + (loc.type === types[t] ? ' selected' : '') + '>' + types[t] + '</option>';
+                }
+                h += '</select></div>';
+
+                // ─── 핫스팟 배치 캔버스 ───
+                h += '<div style="margin-top:8px;font-size:12px;color:#f39c12;font-weight:bold;margin-bottom:4px;">핫스팟 배치 (' + (loc.hotspots ? loc.hotspots.length : 0) + ')</div>';
+                h += '<div id="_hubCanvas_' + loc.id + '" style="position:relative;width:100%;aspect-ratio:16/9;background:#1a1a2e;border:1px solid #555;border-radius:4px;overflow:hidden;margin-bottom:6px;cursor:crosshair;">';
+                h += '<img id="_hubBgImg_' + loc.id + '" src="" style="width:100%;height:100%;object-fit:cover;display:none;" />';
+                h += '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#555;font-size:11px;pointer-events:none;" id="_hubCanvasPlaceholder_' + loc.id + '">배경 이미지를 선택하세요</div>';
+                // 핫스팟 마커들은 JS로 동적 생성
+                h += '</div>';
+
+                // ─── 핫스팟 리스트 (3단계 드롭다운) ───
+                if (loc.hotspots) {
+                    for (var hi = 0; hi < loc.hotspots.length; hi++) {
+                        var hs = loc.hotspots[hi];
+                        h += '<div style="border:1px solid #444;border-radius:3px;padding:4px;margin-bottom:3px;background:rgba(243,156,18,0.05);">';
+                        h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;">';
+                        h += '<span style="color:#f39c12;font-weight:bold;font-size:11px;min-width:18px;">#' + (hi+1) + '</span>';
+                        h += '<span style="color:#ccc;font-size:10px;flex:1;">' + hs.name + '</span>';
+                        h += '<span style="color:#888;font-size:9px;">(' + hs.x + ',' + hs.y + ')</span>';
+                        h += '<button onclick="UI._hubRemoveHotspot(' + loc.id + ',' + hi + ')" style="background:#c0392b;color:#fff;border:none;border-radius:2px;padding:1px 4px;font-size:9px;cursor:pointer;" title="삭제">✕</button>';
+                        h += '</div>';
+
+                        // 3단계 드롭다운: 카테고리
+                        h += '<div style="display:flex;gap:3px;margin-bottom:2px;flex-wrap:wrap;">';
+                        h += '<select id="_hsCat_' + loc.id + '_' + hi + '" onchange="UI._hubHsCatChange(' + loc.id + ',' + hi + ',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:2px;padding:1px 2px;font-size:10px;flex:1;min-width:60px;">';
+                        h += '<option value="">카테고리</option>';
+                        h += '</select>';
+                        // 시설
+                        h += '<select id="_hsFac_' + loc.id + '_' + hi + '" onchange="UI._hubHsFacChange(' + loc.id + ',' + hi + ',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:2px;padding:1px 2px;font-size:10px;flex:1;min-width:60px;">';
+                        h += '<option value="">시설</option>';
+                        h += '</select>';
+                        // 등급
+                        h += '<select id="_hsGrd_' + loc.id + '_' + hi + '" onchange="UI._hubHsGrdChange(' + loc.id + ',' + hi + ',this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:2px;padding:1px 2px;font-size:10px;flex:1;min-width:60px;">';
+                        h += '<option value="">등급</option>';
+                        h += '</select>';
+                        h += '</div>';
+
+                        // 대상 맵 선택
+                        h += '<select onchange="UI._hubUpdateHotspot(' + loc.id + ',' + hi + ',\x27targetMapId\x27,parseInt(this.value))" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:2px;padding:1px;font-size:10px;width:100%;">';
+                        h += '<option value="0"' + (!hs.targetMapId ? ' selected' : '') + '>대상 맵: 미연결</option>';
+                        var mapInfos = State.mapInfos || [];
+                        for (var mi = 1; mi < mapInfos.length; mi++) {
+                            if (!mapInfos[mi]) continue;
+                            h += '<option value="' + mi + '"' + (hs.targetMapId === mi ? ' selected' : '') + '>' + mi + '. ' + mapInfos[mi].name + '</option>';
+                        }
+                        h += '</select>';
+
+                        h += '</div>';
+                    }
+                }
+                h += '<button onclick="UI._hubAddHotspot(' + loc.id + ')" style="margin-top:4px;background:#555;color:#fff;border:none;border-radius:3px;padding:3px 8px;font-size:10px;cursor:pointer;width:100%;">+ 핫스팟 추가</button>';
+
+                h += '</div>';
+                return h;
+            },
+
+            _renderHubFacilityPanel(fac, mapId) {
+                var h = '<div style="border:1px solid #3498db;border-radius:4px;padding:8px;margin-bottom:8px;background:rgba(52,152,219,0.1);">';
+                h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+                h += '<span style="color:#3498db;font-weight:bold;font-size:13px;">🏛 ' + fac.name + '</span>';
+                h += '<button onclick="UI._hubUnlinkFacility(' + fac.id + ')" style="background:#c0392b;color:#fff;border:none;border-radius:3px;padding:2px 6px;font-size:10px;cursor:pointer;">연결 해제</button>';
+                h += '</div>';
+
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">시설명</label><input type="text" value="' + fac.name + '" onchange="UI._hubUpdateFac(' + fac.id + ',\x27name\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px;width:100%;"></div>';
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">배경 이미지</label><input type="text" value="' + (fac.bgImage||'') + '" onchange="UI._hubUpdateFac(' + fac.id + ',\x27bgImage\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px;font-size:11px;width:100%;"></div>';
+                h += '<div class="formGroup" style="margin-bottom:4px;"><label style="color:#aaa;font-size:11px;">유형</label>';
+                h += '<select onchange="UI._hubUpdateFac(' + fac.id + ',\x27type\x27,this.value)" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:3px;padding:2px;font-size:11px;">';
+                var ftypes = ['guild','tavern','shop','smithy','inn','temple','library','arena','stable'];
+                for (var t = 0; t < ftypes.length; t++) {
+                    h += '<option value="' + ftypes[t] + '"' + (fac.type === ftypes[t] ? ' selected' : '') + '>' + ftypes[t] + '</option>';
+                }
+                h += '</select></div>';
+
+                // 행동 목록
+                h += '<div style="margin-top:8px;font-size:12px;color:#e67e22;font-weight:bold;">행동 목록 (' + (fac.actions ? fac.actions.length : 0) + ')</div>';
+                if (fac.actions) {
+                    for (var ai = 0; ai < fac.actions.length; ai++) {
+                        var act = fac.actions[ai];
+                        h += '<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #333;font-size:11px;">';
+                        h += '<span style="color:#e67e22;min-width:14px;">' + (ai+1) + '</span>';
+                        h += '<input type="text" value="' + act.name + '" style="background:#2a2a3e;color:#fff;border:1px solid #555;border-radius:2px;padding:1px 3px;width:60px;font-size:10px;" onchange="UI._hubUpdateAction(' + fac.id + ',' + ai + ',\x27name\x27,this.value)">';
+                        h += '<input type="text" value="' + act.handler + '" style="background:#2a2a3e;color:#888;border:1px solid #555;border-radius:2px;padding:1px 3px;flex:1;font-size:10px;" onchange="UI._hubUpdateAction(' + fac.id + ',' + ai + ',\x27handler\x27,this.value)" placeholder="handler">';
+                        h += '<button onclick="UI._hubRemoveAction(' + fac.id + ',' + ai + ')" style="background:#c0392b;color:#fff;border:none;border-radius:2px;padding:1px 4px;font-size:9px;cursor:pointer;">✕</button>';
+                        h += '</div>';
+                    }
+                }
+                h += '<button onclick="UI._hubAddAction(' + fac.id + ')" style="margin-top:4px;background:#555;color:#fff;border:none;border-radius:3px;padding:3px 8px;font-size:10px;cursor:pointer;">+ 행동 추가</button>';
+
+                h += '</div>';
+                return h;
+            },
+
+            // ─── 거점 데이터 수정 함수들 ───
+            _hubAssignLocation(mapId) {
+                var opts = '';
+                for (var i = 1; i < UI._hubLocations.length; i++) {
+                    var loc = UI._hubLocations[i];
+                    if (loc && loc.mapId === 0) opts += i + '. ' + loc.name + '\n';
+                }
+                if (!opts) { alert('연결 가능한 거점이 없습니다. Locations.json에 새 거점을 추가하세요.'); return; }
+                var id = prompt('연결할 거점 ID를 입력하세요:\n' + opts);
+                if (!id) return;
+                id = parseInt(id);
+                if (UI._hubLocations[id]) {
+                    UI._hubLocations[id].mapId = mapId;
+                    UI._hubSaveLocations();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubAssignFacility(mapId) {
+                var opts = '';
+                for (var i = 1; i < UI._hubFacilities.length; i++) {
+                    var fac = UI._hubFacilities[i];
+                    if (fac && fac.mapId === 0) opts += i + '. ' + fac.name + '\n';
+                }
+                if (!opts) { alert('연결 가능한 시설이 없습니다. Facilities.json에 새 시설을 추가하세요.'); return; }
+                var id = prompt('연결할 시설 ID를 입력하세요:\n' + opts);
+                if (!id) return;
+                id = parseInt(id);
+                if (UI._hubFacilities[id]) {
+                    UI._hubFacilities[id].mapId = mapId;
+                    UI._hubSaveFacilities();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubUnlinkLocation(locId) {
+                if (UI._hubLocations[locId]) {
+                    UI._hubLocations[locId].mapId = 0;
+                    UI._hubSaveLocations();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubUnlinkFacility(facId) {
+                if (UI._hubFacilities[facId]) {
+                    UI._hubFacilities[facId].mapId = 0;
+                    UI._hubSaveFacilities();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubUpdateLoc(locId, key, value) {
+                if (UI._hubLocations[locId]) {
+                    UI._hubLocations[locId][key] = value;
+                    UI._hubSaveLocations();
+                }
+            },
+
+            _hubUpdateFac(facId, key, value) {
+                if (UI._hubFacilities[facId]) {
+                    UI._hubFacilities[facId][key] = value;
+                    UI._hubSaveFacilities();
+                }
+            },
+
+            _hubUpdateHotspot(locId, hsIdx, key, value) {
+                if (UI._hubLocations[locId] && UI._hubLocations[locId].hotspots[hsIdx]) {
+                    UI._hubLocations[locId].hotspots[hsIdx][key] = value;
+                    UI._hubSaveLocations();
+                }
+            },
+
+            _hubAddHotspot(locId) {
+                if (UI._hubLocations[locId]) {
+                    if (!UI._hubLocations[locId].hotspots) UI._hubLocations[locId].hotspots = [];
+                    UI._hubLocations[locId].hotspots.push({
+                        id: 'spot' + (UI._hubLocations[locId].hotspots.length + 1),
+                        name: '새 장소',
+                        icon: 'hs_guild',
+                        x: 50, y: 50,
+                        facilityId: 0,
+                        targetMapId: 0
+                    });
+                    UI._hubSaveLocations();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubUpdateAction(facId, actIdx, key, value) {
+                if (UI._hubFacilities[facId] && UI._hubFacilities[facId].actions[actIdx]) {
+                    UI._hubFacilities[facId].actions[actIdx][key] = value;
+                    UI._hubSaveFacilities();
+                }
+            },
+
+            _hubAddAction(facId) {
+                if (UI._hubFacilities[facId]) {
+                    if (!UI._hubFacilities[facId].actions) UI._hubFacilities[facId].actions = [];
+                    UI._hubFacilities[facId].actions.push({
+                        id: 'action' + (UI._hubFacilities[facId].actions.length + 1),
+                        name: '새 행동',
+                        handler: 'newHandler'
+                    });
+                    UI._hubSaveFacilities();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            _hubRemoveAction(facId, actIdx) {
+                if (UI._hubFacilities[facId] && UI._hubFacilities[facId].actions) {
+                    UI._hubFacilities[facId].actions.splice(actIdx, 1);
+                    UI._hubSaveFacilities();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            // ─── 핫스팟 삭제 ───
+            _hubRemoveHotspot(locId, hsIdx) {
+                if (UI._hubLocations[locId] && UI._hubLocations[locId].hotspots) {
+                    UI._hubLocations[locId].hotspots.splice(hsIdx, 1);
+                    UI._hubSaveLocations();
+                    UI._refreshHubPanel();
+                }
+            },
+
+            // ─── 배경 이미지 업로드 (img/hub/) ───
+            async _hubUploadBgImage(locId) {
+                var input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/*';
+                input.onchange = async function() {
+                    if (!input.files || !input.files[0]) return;
+                    var file = input.files[0];
+                    var name = file.name.replace(/\.\w+$/, ''); // strip extension for RMMZ convention
+                    try {
+                        if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                            var reader = new FileReader();
+                            reader.onload = async function() {
+                                var base64 = reader.result.split(',')[1];
+                                await GitHubAdapter.writeFile(
+                                    GitHubAdapter._projPath('img/hub/' + file.name),
+                                    base64, '[RMMZStudio] Upload hub bg: ' + file.name,
+                                    true // isBase64
+                                );
+                                UI._hubUpdateLoc(locId, 'bgImage', name);
+                                UI._refreshHubPanel();
+                            };
+                            reader.readAsDataURL(file);
+                        } else if (window.__RMMZ_SERVER) {
+                            var fd = new FormData();
+                            fd.append('file', file);
+                            fd.append('path', 'img/hub/' + file.name);
+                            await fetch('/api/upload', {method:'POST', body:fd});
+                            UI._hubUpdateLoc(locId, 'bgImage', name);
+                            UI._refreshHubPanel();
+                        }
+                    } catch(e) { console.error('Hub bg upload failed:', e); alert('업로드 실패: ' + e.message); }
+                };
+                input.click();
+            },
+
+            // ─── 배경 이미지 드롭다운 채우기 + 캔버스 초기화 ───
+            async _hubInitLocationUI(locId) {
+                // 1) 배경 이미지 드롭다운 채우기
+                var sel = document.getElementById('_hubBgSel_' + locId);
+                if (sel) {
+                    try {
+                        var files = await UI._listFiles('img/hub');
+                        if (files && files.length) {
+                            var loc = null;
+                            for (var i = 1; i < UI._hubLocations.length; i++) {
+                                if (UI._hubLocations[i] && UI._hubLocations[i].id === locId) { loc = UI._hubLocations[i]; break; }
+                            }
+                            for (var fi = 0; fi < files.length; fi++) {
+                                var fname = files[fi];
+                                if (!/\.(png|jpg|jpeg|webp)$/i.test(fname)) continue;
+                                var baseName = fname.replace(/\.\w+$/, '');
+                                var opt = document.createElement('option');
+                                opt.value = baseName;
+                                opt.textContent = baseName;
+                                if (loc && loc.bgImage === baseName) opt.selected = true;
+                                sel.appendChild(opt);
+                            }
+                        }
+                    } catch(e) { console.warn('Failed to list img/hub:', e); }
+                }
+
+                // 2) 배경 이미지 표시
+                var loc = null;
+                for (var i = 1; i < UI._hubLocations.length; i++) {
+                    if (UI._hubLocations[i] && UI._hubLocations[i].id === locId) { loc = UI._hubLocations[i]; break; }
+                }
+                if (loc && loc.bgImage) {
+                    UI._hubShowBgImage(locId, loc.bgImage);
+                }
+
+                // 3) 핫스팟 마커 생성
+                if (loc && loc.hotspots) {
+                    UI._hubRenderMarkers(locId, loc);
+                }
+
+                // 4) 3단계 드롭다운 채우기
+                if (loc && loc.hotspots) {
+                    for (var hi = 0; hi < loc.hotspots.length; hi++) {
+                        UI._hubFillTypeDropdowns(locId, hi, loc.hotspots[hi]);
+                    }
+                }
+            },
+
+            // ─── 배경 이미지 표시 ───
+            _hubShowBgImage(locId, bgName) {
+                var img = document.getElementById('_hubBgImg_' + locId);
+                var ph = document.getElementById('_hubCanvasPlaceholder_' + locId);
+                if (!img) return;
+                var projPath = window.__RMMZ_PROJECT_PATH || 'Project1';
+                // try png, then jpg
+                var tryLoad = function(ext) {
+                    var url;
+                    if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                        url = 'https://raw.githubusercontent.com/' + GitHubAdapter._owner + '/' + GitHubAdapter._repo + '/' + (GitHubAdapter._branch || 'main') + '/' + GitHubAdapter._projPath('img/hub/' + bgName + ext);
+                    } else {
+                        url = '/' + projPath + '/img/hub/' + bgName + ext;
+                    }
+                    img.onerror = function() {
+                        if (ext === '.png') { tryLoad('.jpg'); }
+                        else if (ext === '.jpg') { tryLoad('.webp'); }
+                        else { img.style.display = 'none'; if(ph) ph.style.display = ''; }
+                    };
+                    img.onload = function() { img.style.display = ''; if(ph) ph.style.display = 'none'; };
+                    img.src = url;
+                };
+                tryLoad('.png');
+            },
+
+            // ─── 핫스팟 마커 렌더링 (드래그 가능) ───
+            _hubRenderMarkers(locId, loc) {
+                var canvas = document.getElementById('_hubCanvas_' + locId);
+                if (!canvas || !loc.hotspots) return;
+                // 기존 마커 제거
+                canvas.querySelectorAll('.hub-hs-marker').forEach(function(m) { m.remove(); });
+
+                for (var hi = 0; hi < loc.hotspots.length; hi++) {
+                    (function(idx) {
+                        var hs = loc.hotspots[idx];
+                        var marker = document.createElement('div');
+                        marker.className = 'hub-hs-marker';
+                        marker.dataset.idx = idx;
+                        marker.style.cssText = 'position:absolute;width:20px;height:20px;background:#f39c12;border:2px solid #fff;border-radius:50%;cursor:grab;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;color:#000;box-shadow:0 1px 4px rgba(0,0,0,0.5);';
+                        marker.style.left = hs.x + '%';
+                        marker.style.top = hs.y + '%';
+                        marker.textContent = (idx + 1);
+                        marker.title = hs.name + ' (' + hs.x + ',' + hs.y + ')';
+
+                        // 드래그 로직
+                        var dragging = false;
+                        marker.addEventListener('mousedown', function(e) {
+                            e.preventDefault(); e.stopPropagation();
+                            dragging = true;
+                            marker.style.cursor = 'grabbing';
+                            marker.style.background = '#e74c3c';
+                        });
+                        document.addEventListener('mousemove', function(e) {
+                            if (!dragging) return;
+                            var rect = canvas.getBoundingClientRect();
+                            var px = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                            var py = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+                            marker.style.left = px + '%';
+                            marker.style.top = py + '%';
+                        });
+                        document.addEventListener('mouseup', function(e) {
+                            if (!dragging) return;
+                            dragging = false;
+                            marker.style.cursor = 'grab';
+                            marker.style.background = '#f39c12';
+                            var rect = canvas.getBoundingClientRect();
+                            var px = Math.round(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)));
+                            var py = Math.round(Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100)));
+                            // 데이터 업데이트
+                            UI._hubUpdateHotspot(locId, idx, 'x', px);
+                            UI._hubUpdateHotspot(locId, idx, 'y', py);
+                            marker.title = hs.name + ' (' + px + ',' + py + ')';
+                            // 좌표 텍스트 업데이트
+                            UI._refreshHubPanel();
+                        });
+                        canvas.appendChild(marker);
+                    })(hi);
+                }
+
+                // 캔버스 클릭으로 새 핫스팟 추가 (빈 영역 더블클릭)
+                canvas.ondblclick = function(e) {
+                    if (e.target.classList.contains('hub-hs-marker')) return;
+                    var rect = canvas.getBoundingClientRect();
+                    var px = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+                    var py = Math.round(((e.clientY - rect.top) / rect.height) * 100);
+                    if (!loc.hotspots) loc.hotspots = [];
+                    loc.hotspots.push({
+                        id: 'spot' + (loc.hotspots.length + 1),
+                        name: '새 장소',
+                        icon: 'hs_guild',
+                        x: px, y: py,
+                        facilityId: 0,
+                        targetMapId: 0
+                    });
+                    UI._hubSaveLocations();
+                    UI._refreshHubPanel();
+                };
+            },
+
+            // ─── 3단계 드롭다운 채우기 ───
+            _hubFillTypeDropdowns(locId, hsIdx, hs) {
+                var types = window._hubHotspotTypes || [];
+                var catSel = document.getElementById('_hsCat_' + locId + '_' + hsIdx);
+                var facSel = document.getElementById('_hsFac_' + locId + '_' + hsIdx);
+                var grdSel = document.getElementById('_hsGrd_' + locId + '_' + hsIdx);
+                if (!catSel || !facSel || !grdSel) return;
+
+                // 현재 값에서 카테고리/시설/등급 역추적
+                var curCatIdx = -1, curFacIdx = -1, curGrdIdx = -1;
+                for (var ci = 0; ci < types.length; ci++) {
+                    var cat = types[ci];
+                    for (var fi = 0; fi < cat.facilities.length; fi++) {
+                        if (cat.facilities[fi].id === hs.id || cat.facilities[fi].name === hs.name) {
+                            curCatIdx = ci; curFacIdx = fi;
+                            // 등급 매칭
+                            if (hs.grade && cat.facilities[fi].grades) {
+                                for (var gi = 0; gi < cat.facilities[fi].grades.length; gi++) {
+                                    if (cat.facilities[fi].grades[gi].id === hs.grade) { curGrdIdx = gi; break; }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (curCatIdx >= 0) break;
+                }
+
+                // 카테고리 옵션
+                for (var ci = 0; ci < types.length; ci++) {
+                    var opt = document.createElement('option');
+                    opt.value = ci;
+                    opt.textContent = types[ci].category;
+                    if (ci === curCatIdx) opt.selected = true;
+                    catSel.appendChild(opt);
+                }
+
+                // 시설 옵션 (현재 카테고리 기준)
+                if (curCatIdx >= 0) {
+                    var facs = types[curCatIdx].facilities;
+                    for (var fi = 0; fi < facs.length; fi++) {
+                        var opt = document.createElement('option');
+                        opt.value = fi;
+                        opt.textContent = facs[fi].name;
+                        if (fi === curFacIdx) opt.selected = true;
+                        facSel.appendChild(opt);
+                    }
+                }
+
+                // 등급 옵션 (현재 시설 기준)
+                if (curCatIdx >= 0 && curFacIdx >= 0) {
+                    var grades = types[curCatIdx].facilities[curFacIdx].grades || [];
+                    for (var gi = 0; gi < grades.length; gi++) {
+                        var opt = document.createElement('option');
+                        opt.value = gi;
+                        opt.textContent = grades[gi].name;
+                        if (gi === curGrdIdx) opt.selected = true;
+                        grdSel.appendChild(opt);
+                    }
+                }
+            },
+
+            // ─── 카테고리 변경 → 시설 드롭다운 갱신 ───
+            _hubHsCatChange(locId, hsIdx, catIdxStr) {
+                var types = window._hubHotspotTypes || [];
+                var catIdx = parseInt(catIdxStr);
+                var facSel = document.getElementById('_hsFac_' + locId + '_' + hsIdx);
+                var grdSel = document.getElementById('_hsGrd_' + locId + '_' + hsIdx);
+                if (!facSel || !grdSel) return;
+                // 시설 드롭다운 리셋
+                facSel.innerHTML = '<option value="">시설</option>';
+                grdSel.innerHTML = '<option value="">등급</option>';
+                if (isNaN(catIdx) || !types[catIdx]) return;
+                var facs = types[catIdx].facilities;
+                for (var fi = 0; fi < facs.length; fi++) {
+                    var opt = document.createElement('option');
+                    opt.value = fi;
+                    opt.textContent = facs[fi].name;
+                    facSel.appendChild(opt);
+                }
+            },
+
+            // ─── 시설 변경 → 등급 드롭다운 갱신 + 핫스팟 데이터 업데이트 ───
+            _hubHsFacChange(locId, hsIdx, facIdxStr) {
+                var types = window._hubHotspotTypes || [];
+                var catSel = document.getElementById('_hsCat_' + locId + '_' + hsIdx);
+                var grdSel = document.getElementById('_hsGrd_' + locId + '_' + hsIdx);
+                if (!catSel || !grdSel) return;
+                var catIdx = parseInt(catSel.value);
+                var facIdx = parseInt(facIdxStr);
+                // 등급 드롭다운 리셋
+                grdSel.innerHTML = '<option value="">등급</option>';
+                if (isNaN(catIdx) || isNaN(facIdx) || !types[catIdx] || !types[catIdx].facilities[facIdx]) return;
+                var fac = types[catIdx].facilities[facIdx];
+                // 핫스팟 데이터 업데이트
+                UI._hubUpdateHotspot(locId, hsIdx, 'id', fac.id);
+                UI._hubUpdateHotspot(locId, hsIdx, 'name', fac.name);
+                UI._hubUpdateHotspot(locId, hsIdx, 'icon', fac.icon || 'hs_guild');
+                // 등급 옵션 채우기
+                var grades = fac.grades || [];
+                for (var gi = 0; gi < grades.length; gi++) {
+                    var opt = document.createElement('option');
+                    opt.value = gi;
+                    opt.textContent = grades[gi].name;
+                    grdSel.appendChild(opt);
+                }
+                // 패널 새로고침 (이름 표시 갱신)
+                UI._refreshHubPanel();
+            },
+
+            // ─── 등급 변경 → 핫스팟 grade 데이터 업데이트 ───
+            _hubHsGrdChange(locId, hsIdx, grdIdxStr) {
+                var types = window._hubHotspotTypes || [];
+                var catSel = document.getElementById('_hsCat_' + locId + '_' + hsIdx);
+                var facSel = document.getElementById('_hsFac_' + locId + '_' + hsIdx);
+                if (!catSel || !facSel) return;
+                var catIdx = parseInt(catSel.value);
+                var facIdx = parseInt(facSel.value);
+                var grdIdx = parseInt(grdIdxStr);
+                if (isNaN(catIdx) || isNaN(facIdx) || isNaN(grdIdx)) return;
+                if (!types[catIdx] || !types[catIdx].facilities[facIdx]) return;
+                var grades = types[catIdx].facilities[facIdx].grades || [];
+                if (!grades[grdIdx]) return;
+                UI._hubUpdateHotspot(locId, hsIdx, 'grade', grades[grdIdx].id);
+            },
+
+                        async _hubSaveLocations() {
+                try {
+                    var jsonStr = JSON.stringify(UI._hubLocations, null, 2);
+                    if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                        await GitHubAdapter.writeFile(GitHubAdapter._projPath('data/Locations.json'), jsonStr, '[RMMZStudio] Update Locations.json');
+                    } else if (window.__RMMZ_SERVER) {
+                        var blob = new Blob([jsonStr], {type:'application/json'});
+                        var file = new File([blob], 'Locations.json', {type:'application/json'});
+                        var fd = new FormData(); fd.append('file', file); fd.append('path', 'data/Locations.json');
+                        await fetch('/api/upload', {method:'POST', body:fd});
+                    }
+                } catch(e) { console.error('Locations save failed:', e); }
+            },
+
+            // ===== 월드맵 거점 진입점 배치 시스템 =====
+            async _hubPlaceEntryPoint(mapId, tileX, tileY) {
+                // Locations.json 로드
+                await UI._loadHubData();
+                if (!UI._hubLocations || UI._hubLocations.length <= 1) {
+                    UI.showToast('Locations.json에 거점이 없습니다.', 'error');
+                    return;
+                }
+                // 선택 모달 생성
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;';
+                const modal = document.createElement('div');
+                modal.style.cssText = 'background:#2a2a2a;border:1px solid #555;border-radius:8px;padding:20px;min-width:300px;color:#eee;font-size:14px;';
+                modal.innerHTML = '<div style="font-size:16px;font-weight:bold;margin-bottom:12px;">거점 진입점 배치</div>' +
+                    '<div style="margin-bottom:8px;color:#aaa;">타일 (' + tileX + ', ' + tileY + ') 에 배치</div>' +
+                    '<label style="display:block;margin-bottom:6px;">진입할 거점:</label>' +
+                    '<select id="_hubEntryLocSel" style="width:100%;padding:6px;background:#333;color:#eee;border:1px solid #555;border-radius:4px;margin-bottom:16px;"></select>' +
+                    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+                    '<button id="_hubEntryCancel" style="padding:6px 16px;background:#555;color:#eee;border:none;border-radius:4px;cursor:pointer;">취소</button>' +
+                    '<button id="_hubEntryOk" style="padding:6px 16px;background:#4a7fba;color:#fff;border:none;border-radius:4px;cursor:pointer;">배치</button>' +
+                    '</div>';
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+                // 드롭다운 채우기
+                const sel = document.getElementById('_hubEntryLocSel');
+                for (let i = 1; i < UI._hubLocations.length; i++) {
+                    const loc = UI._hubLocations[i];
+                    if (!loc) continue;
+                    const opt = document.createElement('option');
+                    opt.value = i;
+                    opt.textContent = loc.name + (loc.mapId ? ' (Map' + String(loc.mapId).padStart(3,'0') + ')' : ' (미연결)');
+                    sel.appendChild(opt);
+                }
+                // 이벤트 핸들러
+                document.getElementById('_hubEntryCancel').onclick = () => overlay.remove();
+                overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+                document.getElementById('_hubEntryOk').onclick = async () => {
+                    const locId = parseInt(sel.value);
+                    if (!locId) { overlay.remove(); return; }
+                    overlay.remove();
+                    await UI._hubDoPlaceEntry(mapId, tileX, tileY, locId);
+                };
+            },
+
+            async _hubDoPlaceEntry(mapId, tileX, tileY, locId) {
+                const loc = UI._hubLocations[locId];
+                if (!loc) return;
+                const mapData = State.maps[mapId];
+                if (!mapData) { UI.showToast('맵 데이터 없음', 'error'); return; }
+
+                // 기존 진입점 이벤트 제거 (같은 거점 ID의 이전 배치)
+                if (mapData.events) {
+                    for (let i = 1; i < mapData.events.length; i++) {
+                        const ev = mapData.events[i];
+                        if (ev && ev.note && ev.note.indexOf('<hubEntry:' + locId + '>') >= 0) {
+                            mapData.events[i] = null;
+                        }
+                    }
+                }
+
+                // 빈 이벤트 슬롯 찾기
+                if (!mapData.events) mapData.events = [null];
+                const findSlot = () => {
+                    for (let i = 1; i < mapData.events.length; i++) {
+                        if (!mapData.events[i]) return i;
+                    }
+                    return mapData.events.length;
+                };
+
+                // 1) $MapMarker 시각 이벤트 (마커 위치 = tileY - 1, 플레이어 스폰 위치 위)
+                const markerId = findSlot();
+                const markerEvent = {
+                    id: markerId,
+                    name: loc.name + ' 마커',
+                    note: '<hubEntry:' + locId + '><hubMarker>',
+                    pages: [{
+                        conditions: { actorId:1, actorValid:false, itemId:1, itemValid:false,
+                            selfSwitchCh:'A', selfSwitchValid:false, switch1Id:1, switch1Valid:false,
+                            switch2Id:1, switch2Valid:false, variableId:1, variableValid:false, variableValue:0 },
+                        directionFix: false,
+                        image: { tileId:0, characterName:'$MapMarker', direction:2, pattern:1, characterIndex:0 },
+                        list: [{ code:0, indent:0, parameters:[] }],
+                        moveFrequency:3, moveRoute:{ list:[{code:0,parameters:[]}], repeat:true, skippable:false, wait:false },
+                        moveSpeed:3, moveType:0, priorityType:0, stepAnime:true, through:true, trigger:0, walkAnime:true
+                    }],
+                    x: tileX,
+                    y: tileY - 1
+                };
+                mapData.events[markerId] = markerEvent;
+
+                // 2) 전송 이벤트 (플레이어가 밟는 위치 = tileY)
+                const transferId = findSlot();
+                const transferEvent = {
+                    id: transferId,
+                    name: loc.name + ' 진입',
+                    note: '<hubEntry:' + locId + '><hubTransfer>',
+                    pages: [{
+                        conditions: { actorId:1, actorValid:false, itemId:1, itemValid:false,
+                            selfSwitchCh:'A', selfSwitchValid:false, switch1Id:1, switch1Valid:false,
+                            switch2Id:1, switch2Valid:false, variableId:1, variableValid:false, variableValue:0 },
+                        directionFix: false,
+                        image: { tileId:0, characterName:'', direction:2, pattern:0, characterIndex:0 },
+                        list: [
+                            { code:201, indent:0, parameters:[0, loc.mapId || 1, 0, 0, 2, 0] },
+                            { code:0, indent:0, parameters:[] }
+                        ],
+                        moveFrequency:3, moveRoute:{ list:[{code:0,parameters:[]}], repeat:true, skippable:false, wait:false },
+                        moveSpeed:3, moveType:0, priorityType:0, stepAnime:false, through:false, trigger:1, walkAnime:true
+                    }],
+                    x: tileX,
+                    y: tileY
+                };
+                mapData.events[transferId] = transferEvent;
+
+                // 3) Locations.json의 worldMapX/worldMapY 갱신
+                loc.worldMapX = tileX;
+                loc.worldMapY = tileY;
+                await UI._hubSaveLocations();
+
+                // 맵 저장 + 리드로우
+                State.dirty = true;
+                UI.drawMap();
+                UI.showToast(loc.name + ' 진입점 배치 완료 (' + tileX + ', ' + tileY + ')');
+            },
+
+            _hubRemoveEntryPoint(mapId, tileX, tileY) {
+                const mapData = State.maps[mapId];
+                if (!mapData || !mapData.events) return;
+
+                // 해당 위치의 $MapMarker 이벤트와 연결된 전송 이벤트 삭제
+                let removedLoc = null;
+                for (let i = 1; i < mapData.events.length; i++) {
+                    const ev = mapData.events[i];
+                    if (!ev) continue;
+                    // 마커 이벤트 (tileX, tileY) 또는 전송 이벤트 (tileX, tileY+1)
+                    if (ev.x === tileX && (ev.y === tileY || ev.y === tileY + 1)) {
+                        if (ev.note && ev.note.indexOf('<hubEntry:') >= 0) {
+                            const m = ev.note.match(/<hubEntry:(\d+)>/);
+                            if (m) removedLoc = parseInt(m[1]);
+                            mapData.events[i] = null;
+                        } else if (ev.pages && ev.pages[0] && ev.pages[0].image &&
+                                   ev.pages[0].image.characterName === '$MapMarker') {
+                            mapData.events[i] = null;
+                        }
+                    }
+                }
+                // 같은 locId의 다른 위치 이벤트도 정리
+                if (removedLoc) {
+                    for (let i = 1; i < mapData.events.length; i++) {
+                        const ev = mapData.events[i];
+                        if (ev && ev.note && ev.note.indexOf('<hubEntry:' + removedLoc + '>') >= 0) {
+                            mapData.events[i] = null;
+                        }
+                    }
+                }
+
+                State.dirty = true;
+                UI.drawMap();
+                UI.showToast('진입점 삭제 완료');
+            },
+
+            async _hubSaveFacilities() {
+                try {
+                    var jsonStr = JSON.stringify(UI._hubFacilities, null, 2);
+                    if (window.__RMMZ_GITHUB && GitHubAdapter.configured) {
+                        await GitHubAdapter.writeFile(GitHubAdapter._projPath('data/Facilities.json'), jsonStr, '[RMMZStudio] Update Facilities.json');
+                    } else if (window.__RMMZ_SERVER) {
+                        var blob = new Blob([jsonStr], {type:'application/json'});
+                        var file = new File([blob], 'Facilities.json', {type:'application/json'});
+                        var fd = new FormData(); fd.append('file', file); fd.append('path', 'data/Facilities.json');
+                        await fetch('/api/upload', {method:'POST', body:fd});
+                    }
+                } catch(e) { console.error('Facilities save failed:', e); }
             },
 
             mapSetEditMode(mode) {

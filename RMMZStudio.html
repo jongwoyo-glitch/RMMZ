@@ -157,6 +157,7 @@
                             <button onclick="UI.mapShowProperties()">맵 속성</button>
                             <span class="controlSep">|</span>
                             <button id="btnSrpgPanel" onclick="UI.mapToggleSrpgPanel()" style="background:#8e44ad;color:#fff;border:1px solid #9b59b6;border-radius:4px;padding:2px 8px;font-weight:bold;cursor:pointer;" title="SRPG 유닛 배치 및 전투 설정">SRPG</button>
+                            <button id="btnHubPanel" onclick="UI.mapToggleHubPanel()" style="background:#27ae60;color:#fff;border:1px solid #2ecc71;border-radius:4px;padding:2px 8px;font-weight:bold;cursor:pointer;" title="거점 시스템 설정">거점</button>
                         </div>
                         <div id="mapCanvasWrap">
                             <canvas id="mapCanvas"></canvas>
@@ -181,6 +182,7 @@
                         <div id="tilePalette" style="overflow-y:auto;max-height:calc(100vh - 180px);"></div>
                         </div>
                         <div id="srpgPanelContainer" style="display:none;overflow-y:auto;max-height:calc(100vh - 120px);"></div>
+                        <div id="hubPanelContainer" style="display:none;overflow-y:auto;max-height:calc(100vh - 120px);"></div>
                     </div>
                 </div>
 
