@@ -3101,7 +3101,9 @@
         _executeGroundAttack(tx, ty) {
             const atk = this._currentUnit;
             const skillId = this._pendingSkill ? this._pendingSkill.id : 0;
-            const projMeta = skillId ? SrpgProjectile.parseSkillMeta(skillId) : null;
+            // 스킬 투사체 → 무기 유형 투사체 폴백
+            const projMeta = (skillId ? SrpgProjectile.parseSkillMeta(skillId) : null)
+                || SrpgProjectile.getWeaponTypeProjectileMeta(atk);
 
             // MP 소모
             if (this._pendingSkillMpCost > 0) {
@@ -3487,9 +3489,10 @@
             const shoutName = this._pendingSkill ? this._pendingSkill.name : "공격!";
             this._addPopup(atk.x, atk.y, shoutName, "#ffffff", true);
 
-            // 투사체 메타 확인 (스킬 사용 시)
+            // 투사체 메타 확인 (스킬 사용 시 → 무기 유형 폴백)
             const skillId = this._pendingSkill ? this._pendingSkill.id : 0;
-            const projMeta = skillId ? SrpgProjectile.parseSkillMeta(skillId) : null;
+            const projMeta = (skillId ? SrpgProjectile.parseSkillMeta(skillId) : null)
+                || SrpgProjectile.getWeaponTypeProjectileMeta(atk);
 
             // 스킬 MP 소모 (MCR 적용)
             if (this._pendingSkillMpCost > 0) {

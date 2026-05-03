@@ -13,7 +13,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 DB_FILES = ['Actors','Classes','Skills','Items','Weapons','Armors',
-            'Enemies','Troops','States','CommonEvents','System','Tilesets']
+            'Enemies','Troops','States','Animations','CommonEvents','System','Tilesets']
 
 KEY_MAP = {}
 for _f in DB_FILES:

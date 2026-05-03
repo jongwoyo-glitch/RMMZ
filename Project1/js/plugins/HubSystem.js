@@ -2492,21 +2492,62 @@ Window_HubParty.prototype._drawPortraitCell = function(x0, y0, r, cellW, cellH, 
                 ctx.stroke();
                 ctx.restore();
             }
-            // 파티장 배지
+            // 파티장 배지 (좌측 상단, 왕관)
             if (isLeader) {
                 if (ctx) {
+                    var lbR = 8;
+                    var lbX = faceX + lbR - 1;
+                    var lbY = faceY + lbR - 1;
                     ctx.save();
-                    ctx.fillStyle = "#FAEEDA";
-                    ctx.strokeStyle = "#BA7517";
-                    ctx.lineWidth = 1;
+                    // 원형 배경
                     ctx.beginPath();
-                    ctx.arc(faceX + diameter - 4, faceY + 4, 6, 0, Math.PI * 2);
-                    ctx.fill(); ctx.stroke();
+                    ctx.arc(lbX, lbY, lbR, 0, Math.PI * 2);
+                    ctx.fillStyle = "#DAA520";
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#000000";
+                    ctx.stroke();
+                    // 왕관 도형 (원 중심 기준)
+                    var cw = 9, ch = 7;
+                    var cx = lbX, cy = lbY + 1;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - cw/2, cy + ch/2);       // 좌하
+                    ctx.lineTo(cx - cw/2, cy - ch/4);       // 좌측 올라감
+                    ctx.lineTo(cx - cw/4, cy + ch/6);       // 좌 골
+                    ctx.lineTo(cx, cy - ch/2);               // 중앙 꼭지
+                    ctx.lineTo(cx + cw/4, cy + ch/6);       // 우 골
+                    ctx.lineTo(cx + cw/2, cy - ch/4);       // 우측 올라감
+                    ctx.lineTo(cx + cw/2, cy + ch/2);       // 우하
+                    ctx.closePath();
+                    ctx.fillStyle = "#FFF8DC";
+                    ctx.fill();
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeStyle = "#8B6914";
+                    ctx.stroke();
                     ctx.restore();
                 }
-                contents.fontSize = 8;
-                contents.textColor = "#854F0B";
-                self.drawText("\u2605", faceX + diameter - 10, faceY - 4, 12, "center");
+            }
+            // 성별 배지 (우측 하단)
+            var genderVal = actor.gender ? actor.gender() : ($dataActors[actor.actorId()] ? $dataActors[actor.actorId()].gender : null);
+            if (genderVal && ctx) {
+                var badgeR = 7;
+                var badgeX = faceX + diameter - badgeR + 1;
+                var badgeY = faceY + diameter - badgeR + 1;
+                var isMale = (genderVal === "m");
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+                ctx.fillStyle = isMale ? "#4488ff" : "#ff4488";
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#000000";
+                ctx.stroke();
+                ctx.font = "bold 10px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(isMale ? "\u2642" : "\u2640", badgeX, badgeY);
+                ctx.restore();
             }
             // 이름
             contents.fontSize = 10;
@@ -2654,8 +2695,10 @@ Window_HubDropdown.prototype.refreshCursor = function() {
     this.refresh();
 };
 
-// --- Scene_Conversation을 window에 공개 ---
+// --- window에 공개 ---
 window.Scene_Conversation = Scene_Conversation;
+window.Window_HubDropdown = Window_HubDropdown;
+window.WorldMapSidebar = WorldMapSidebar;
 
 
 })();

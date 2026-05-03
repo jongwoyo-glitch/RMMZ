@@ -1,7 +1,1 @@
-[
-null,
-{"id":1,"expanded":false,"name":"MAP001","order":1,"parentId":0,"scrollX":1092,"scrollY":1308},
-{"id":2,"expanded":false,"name":"시작마을","order":2,"parentId":0,"scrollX":1081.3333333333333,"scrollY":612},
-{"id":3,"expanded":false,"name":"월드맵","order":3,"parentId":0,"scrollX":0,"scrollY":0},
-{"id":4,"expanded":false,"name":"2차 마을","order":4,"parentId":0,"scrollX":0,"scrollY":0}
-]
+[null,{"id":1,"expanded":false,"name":"MAP001","order":1,"parentId":0,"scrollX":1092,"scrollY":1308},{"id":2,"expanded":false,"name":"시작마을","order":2,"parentId":0,"scrollX":1081.3333333333333,"scrollY":612},{"id":3,"expanded":false,"name":"월드맵","order":3,"parentId":0,"scrollX":0,"scrollY":0},{"id":4,"expanded":false,"name":"2차 마을","order":4,"parentId":0,"scrollX":0,"scrollY":0}]

@@ -410,11 +410,42 @@
         });
     }
 
-    // ─── 무기 타입별 기본 범위 ───
-    const WTYPE_RANGE_DEFAULTS = {
-        // weaponTypeId → { reach, area, rotate }
-        // 비어 있으면 DatabaseEditor에서 설정; 런타임 fallback은 ADJ4
-    };
+    // ─── 무기 타입별 기본 범위 (WeaponTypeRanges 파라미터에서 로드) ───
+    const WTYPE_RANGE_DEFAULTS = {};
+    (function _loadWeaponTypeRanges() {
+        const raw = params["WeaponTypeRanges"];
+        if (!raw) return;
+        try {
+            const ranges = JSON.parse(raw);
+            for (const [key, entry] of Object.entries(ranges)) {
+                if (!entry || !entry.reach) continue;
+                const wtypeId = Number(key);
+                if (isNaN(wtypeId) || wtypeId <= 0) continue;
+                // reach 파싱: "dx,dy|dx,dy" 문자열 또는 배열
+                const parseCoords = (src) => {
+                    if (!src) return [];
+                    if (Array.isArray(src)) return src.map(t => ({dx: t.dx||0, dy: t.dy||0}));
+                    return String(src).split("|").map(s => {
+                        const [dx, dy] = s.split(",").map(Number);
+                        return {dx: dx||0, dy: dy||0};
+                    }).filter(t => !isNaN(t.dx) && !isNaN(t.dy));
+                };
+                WTYPE_RANGE_DEFAULTS[wtypeId] = {
+                    reach: parseCoords(entry.reach),
+                    area: entry.area ? parseCoords(entry.area) : [{dx:0,dy:0}],
+                    rotate: !!entry.rotate,
+                    selfTarget: !!entry.selfTarget,
+                    rangeType: entry.rangeType || "radial",
+                    // 투사체 속성
+                    isProjectile: !!entry.isProjectile,
+                    fireMode: entry.fireMode || "direct",
+                    projectileImage: entry.projectileImage || ""
+                };
+            }
+        } catch (e) {
+            console.warn("[SRPG] WeaponTypeRanges parse error:", e.message);
+        }
+    })();
 
     // ─── 3-tier 범위 해석 체인 ───
     function resolveReach(unit, skill) {
@@ -1101,7 +1132,14 @@
             if (_unitCfg.fireMode && !meta.srpgFireMode) {
                 this.fireMode = _unitCfg.fireMode.toLowerCase();
             } else if (!meta.srpgFireMode && !_unitCfg.fireMode) {
-                this.fireMode = (this.atkRange <= 1) ? FIRE_MODE.MELEE : FIRE_MODE.DIRECT;
+                // 무기 타입 기본 fireMode 체크
+                const _wpn = this.equips ? this.equips[0] : null;
+                const _wtDef = (_wpn && _wpn.wtypeId) ? WTYPE_RANGE_DEFAULTS[_wpn.wtypeId] : null;
+                if (_wtDef && _wtDef.isProjectile) {
+                    this.fireMode = _wtDef.fireMode || FIRE_MODE.DIRECT;
+                } else {
+                    this.fireMode = (this.atkRange <= 1) ? FIRE_MODE.MELEE : FIRE_MODE.DIRECT;
+                }
             }
             if (_unitCfg.mov != null && !meta.srpgMov) {
                 this.mov = Number(_unitCfg.mov);
@@ -2731,6 +2769,7 @@
         //   { blocked: false } — 통과
         //   { blocked: true, x, y, terrainType, coverObject } — 차단됨
         //     coverObject: 해당 타일에 있는 파괴 가능 사물 (있으면)
+        //     blockUnit: terrainType="unit"일 때 차단한 일반 유닛 (고지대 로직)
         checkProjectilePath(fromX, fromY, toX, toY, fireMode) {
             // 근접은 경로 무시
             if (fireMode === FIRE_MODE.MELEE) {
@@ -2787,6 +2826,23 @@
                             terrainType: "cover",
                             coverObject: obj,
                         };
+                    }
+                    // ── 고지대 직사 유닛 차단 ──
+                    // 직사화기 전용: 일반 유닛(액터/에너미)이 경로상에 있을 때
+                    //   - 사수 고도 > 목표 고도 → 차단 안함 (고지대 이점: 넘겨 쏨)
+                    //   - 사수 고도 <= 목표 고도 → 유닛에 의해 차단됨
+                    else if (!obj.isObject && fireMode === FIRE_MODE.DIRECT) {
+                        const shooterElev = this.getElevation(fromX, fromY);
+                        const targetElev  = this.getElevation(toX, toY);
+                        if (shooterElev <= targetElev) {
+                            return {
+                                blocked: true,
+                                x: tile.x, y: tile.y,
+                                terrainType: "unit",
+                                blockUnit: obj,
+                            };
+                        }
+                        // 고지대(shooterElev > targetElev): 유닛 위로 넘겨 쏨 → continue
                     }
                 }
             }
@@ -4286,6 +4342,50 @@
             const bmp = ImageManager.loadBitmap("img/srpg/", name);
             this._imageCache[name] = bmp;
             return bmp;
+        },
+
+        // ─── 무기 타입 기반 투사체 메타 생성 ───
+        // 기본공격 시 무기 유형의 isProjectile=true이면 가상 projMeta 반환
+        getWeaponTypeProjectileMeta(unit) {
+            if (!unit || !unit.equips) return null;
+            const weapon = unit.equips[0];
+            if (!weapon || !weapon.wtypeId) return null;
+            const wtDef = WTYPE_RANGE_DEFAULTS[weapon.wtypeId];
+            if (!wtDef || !wtDef.isProjectile) return null;
+            const isArc = (wtDef.fireMode === "arc");
+            return {
+                type: isArc ? "artillery" : "projectile",
+                image: wtDef.projectileImage || "arrow",
+                frameWidth: 32,
+                frameHeight: 32,
+                frameCount: 1,
+                frameSpeed: 6,
+                speed: 6,
+                scale: 1.0,
+                rotate: true,
+                trail: false,
+                trailAlpha: 0.3,
+                impactAnimId: 0,
+                impactSe: "",
+                // Hitray
+                beamStart: "beam_start",
+                beamMid: "beam_mid",
+                beamEnd: "beam_end",
+                beamDuration: 30,
+                beamWidth: 1.0,
+                hitCount: 1,
+                hitInterval: 10,
+                // Artillery
+                arcHeight: 0,
+                arcLaunchSpeed: 0,
+                arcFlightSpeed: 0,
+                arcFallSpeed: 0,
+                cameraPan: true,
+                scatterRadius: 0,
+                warningDuration: 40,
+                // 무기 타입 기본공격 마커
+                _fromWeaponType: true
+            };
         },
 
         // ─── 스킬 노트에서 투사체 설정 파싱 ───
@@ -9770,7 +9870,9 @@
         _executeGroundAttack(tx, ty) {
             const atk = this._currentUnit;
             const skillId = this._pendingSkill ? this._pendingSkill.id : 0;
-            const projMeta = skillId ? SrpgProjectile.parseSkillMeta(skillId) : null;
+            // 스킬 투사체 → 무기 유형 투사체 폴백
+            const projMeta = (skillId ? SrpgProjectile.parseSkillMeta(skillId) : null)
+                || SrpgProjectile.getWeaponTypeProjectileMeta(atk);
 
             // MP 소모
             if (this._pendingSkillMpCost > 0) {
@@ -10156,9 +10258,10 @@
             const shoutName = this._pendingSkill ? this._pendingSkill.name : "공격!";
             this._addPopup(atk.x, atk.y, shoutName, "#ffffff", true);
 
-            // 투사체 메타 확인 (스킬 사용 시)
+            // 투사체 메타 확인 (스킬 사용 시 → 무기 유형 폴백)
             const skillId = this._pendingSkill ? this._pendingSkill.id : 0;
-            const projMeta = skillId ? SrpgProjectile.parseSkillMeta(skillId) : null;
+            const projMeta = (skillId ? SrpgProjectile.parseSkillMeta(skillId) : null)
+                || SrpgProjectile.getWeaponTypeProjectileMeta(atk);
 
             // 스킬 MP 소모 (MCR 적용)
             if (this._pendingSkillMpCost > 0) {

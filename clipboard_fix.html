@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>CSP Clipboard Transparency Fix</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+h1 { font-size: 20px; margin-bottom: 10px; color: #e94560; }
+.status { font-size: 14px; color: #aaa; margin-bottom: 20px; }
+.container { display: flex; gap: 30px; align-items: flex-start; }
+.panel { background: #16213e; border-radius: 12px; padding: 20px; min-width: 300px; min-height: 300px; display: flex; flex-direction: column; align-items: center; }
+.panel h2 { font-size: 14px; color: #e94560; margin-bottom: 10px; }
+canvas { border: 1px solid #333; background-image: repeating-conic-gradient(#2a2a4a 0% 25%, #1e1e3a 0% 50%); background-size: 16px 16px; max-width: 400px; max-height: 400px; }
+.controls { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+button { background: #e94560; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; }
+button:hover { background: #c73650; }
+button:disabled { background: #555; cursor: not-allowed; }
+button.secondary { background: #0f3460; }
+button.secondary:hover { background: #1a4a80; }
+.info { font-size: 12px; color: #888; margin-top: 10px; text-align: center; max-width: 600px; }
+.threshold-control { margin-top: 15px; display: flex; align-items: center; gap: 10px; }
+.threshold-control label { font-size: 13px; color: #aaa; }
+.threshold-control input { width: 60px; background: #0f3460; color: #eee; border: 1px solid #333; padding: 4px 8px; border-radius: 4px; text-align: center; }
+#log { font-size: 12px; color: #6a6; margin-top: 8px; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<h1>CSP Clipboard Transparency Fix</h1>
+<p class="status">CSP에서 Ctrl+C → 여기서 붙여넣기(Ctrl+V) → 투명 복원 → 클립보드에 재기록</p>
+
+<div class="container">
+  <div class="panel">
+    <h2>원본 (클립보드에서 붙여넣기)</h2>
+    <canvas id="srcCanvas" width="1" height="1"></canvas>
+  </div>
+  <div class="panel">
+    <h2>결과 (투명 복원)</h2>
+    <canvas id="dstCanvas" width="1" height="1"></canvas>
+  </div>
+</div>
+
+<div class="threshold-control">
+  <label>흰색 판정 임계값 (0~255):</label>
+  <input type="number" id="threshold" value="250" min="0" max="255">
+  <label>| 제거 대상:</label>
+  <select id="removeMode">
+    <option value="white">흰색 배경</option>
+    <option value="black">검은색 배경</option>
+    <option value="both">흰+검 모두</option>
+  </select>
+</div>
+
+<div class="controls">
+  <button id="btnPaste" onclick="pasteFromClipboard()">1. 클립보드에서 붙여넣기 (Ctrl+V)</button>
+  <button id="btnFix" onclick="fixTransparency()" disabled>2. 투명 복원</button>
+  <button id="btnCopy" onclick="copyToClipboard()" disabled>3. 클립보드에 복사</button>
+</div>
+
+<div id="log"></div>
+<p class="info">사용법: CSP에서 선택+복사 → 이 페이지에서 Ctrl+V → "투명 복원" 클릭 → "클립보드에 복사" → 대상 앱에서 Ctrl+V</p>
+
+<script>
+const srcCanvas = document.getElementById('srcCanvas');
+const dstCanvas = document.getElementById('dstCanvas');
+const srcCtx = srcCanvas.getContext('2d');
+const dstCtx = dstCanvas.getContext('2d');
+const log = document.getElementById('log');
+
+function setLog(msg) { log.textContent = msg; }
+
+// Ctrl+V anywhere on page
+document.addEventListener('paste', (e) => {
+  const items = e.clipboardData.items;
+  for (let item of items) {
+    if (item.type.startsWith('image/')) {
+      const blob = item.getAsFile();
+      const img = new Image();
+      img.onload = () => {
+        srcCanvas.width = img.width;
+        srcCanvas.height = img.height;
+        srcCtx.clearRect(0, 0, img.width, img.height);
+        srcCtx.drawImage(img, 0, 0);
+        setLog(`붙여넣기 완료: ${img.width} x ${img.height}`);
+        document.getElementById('btnFix').disabled = false;
+        URL.revokeObjectURL(img.src);
+      };
+      img.src = URL.createObjectURL(blob);
+      e.preventDefault();
+      return;
+    }
+  }
+  setLog('클립보드에 이미지가 없습니다.');
+});
+
+function pasteFromClipboard() {
+  navigator.clipboard.read().then(items => {
+    for (let item of items) {
+      const imageType = item.types.find(t => t.startsWith('image/'));
+      if (imageType) {
+        item.getType(imageType).then(blob => {
+          const img = new Image();
+          img.onload = () => {
+            srcCanvas.width = img.width;
+            srcCanvas.height = img.height;
+            srcCtx.clearRect(0, 0, img.width, img.height);
+            srcCtx.drawImage(img, 0, 0);
+            setLog(`붙여넣기 완료: ${img.width} x ${img.height}`);
+            document.getElementById('btnFix').disabled = false;
+            URL.revokeObjectURL(img.src);
+          };
+          img.src = URL.createObjectURL(blob);
+        });
+        return;
+      }
+    }
+    setLog('클립보드에 이미지가 없습니다.');
+  }).catch(err => {
+    setLog('클립보드 접근 실패 - Ctrl+V로 직접 붙여넣기 해주세요.');
+  });
+}
+
+function fixTransparency() {
+  const w = srcCanvas.width, h = srcCanvas.height;
+  if (w <= 1) { setLog('먼저 이미지를 붙여넣기 하세요.'); return; }
+
+  const threshold = parseInt(document.getElementById('threshold').value) || 250;
+  const mode = document.getElementById('removeMode').value;
+
+  dstCanvas.width = w;
+  dstCanvas.height = h;
+
+  const srcData = srcCtx.getImageData(0, 0, w, h);
+  const dstData = dstCtx.createImageData(w, h);
+  const src = srcData.data;
+  const dst = dstData.data;
+
+  let removedCount = 0;
+  const totalPixels = w * h;
+
+  for (let i = 0; i < src.length; i += 4) {
+    const r = src[i], g = src[i+1], b = src[i+2], a = src[i+3];
+
+    let shouldRemove = false;
+
+    if (mode === 'white' || mode === 'both') {
+      if (r >= threshold && g >= threshold && b >= threshold) shouldRemove = true;
+    }
+    if (mode === 'black' || mode === 'both') {
+      const darkThreshold = 255 - threshold;
+      if (r <= darkThreshold && g <= darkThreshold && b <= darkThreshold) shouldRemove = true;
+    }
+
+    if (shouldRemove) {
+      dst[i] = dst[i+1] = dst[i+2] = dst[i+3] = 0;
+      removedCount++;
+    } else {
+      dst[i] = r; dst[i+1] = g; dst[i+2] = b; dst[i+3] = a;
+    }
+  }
+
+  dstCtx.putImageData(dstData, 0, 0);
+  const pct = ((removedCount / totalPixels) * 100).toFixed(1);
+  setLog(`투명 복원 완료: ${removedCount}px 제거됨 (${pct}%)`);
+  document.getElementById('btnCopy').disabled = false;
+}
+
+function copyToClipboard() {
+  dstCanvas.toBlob(blob => {
+    const item = new ClipboardItem({ 'image/png': blob });
+    navigator.clipboard.write([item]).then(() => {
+      setLog('클립보드에 투명 PNG 복사 완료! 대상 앱에서 Ctrl+V 하세요.');
+    }).catch(err => {
+      setLog('클립보드 쓰기 실패: ' + err.message);
+    });
+  }, 'image/png');
+}
+</script>
+
+</body>
+</html>

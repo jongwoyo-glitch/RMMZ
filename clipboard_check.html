@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>클립보드 형식 진단</title>
+<style>
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 40px; }
+h1 { color: #d4a843; }
+#dropZone { border: 3px dashed #555; border-radius: 12px; padding: 60px; text-align: center; font-size: 18px; margin: 20px 0; cursor: pointer; }
+#dropZone:hover { border-color: #d4a843; }
+#result { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 20px; margin: 20px 0; white-space: pre-wrap; font-family: monospace; font-size: 14px; min-height: 100px; }
+#preview { margin: 20px 0; }
+#preview canvas { border: 1px solid #555; background: repeating-conic-gradient(#333 0% 25%, #444 0% 50%) 50% / 16px 16px; }
+.warn { color: #ff6b6b; font-weight: bold; }
+.ok { color: #51cf66; font-weight: bold; }
+.info { color: #74c0fc; }
+</style>
+</head>
+<body>
+<h1>클립보드 이미지 형식 진단</h1>
+<p>CLIP STUDIO에서 이미지를 복사한 뒤 아래 영역에 <strong>Ctrl+V</strong> 하세요.</p>
+<div id="dropZone">여기에 Ctrl+V 붙여넣기</div>
+<div id="result">대기 중...</div>
+<h3>미리보기 (체크무늬 = 투명)</h3>
+<div id="preview"></div>
+
+<script>
+document.addEventListener('paste', async (e) => {
+    e.preventDefault();
+    const result = document.getElementById('result');
+    const preview = document.getElementById('preview');
+    let output = '';
+
+    // 1. clipboardData.items 분석
+    output += '=== clipboardData.items ===\n';
+    const items = e.clipboardData?.items;
+    if (items) {
+        output += `항목 수: ${items.length}\n`;
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            output += `  [${i}] kind=${item.kind}, type="${item.type}"\n`;
+        }
+    } else {
+        output += '  clipboardData.items 없음\n';
+    }
+
+    // 2. clipboardData.types 분석
+    output += '\n=== clipboardData.types ===\n';
+    const types = e.clipboardData?.types;
+    if (types) {
+        for (const t of types) {
+            output += `  "${t}"\n`;
+        }
+    }
+
+    // 3. 이미지 찾기 및 분석
+    output += '\n=== 이미지 분석 ===\n';
+    let foundImage = false;
+    if (items) {
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.startsWith('image/')) {
+                foundImage = true;
+                const blob = items[i].getAsFile();
+                output += `  형식: ${items[i].type}\n`;
+                output += `  크기: ${blob.size} bytes\n`;
+
+                // PNG 시그니처 확인
+                const header = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+                const pngSig = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+                const bmpSig = [0x42, 0x4D]; // BM
+                let isPNG = pngSig.every((b, j) => header[j] === b);
+                let isBMP = bmpSig.every((b, j) => header[j] === b);
+
+                output += `  헤더 바이트: [${Array.from(header).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]\n`;
+
+                if (isPNG) {
+                    output += '  <span class="ok">파일 형식: PNG (투명도 지원 O)</span>\n';
+
+                    // PNG IHDR 분석 — color type 확인
+                    const ihdr = new Uint8Array(await blob.slice(0, 30).arrayBuffer());
+                    if (ihdr.length >= 26) {
+                        const colorType = ihdr[25];
+                        const colorNames = { 0: 'Grayscale', 2: 'RGB', 3: 'Indexed', 4: 'Grayscale+Alpha', 6: 'RGBA' };
+                        output += `  Color Type: ${colorType} (${colorNames[colorType] || '?'})\n`;
+                        if (colorType === 6 || colorType === 4) {
+                            output += '  <span class="ok">알파 채널: 있음</span>\n';
+                        } else {
+                            output += '  <span class="warn">알파 채널: 없음 — 투명도가 제거된 상태입니다!</span>\n';
+                        }
+                    }
+                } else if (isBMP) {
+                    output += '  <span class="warn">파일 형식: BMP (투명도 지원 X) — 이게 문제입니다!</span>\n';
+                } else {
+                    output += `  파일 형식: 알 수 없음\n`;
+                }
+
+                // 캔버스에 그려서 투명도 확인
+                const img = new Image();
+                const url = URL.createObjectURL(blob);
+                img.onload = () => {
+                    const c = document.createElement('canvas');
+                    c.width = img.width;
+                    c.height = img.height;
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+
+                    // 투명 픽셀 체크
+                    const data = ctx.getImageData(0, 0, c.width, c.height).data;
+                    let transparentCount = 0;
+                    let totalPixels = c.width * c.height;
+                    for (let p = 3; p < data.length; p += 4) {
+                        if (data[p] < 255) transparentCount++;
+                    }
+
+                    let alphaInfo = `  이미지 크기: ${img.width}x${img.height}\n`;
+                    alphaInfo += `  전체 픽셀: ${totalPixels}\n`;
+                    alphaInfo += `  투명 픽셀: ${transparentCount} (${(transparentCount/totalPixels*100).toFixed(1)}%)\n`;
+
+                    if (transparentCount === 0) {
+                        alphaInfo += '  <span class="warn">투명 픽셀 0개 — 알파 채널이 완전히 소실되었습니다!</span>\n';
+                    } else {
+                        alphaInfo += `  <span class="ok">투명 픽셀 존재 — 알파 채널 정상</span>\n`;
+                    }
+
+                    result.innerHTML = output + alphaInfo;
+
+                    // 미리보기
+                    const dispScale = Math.min(400 / img.width, 400 / img.height, 2);
+                    c.style.width = (img.width * dispScale) + 'px';
+                    c.style.height = (img.height * dispScale) + 'px';
+                    c.style.imageRendering = 'pixelated';
+                    preview.innerHTML = '';
+                    preview.appendChild(c);
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+                break;
+            }
+        }
+    }
+
+    if (!foundImage) {
+        output += '  <span class="warn">이미지 없음 — 클립보드에 이미지가 없습니다</span>\n';
+        result.innerHTML = output;
+    }
+
+    // 4. navigator.clipboard API도 체크
+    try {
+        const clipItems = await navigator.clipboard.read();
+        output += '\n=== navigator.clipboard.read() ===\n';
+        for (const ci of clipItems) {
+            output += `  types: [${ci.types.join(', ')}]\n`;
+            for (const t of ci.types) {
+                if (t.startsWith('image/')) {
+                    const blob2 = await ci.getType(t);
+                    output += `    ${t}: ${blob2.size} bytes\n`;
+                }
+            }
+        }
+    } catch (err) {
+        output += `\n=== navigator.clipboard.read() 실패: ${err.message} ===\n`;
+    }
+
+    if (!foundImage) {
+        result.innerHTML = output;
+    }
+});
+
+document.getElementById('dropZone').addEventListener('click', () => {
+    document.getElementById('dropZone').textContent = 'Ctrl+V를 누르세요...';
+});
+</script>
+</body>
+</html>

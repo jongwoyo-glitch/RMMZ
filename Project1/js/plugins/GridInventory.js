@@ -11,7 +11,7 @@
  * @type number
  * @min 4
  * @max 12
- * @default 8
+ * @default 10
  * @desc Number of columns in each character's inventory grid.
  *
  * @param DefaultGridRows
@@ -39,7 +39,7 @@
  * @param DefaultWeaponSize
  * @text Default Weapon Size
  * @type text
- * @default 1,3
+ * @default 1,2
  * @desc Default grid size for weapons (W,H).
  *
  * @param DefaultArmorSize
@@ -269,7 +269,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 var _params = PluginManager.parameters('GridInventory');
-var GRID_COLS       = Number(_params['DefaultGridCols'] || 8);
+var GRID_COLS       = Number(_params['DefaultGridCols'] || 10);
 var GRID_ROWS       = Number(_params['DefaultGridRows'] || 6);
 var HOTKEY_SLOTS    = Number(_params['HotkeySlots'] || 4);
 
@@ -340,11 +340,40 @@ function getGridSize(dataItem) {
       h: Math.max(1, Math.min(4, Number(match[2])))
     };
   } else {
-    // 기본값 판정
+    // 기본값 판정: 노트태그 없으면 invGridDefaults 유형별 → 전체 기본값 순서로 참조
+    var _resolved = null;
     if (DataManager.isWeapon(dataItem)) {
-      dataItem._gridSizeCache = { w: DEF_WEAPON_SIZE.w, h: DEF_WEAPON_SIZE.h };
+      // invGridDefaults에서 무기 유형별 크기 조회 (w1, w2, ... w27)
+      if ($dataSystem && $dataSystem.invGridDefaults && dataItem.wtypeId) {
+        var _wKey = 'w' + dataItem.wtypeId;
+        var _wVal = $dataSystem.invGridDefaults[_wKey];
+        if (_wVal) {
+          var _wParts = String(_wVal).split(',');
+          if (_wParts.length >= 2) {
+            _resolved = {
+              w: Math.max(1, Math.min(4, Number(_wParts[0]))),
+              h: Math.max(1, Math.min(4, Number(_wParts[1])))
+            };
+          }
+        }
+      }
+      dataItem._gridSizeCache = _resolved || { w: DEF_WEAPON_SIZE.w, h: DEF_WEAPON_SIZE.h };
     } else if (DataManager.isArmor(dataItem)) {
-      dataItem._gridSizeCache = { w: DEF_ARMOR_SIZE.w, h: DEF_ARMOR_SIZE.h };
+      // invGridDefaults에서 방어구 유형별 크기 조회 (a1, a2, ... a12)
+      if ($dataSystem && $dataSystem.invGridDefaults && dataItem.atypeId) {
+        var _aKey = 'a' + dataItem.atypeId;
+        var _aVal = $dataSystem.invGridDefaults[_aKey];
+        if (_aVal) {
+          var _aParts = String(_aVal).split(',');
+          if (_aParts.length >= 2) {
+            _resolved = {
+              w: Math.max(1, Math.min(4, Number(_aParts[0]))),
+              h: Math.max(1, Math.min(4, Number(_aParts[1])))
+            };
+          }
+        }
+      }
+      dataItem._gridSizeCache = _resolved || { w: DEF_ARMOR_SIZE.w, h: DEF_ARMOR_SIZE.h };
     } else if (DataManager.isItem(dataItem)) {
       // 소비 아이템 vs 핵심 아이템
       if (dataItem.itypeId === 2) {
@@ -404,6 +433,18 @@ Game_GridInventory.prototype.cols = function() { return this._cols; };
 Game_GridInventory.prototype.rows = function() { return this._rows; };
 Game_GridInventory.prototype.hotkeyCount = function() { return this._hotkeyCount; };
 Game_GridInventory.prototype.hotkeys = function() { return this._hotkeys; };
+
+// --- 그리드 열 확장 (세이브 마이그레이션) ---
+Game_GridInventory.prototype._expandCols = function(newCols) {
+  var oldCols = this._cols;
+  if (newCols <= oldCols) return;
+  for (var r = 0; r < this._rows; r++) {
+    while (this._grid[r].length < newCols) {
+      this._grid[r].push(0);
+    }
+  }
+  this._cols = newCols;
+};
 Game_GridInventory.prototype.placements = function() { return this._placements; };
 
 /**
@@ -751,6 +792,91 @@ Game_GridInventory.fromSaveData = function(data) {
 };
 
 
+
+// ═══════════════════════════════════════════════════════════════════
+//  2b. 무기 Grip 시스템 — 한손/양손/대형 + 패시브 스킬 체크
+// ═══════════════════════════════════════════════════════════════════
+
+// 한손: wtypeId 1~5 (단검~한손둔기), 14(단창), 17(손쇠뇌), 20(단궁), 22(원드), 24(오브), 25(마도서), 26(묵주), 27(권갑)
+// 양손: wtypeId 6~9 (양손직검~양손둔기), 15(장창), 18(경쇠뇌), 21(장궁), 23(스태프)
+// 대형: wtypeId 10~13 (대형직검~대형둔기), 16(폴암), 19(중쇠뇌)
+var GRIP_ONE_HAND = [1,2,3,4,5, 14, 17, 20, 22, 24, 25, 26, 27];
+var GRIP_TWO_HAND = [6,7,8,9, 15, 18, 21, 23];
+var GRIP_LARGE    = [10,11,12,13, 16, 19];
+
+// 패시브 스킬 ID
+var SKILL_DUAL_WIELD_MASTERY = 240;  // 이도류 숙련
+var SKILL_GIANT_GRIP         = 241;  // 거인의 완력
+
+/**
+ * 무기의 grip 유형 반환: 'one', 'two', 'large'
+ * 노트태그 <grip:한손/양손/대형> 우선, 없으면 wtypeId로 판정
+ */
+function getWeaponGrip(weapon) {
+  if (!weapon) return 'one';
+  if (weapon.note) {
+    var m = weapon.note.match(/<grip:(\S+?)>/i);
+    if (m) {
+      var g = m[1];
+      if (g === '한손' || g === 'one')   return 'one';
+      if (g === '양손' || g === 'two')   return 'two';
+      if (g === '대형' || g === 'large') return 'large';
+    }
+  }
+  var wt = weapon.wtypeId || 0;
+  if (GRIP_LARGE.indexOf(wt) >= 0) return 'large';
+  if (GRIP_TWO_HAND.indexOf(wt) >= 0) return 'two';
+  return 'one';
+}
+
+/**
+ * 액터가 이도류 숙련 패시브를 보유하는지 체크
+ */
+function actorHasDualWieldMastery(actor) {
+  if (!actor || !actor.isLearnedSkill) return false;
+  return actor.isLearnedSkill(SKILL_DUAL_WIELD_MASTERY);
+}
+
+/**
+ * 액터가 거인의 완력 패시브를 보유하는지 체크
+ */
+function actorHasGiantGrip(actor) {
+  if (!actor || !actor.isLearnedSkill) return false;
+  return actor.isLearnedSkill(SKILL_GIANT_GRIP);
+}
+
+/**
+ * 무기를 해당 액터가 장비할 수 있는지 grip 기준으로 판정
+ * @returns {string|null} null=장비 불가, 'one'=한손(한쪽만), 'two'=양손(양쪽 차지)
+ */
+function resolveGripForActor(weapon, actor) {
+  var grip = getWeaponGrip(weapon);
+  if (grip === 'one') return 'one';       // 한손무기는 항상 한손
+  if (grip === 'two') {
+    if (actorHasGiantGrip(actor)) return 'one';  // 거인의 완력 → 한손으로 사용
+    return 'two';                                  // 일반 → 양손 차지
+  }
+  if (grip === 'large') {
+    if (actorHasGiantGrip(actor)) return 'two';  // 거인의 완력 → 양손으로 사용
+    return null;                                   // 없으면 사용 불가
+  }
+  return 'one';
+}
+
+/**
+ * 무기를 왼손(방패칸)에 장비 가능한지 판정
+ * - 이도류 숙련이 있어야 한손무기를 왼손에 장비 가능
+ * - 거인의 완력이 있고 양손무기를 한손으로 쓸 수 있으면 왼손에도 가능
+ */
+function canEquipWeaponInOffhand(weapon, actor) {
+  var resolved = resolveGripForActor(weapon, actor);
+  if (!resolved) return false;        // 장비 자체 불가
+  if (resolved === 'two') return false; // 양손 차지 무기는 왼손 단독 불가
+  // resolved === 'one' → 한손으로 쓸 수 있는 무기
+  return actorHasDualWieldMastery(actor);  // 이도류 숙련 필요
+}
+
+
 // ═══════════════════════════════════════════════════════════════════
 //  3. Game_Actor 확장
 // ═══════════════════════════════════════════════════════════════════
@@ -773,6 +899,26 @@ Game_Actor.prototype.setup = function(actorId) {
   if (!this._gridInventory) {
     this._gridInventory = new Game_GridInventory();
   }
+  // ── 초기 인벤토리 로드: <initInv:type,id,qty> 노트태그 파싱 ──
+  var actor = $dataActors[actorId];
+  if (actor && actor.note) {
+    var invRe = /<initInv:(item|weapon|armor),(\d+),(\d+)>/gi;
+    var im;
+    while ((im = invRe.exec(actor.note)) !== null) {
+      var itype = im[1].toLowerCase();
+      var iid = Number(im[2]);
+      var iqty = Number(im[3]) || 1;
+      var dataItem = null;
+      if (itype === 'item' && $dataItems) dataItem = $dataItems[iid];
+      else if (itype === 'weapon' && $dataWeapons) dataItem = $dataWeapons[iid];
+      else if (itype === 'armor' && $dataArmors) dataItem = $dataArmors[iid];
+      if (dataItem) {
+        for (var qi = 0; qi < iqty; qi++) {
+          this._gridInventory.autoPlace(dataItem);
+        }
+      }
+    }
+  }
 };
 
 /**
@@ -782,7 +928,88 @@ Game_Actor.prototype.gridInventory = function() {
   if (!this._gridInventory) {
     this._gridInventory = new Game_GridInventory();
   }
+  // 기존 세이브 마이그레이션: 열 수가 기본값보다 적으면 확장
+  if (this._gridInventory._cols < GRID_COLS) {
+    this._gridInventory._expandCols(GRID_COLS);
+  }
   return this._gridInventory;
+};
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  3a-2. Grip 시스템 — RMMZ 장비 로직 오버라이드
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 무기의 grip을 고려한 장비 가능 여부 체크
+ * - 대형무기: 거인의 완력 없으면 장비 불가
+ */
+var _Game_Actor_canEquipWeapon = Game_Actor.prototype.canEquipWeapon;
+Game_Actor.prototype.canEquipWeapon = function(item) {
+  if (!_Game_Actor_canEquipWeapon.call(this, item)) return false;
+  // 대형무기 체크: 거인의 완력 없으면 사용 불가
+  var grip = getWeaponGrip(item);
+  if (grip === 'large' && !actorHasGiantGrip(this)) return false;
+  return true;
+};
+
+/**
+ * forceChangeEquip 후 grip 제약 자동 적용
+ * - 양손 무기 장착 시 → 반대쪽 슬롯 자동 해제
+ * - 왼손에 무기 장착 시 → 이도류 숙련 체크
+ */
+var _Game_Actor_forceChangeEquip = Game_Actor.prototype.forceChangeEquip;
+Game_Actor.prototype.forceChangeEquip = function(slotId, item) {
+  // 무기를 메인핸드(슬롯 0)에 장착하는 경우
+  if (slotId === 0 && item && DataManager.isWeapon(item)) {
+    var resolved = resolveGripForActor(item, this);
+    if (!resolved) return; // 장비 불가 (대형 + 패시브 없음)
+    _Game_Actor_forceChangeEquip.call(this, slotId, item);
+    // 양손 차지 → 왼손(슬롯 1) 자동 해제
+    if (resolved === 'two') {
+      var offItem = this.equips()[1];
+      if (offItem) {
+        // 인벤토리에 반환
+        var inv = this._gridInventory;
+        if (inv) inv.autoPlace(offItem);
+        this._equips[1].setObject(null);
+      }
+    }
+    this.refresh();
+    return;
+  }
+  // 무기를 왼손(슬롯 1)에 장착하는 경우
+  if (slotId === 1 && item && DataManager.isWeapon(item)) {
+    if (!canEquipWeaponInOffhand(item, this)) return; // 이도류 없으면 차단
+    // 메인핸드가 양손 차지 상태인지 체크
+    var mainWeapon = this.equips()[0];
+    if (mainWeapon && DataManager.isWeapon(mainWeapon)) {
+      var mainResolved = resolveGripForActor(mainWeapon, this);
+      if (mainResolved === 'two') return; // 메인이 양손 차지 중이면 왼손 장착 불가
+    }
+    this._equips[1].setObject(item);
+    this.refresh();
+    return;
+  }
+  // 그 외: 기본 로직
+  _Game_Actor_forceChangeEquip.call(this, slotId, item);
+};
+
+/**
+ * 무기가 양손 차지 상태인지 확인
+ */
+Game_Actor.prototype.isMainWeaponTwoHanded = function() {
+  var mainWeapon = this.equips()[0];
+  if (!mainWeapon || !DataManager.isWeapon(mainWeapon)) return false;
+  var resolved = resolveGripForActor(mainWeapon, this);
+  return resolved === 'two';
+};
+
+/**
+ * 왼손 슬롯이 잠겨있는지 (양손무기로 인해)
+ */
+Game_Actor.prototype.isOffhandLocked = function() {
+  return this.isMainWeaponTwoHanded();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1441,6 +1668,13 @@ Scene_Map.prototype.onMapLoaded = function() {
 window.Game_GridInventory = Game_GridInventory;
 window.GridInventory = {
   getGridSize: getGridSize,
+  getWeaponGrip: getWeaponGrip,
+  resolveGripForActor: resolveGripForActor,
+  canEquipWeaponInOffhand: canEquipWeaponInOffhand,
+  actorHasDualWieldMastery: actorHasDualWieldMastery,
+  actorHasGiantGrip: actorHasGiantGrip,
+  SKILL_DUAL_WIELD_MASTERY: SKILL_DUAL_WIELD_MASTERY,
+  SKILL_GIANT_GRIP: SKILL_GIANT_GRIP,
   GRID_COLS:   GRID_COLS,
   GRID_ROWS:   GRID_ROWS,
   HOTKEY_SLOTS: HOTKEY_SLOTS,

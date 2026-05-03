@@ -231,6 +231,45 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif
 
 /* ===== NAV BAR ===== */
 .nav-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:100;}
+
+/* ===== ATTRACTION TAB ===== */
+.attr-dual{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+.attr-face{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:10px 8px;position:relative;overflow:hidden;}
+.attr-face.face-jung{border-color:rgba(196,69,54,.25);}
+.attr-face.face-jong{border-color:rgba(58,123,213,.25);}
+.attr-face-label{font-family:'Noto Serif KR',serif;font-size:10px;font-weight:700;text-align:center;letter-spacing:2px;margin-bottom:2px;}
+.attr-face-label.jung{color:var(--fire);}
+.attr-face-label.jong{color:var(--water);}
+.attr-face-pct{font-size:8px;color:var(--dim);text-align:center;margin-bottom:8px;}
+.attr-face-desc{font-size:8px;color:var(--dim);text-align:center;line-height:1.5;margin-bottom:6px;font-style:italic;}
+.attr-single{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:10px 8px;margin-top:10px;}
+.attr-sec-title{font-size:9px;color:var(--dim);letter-spacing:1px;margin:12px 0 4px;}
+.attr-yearn-row{display:flex;align-items:center;gap:6px;padding:5px 8px;margin:2px 0;background:var(--bg2);border-radius:6px;}
+.attr-yearn-emoji{font-size:14px;flex-shrink:0;}
+.attr-yearn-bar{flex:1;height:6px;background:rgba(255,255,255,.04);border-radius:3px;overflow:hidden;}
+.attr-yearn-fill{height:100%;border-radius:3px;transition:width .6s;}
+.attr-yearn-lbl{font-size:9px;font-weight:600;min-width:20px;text-align:right;}
+.attr-fetish-wrap{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.attr-fetish{font-size:8px;font-weight:600;padding:3px 7px;border-radius:5px;letter-spacing:.3px;}
+.attr-fetish.f-wood{background:rgba(74,124,89,.12);color:#6a9c79;border:1px solid rgba(74,124,89,.25);}
+.attr-fetish.f-fire{background:rgba(196,69,54,.1);color:#e8a090;border:1px solid rgba(196,69,54,.25);}
+.attr-fetish.f-earth{background:rgba(181,137,58,.1);color:#d4b870;border:1px solid rgba(181,137,58,.25);}
+.attr-fetish.f-metal{background:rgba(122,139,153,.12);color:#a0b0c0;border:1px solid rgba(122,139,153,.3);}
+.attr-fetish.f-water{background:rgba(58,123,213,.1);color:#80b0e8;border:1px solid rgba(58,123,213,.25);}
+.attr-fetish.f-combo{background:rgba(212,168,67,.08);color:#d4c090;border:1px solid rgba(212,168,67,.2);}
+.attr-fetish.f-trap{background:rgba(196,69,54,.12);color:#c44536;border:1px solid rgba(196,69,54,.35);box-shadow:0 0 6px rgba(196,69,54,.1);}
+.attr-fetish .af-star{font-size:7px;margin-left:2px;}
+.attr-arche-wrap{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:8px;}
+.attr-arche{font-size:9px;font-weight:600;padding:4px 10px;border-radius:6px;border:1px solid rgba(212,168,67,.25);background:rgba(212,168,67,.06);color:#d4c090;letter-spacing:.5px;}
+.attr-partner-row{display:flex;align-items:center;gap:6px;padding:5px 8px;margin:2px 0;border-radius:6px;font-size:10px;}
+.attr-partner-row.good{background:rgba(92,184,122,.06);border:1px solid rgba(92,184,122,.15);}
+.attr-partner-row.bad{background:rgba(196,69,54,.06);border:1px solid rgba(196,69,54,.15);}
+.attr-partner-icon{font-size:12px;}
+.attr-partner-name{font-weight:700;color:var(--txt);}
+.attr-partner-reason{font-size:8px;color:var(--dim);}
+.attr-synopsis{font-size:10px;color:var(--dim);line-height:1.7;padding:10px;margin-top:8px;border-left:2px solid rgba(196,122,158,.3);animation:fadeIn .6s ease both;}
+.attr-synopsis .as-hl{color:#c47a9e;font-weight:600;}
+.attr-synopsis .as-el{font-weight:600;}
 .nav-title{font-family:'Noto Serif KR',serif;font-size:13px;font-weight:700;color:var(--gold);letter-spacing:2px;}
 .nav-btn{padding:5px 14px;font-size:10px;font-weight:600;color:var(--dim);background:var(--card);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;transition:all .2s;text-decoration:none;letter-spacing:.5px;}
 .nav-btn:hover{border-color:var(--gold);color:var(--gold);background:var(--gdim);}
@@ -248,12 +287,12 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif
   <div class="tog"><div class="tog-b" onclick="setMode('player')" id="mp">플레이어</div><div class="tog-b on" onclick="setMode('npc')" id="mn">NPC</div><div class="tog-b" onclick="randomNpc()" id="mr">🎲</div><div class="tog-b" onclick="showDesignModal()" id="md">🔧 설계</div></div>
   <div class="hdr"><div class="hdr-t">가 호 록</div><div class="hdr-n" id="cn"></div><div class="hdr-i" id="ci"></div><div class="hdr-s" id="cs"></div><div class="badge" id="cb"></div><div class="badge" id="cr" style="display:none;background:rgba(74,124,89,.15);color:#8a8778;margin-left:4px;"></div></div>
   <div class="synopsis" id="synopsis"></div>
-  <div class="tabs"><div class="tab on" onclick="stab('gaho',this)">가호</div><div class="tab" onclick="stab('stat',this)">전투</div><div class="tab" onclick="stab('compat',this)">궁합</div><div class="tab" onclick="stab('appear',this)">외형</div></div>
+  <div class="tabs"><div class="tab on" onclick="stab('gaho',this)">가호</div><div class="tab" onclick="stab('stat',this)">전투</div><div class="tab" onclick="stab('compat',this)">궁합</div><div class="tab" onclick="stab('attract',this)">끌림</div><div class="tab" onclick="stab('appear',this)">외형</div></div>
   <div class="tc on" id="t-gaho">
     <div class="stit">사 주 가 호</div><div class="ssub">성좌(추구점) · 주신(기질)</div>
     <div class="col-heads"><div class="col-h">시주</div><div class="col-h">일주</div><div class="col-h">월주</div><div class="col-h">년주</div></div>
     <table class="saju-table"><tbody><tr id="rg"></tr><tr id="rj"></tr></tbody></table>
-    <div class="prm-hdr"><div class="stit">기 질 분 석</div><button class="prm-info-btn" onclick="showPentaModal()" title="십성 계산 원리">?</button></div><div class="ssub">사주에서 도출된 15가지 성격 파라미터</div>
+    <div class="prm-hdr"><div class="stit">기 질 분 석</div><button class="prm-info-btn" onclick="showPentaModal()" title="십성 계산 원리">?</button></div><div class="ssub">사주에서 도출된 16가지 성격 파라미터</div>
     <div id="prm-sec"></div>
     <div id="penta-modal"></div>
     <div class="ss-sec-hdr"><div class="stit" style="margin-top:14px;">신 살 특 성</div><div class="ssub">사주 조합에서 도출된 특수 기질 태그</div></div>
@@ -278,6 +317,11 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif
   </div>
 
   <div class="tc" id="t-compat"><div class="cpt" style="margin-top:14px;"><div class="cpt-t">⚡ 파티 궁합</div><div class="cpt-r"><div class="cpt-i p">↑</div><div class="cpt-x"><strong>카이론 (참나무)</strong><br>목생화</div></div><div class="cpt-r"><div class="cpt-i n">↓</div><div class="cpt-x"><strong>린 (물병)</strong><br>수극화</div></div></div></div>
+
+  <div class="tc" id="t-attract">
+    <div class="stit">끌 림 분 석</div><div class="ssub">원국 기운 불균형에서 파생된 이성 끌림 프로필</div>
+    <div id="attract-sec"></div>
+  </div>
 </div>
 <div id="design-modal"></div>
 <script>
@@ -286,6 +330,12 @@ const OVR={wood:'earth',fire:'metal',earth:'water',metal:'wood',water:'fire'};
 const EN={wood:'목',fire:'화',earth:'토',metal:'금',water:'수'};
 const EC={wood:'#4a7c59',fire:'#c44536',earth:'#b5893a',metal:'#7a8b99',water:'#3a7bd5'};
 const EC_COMP={wood:'#7c4a6d',fire:'#36a5c4',earth:'#3a6eb5',metal:'#99887a',water:'#d58e3a'};
+// 세계관 기운 이름 (오행 → 인월드)
+const EL_WORLD={wood:'생명',fire:'빛',earth:'대지',metal:'강철',water:'심연'};
+const EL_WORLD_ADJ={wood:'강인한 생명력',fire:'뜨거운 빛의 열정',earth:'따뜻한 대지의 품',metal:'차가운 강철의 통제',water:'깊은 심연의 힘'};
+// TID → 성좌/주신 이름 매핑
+const TID_GAN_NAME={甲:'참나무',乙:'화분',丙:'태양',丁:'등불',戊:'산맥',己:'쟁기',庚:'칼날',辛:'끌',壬:'파도',癸:'물병'};
+const TID_JI_NAME={子:'노크탄',丑:'그란디르',寅:'프레간',卯:'플로렌',辰:'레그나스',巳:'벨리스',午:'솔란',未:'큐라',申:'크리시스',酉:'스펠라',戌:'에르미탄',亥:'레바'};
 const EDK={wood:'#1e3522',fire:'#4a1510',earth:'#4a3010',metal:'#2a3238',water:'#1a3a6a'};
 const GE={'참나무':'🌳','화분':'🌱','태양':'☀️','등불':'🕯️','산맥':'⛰️','쟁기':'🌾','칼날':'🗡️','끌':'💎','파도':'🌊','물병':'💧'};
 const JE={'노크탄':'🌙','그란디르':'🪨','프레간':'⚔️','플로렌':'🌸','레그나스':'👑','벨리스':'🔮','솔란':'✨','큐라':'🏮','크리시스':'⚖️','스펠라':'🔨','에르미탄':'📿','레바':'🎊'};
@@ -402,6 +452,8 @@ function generateSynopsis(d){
   else if(hVals.submit<=1) hP.push('복종에서 쾌감을 느끼');
   if(hVals.sadism>=5) hP.push('타고난 가학 성향이 있');
   else if(hVals.sadism<=1) hP.push('타고난 피학 성향이 있');
+  if(hVals.possess>=5) hP.push('극단적 독점욕을 가지');
+  else if(hVals.possess<=1) hP.push('관계에 집착하지 않');
   if(hP.length===1) sentences.push(`<span class="syn-h">${hP[0]}는</span> 편이다.`);
   else if(hP.length===2) sentences.push(`<span class="syn-h">${hP[0]}고 ${hP[1]}는</span> 편이다.`);
   else if(hP.length>2){const last=hP.pop();sentences.push(`<span class="syn-h">${hP.join('며, ')}고, ${last}는</span> 편이다.`);}
@@ -509,7 +561,7 @@ function generateSynopsis(d){
   sec.innerHTML=sentences.join(' ');
 }
 
-function render(d){currentData=d;document.getElementById('cn').innerHTML=d.surname?'<span style="font-size:14px;color:var(--dim);font-weight:400;">'+d.surname+'</span> <span>'+d.firstname+'</span>':(d.firstname||d.name);document.getElementById('ci').innerHTML=(d.surname?'<div class="name-labels"><span style="color:var(--dim);">성 ↑</span><span style="color:var(--txt);opacity:.5;">이름 ↑</span></div>':'')+'<div>'+d.info+'</div>';document.getElementById('cs').textContent=d.sub||'';document.getElementById('cb').textContent=d.badge;var _rb=document.getElementById('cr');if(_rb){_rb.textContent=d.race?getAppearArchetype(d).data.name:'';_rb.style.display=d.race?'inline-block':'none';}generateSynopsis(d);buildTable(d);renderSupport(d);renderStats(d);renderParams(d);renderSinsal(d);renderAppearance(d);}
+function render(d){currentData=d;document.getElementById('cn').innerHTML=d.surname?'<span style="font-size:14px;color:var(--dim);font-weight:400;">'+d.surname+'</span> <span>'+d.firstname+'</span>':(d.firstname||d.name);document.getElementById('ci').innerHTML=(d.surname?'<div class="name-labels"><span style="color:var(--dim);">성 ↑</span><span style="color:var(--txt);opacity:.5;">이름 ↑</span></div>':'')+'<div>'+d.info+'</div>';document.getElementById('cs').textContent=d.sub||'';document.getElementById('cb').textContent=d.badge;var _rb=document.getElementById('cr');if(_rb){_rb.textContent=d.race?getAppearArchetype(d).data.name:'';_rb.style.display=d.race?'inline-block':'none';}generateSynopsis(d);buildTable(d);renderSupport(d);renderStats(d);renderParams(d);renderSinsal(d);renderAppearance(d);renderAttraction(d);}
 
 function buildTable(d){
   const rg=document.getElementById('rg'),rj=document.getElementById('rj');rg.innerHTML='';rj.innerHTML='';
@@ -1082,7 +1134,12 @@ const H_AXES=[
    over:'가학',under:'피학',
    overSubs:['가학쾌감','잔인함','지배적고통'],underSubs:['피학쾌감','자기학대','고통의존'],
    titlesF:['타고난 암퇘지','때려줘 밟아줘 욕해줘','아픈데 짜릿해','아픈건 그다지','깨달아버린 손맛','괴롭힘의 미학','타고난 고문가'],
-   titlesM:['타고난 숫퇘지','때려줘 밟아줘 욕해줘','아픈데 짜릿해','아픈건 그다지','깨달아버린 손맛','괴롭힘의 미학','타고난 고문가']}
+   titlesM:['타고난 숫퇘지','때려줘 밟아줘 욕해줘','아픈데 짜릿해','아픈건 그다지','깨달아버린 손맛','괴롭힘의 미학','타고난 고문가']},
+  {id:'possess',name:'독점욕',
+   over:'독점',under:'개방',
+   overSubs:['소유욕','질투심','구속'],underSubs:['개방성','무관심','방관'],
+   titlesF:['모든 걸 나눠도 좋아','자유연애 만세','별로 신경 안 써','내꺼긴 한데 뭐','손대지 마 내꺼야','네 모든 걸 알아야 해','죽어도 놓지 않을 거야'],
+   titlesM:['모든 걸 나눠도 좋아','자유연애 만세','별로 신경 안 써','내꺼긴 한데 뭐','손대지 마 내꺼야','네 모든 걸 알아야 해','죽어도 놓지 않을 거야']}
 ];
 
 function calcHParams(sipCounts,total,elPcts){
@@ -1100,7 +1157,9 @@ function calcHParams(sipCounts,total,elPcts){
   const submit=3 + (sc.bigup-b)/b*1.5 + (20-el.earth)/20*1.0;
   // 가학성향 = 주체↑ + 인식 현실↑ + 사유 즉흥↓ + 金↑ + 火↑
   const sadism=3 + (sc.bigup-b)/b*0.8 + (sc.percept-b)/b*0.6 + (b-sc.reflect)/b*0.5 + (el.metal-20)/20*0.6 + (el.fire-20)/20*0.4;
-  return {chastity:clamp06(chastity),morality:clamp06(morality),resist:clamp06(resist),submit:clamp06(submit),sadism:clamp06(sadism)};
+  // 독점욕 = 金↑ + 주체↑ + 인식(재성)↑ + 水↓ + 식상↓
+  const possess=3 + (el.metal-20)/20*1.2 + (sc.bigup-b)/b*0.8 + (sc.percept-b)/b*0.6 - (el.water-20)/20*0.7 - (sc.express-b)/b*0.5;
+  return {chastity:clamp06(chastity),morality:clamp06(morality),resist:clamp06(resist),submit:clamp06(submit),sadism:clamp06(sadism),possess:clamp06(possess)};
 }
 
 // Shared row renderer
@@ -1389,12 +1448,13 @@ const DM_PRESETS={
     {name:'균형형',icon:'☯️',vals:[0,0,0,0,0]},
   ],
   h:[
-    {name:'청순가련',icon:'🌸',vals:[3,2,2,2,-2]},
-    {name:'요부형',icon:'💋',vals:[-3,-1,-2,1,1]},
-    {name:'철벽녀',icon:'🛡️',vals:[3,3,3,-1,0]},
-    {name:'순종미인',icon:'🎀',vals:[1,1,0,-3,-2]},
-    {name:'여왕님',icon:'👑',vals:[1,0,1,3,3]},
-    {name:'균형형',icon:'☯️',vals:[0,0,0,0,0]},
+    {name:'청순가련',icon:'🌸',vals:[3,2,2,2,-2,1]},
+    {name:'요부형',icon:'💋',vals:[-3,-1,-2,1,1,-1]},
+    {name:'철벽녀',icon:'🛡️',vals:[3,3,3,-1,0,2]},
+    {name:'순종미인',icon:'🎀',vals:[1,1,0,-3,-2,-1]},
+    {name:'여왕님',icon:'👑',vals:[1,0,1,3,3,3]},
+    {name:'얀데레',icon:'🔪',vals:[2,-3,0,2,1,3]},
+    {name:'균형형',icon:'☯️',vals:[0,0,0,0,0,0]},
   ]
 };
 let dmState={el:'fire',gender:'m',race:'human',mode:'sipsung',vals:[0,0,0,0,0]};
@@ -1475,7 +1535,7 @@ function showDesignModal(){
   }
   c.innerHTML=buildHTML();
 }
-function dmSetMode(m){dmState.mode=m;dmState.vals=[0,0,0,0,0];showDesignModal();}
+function dmSetMode(m){dmState.mode=m;dmState.vals=m==='h'?[0,0,0,0,0,0]:[0,0,0,0,0];showDesignModal();}
 function closeDesignModal(){document.getElementById('design-modal').innerHTML='';}
 function dmSetEl(e){
   dmState.el=e;
@@ -1549,7 +1609,7 @@ function dmGenerate(){
   } else if(m==='elem'){
     prefs.forEach((p,i)=>{elW[elOrder[i]]=prefToWeight(p);});
   } else if(m==='h'){
-    // H→십성/오행 역추적 (5축: chastity,morality,resist,submit,sadism)
+    // H→십성/오행 역추적 (6축: chastity,morality,resist,submit,sadism,possess)
     const sipElMap=[dayEl,GEN[dayEl],OVR[dayEl],CTRL[dayEl],FEED[dayEl]];
     const sipW=[0,0,0,0,0];
     sipW[3]+=prefs[0]*0.4; sipW[2]-=prefs[0]*0.3;// chastity
@@ -1557,12 +1617,14 @@ function dmGenerate(){
     sipW[4]+=prefs[2]*0.4; sipW[3]+=prefs[2]*0.3;// resist
     sipW[0]+=prefs[3]*0.5;// submit(지배↑→주체↑)
     sipW[0]+=prefs[4]*0.3;sipW[2]+=prefs[4]*0.3;sipW[4]-=prefs[4]*0.2;// sadism
+    sipW[0]+=(prefs[5]||0)*0.3;sipW[2]+=(prefs[5]||0)*0.2;// possess(독점↑→주체↑,재성↑)
     sipW.forEach((sw,i)=>{elW[sipElMap[i]]+=sw;});
     elW.metal+=prefs[0]*0.3;// chastity↑→metal↑
     elW.wood+=prefs[1]*0.3;// morality↑→wood↑
     elW.water-=prefs[2]*0.2;elW.fire-=prefs[2]*0.2;// resist
     elW.earth-=prefs[3]*0.3;// submit(지배↑→earth↓)
     elW.metal+=prefs[4]*0.3;elW.fire+=prefs[4]*0.2;// sadism
+    elW.metal+=(prefs[5]||0)*0.4;elW.water-=(prefs[5]||0)*0.2;// possess(독점↑→metal↑,water↓)
   }
   
   // Clamp and normalize to 7 slots
@@ -1685,6 +1747,441 @@ function renderNAI(d){
   else{const s=bigup+express+(isYang?1:0)+(elO.water||0)/10;if(s>=10)tags.push('huge penis');else if(s>=7)tags.push('large penis');else if(s<4)tags.push('small penis');}
   const sinA=_calcSinsalAppear(d);if(sinA['빛나는 외모'])tags.push('beautiful, attractive');if(sinA['치명적 매력'])tags.push('seductive, alluring');
   elo.textContent=tags.filter(Boolean).join(', ');
+}
+
+// ═══════════════════════════════════════
+// ═══ 끌림 분석 엔진 (Attraction Engine) ═══
+// ═══════════════════════════════════════
+
+// 천간합 테이블: 합 대상 천간 오행
+const CHEONGAN_HAP={wood_y:'earth',wood_n:'metal',fire_y:'metal',fire_n:'water',earth_y:'water',earth_n:'wood',metal_y:'wood',metal_n:'fire',water_y:'fire',water_n:'earth'};
+// 합화 결과 오행
+const HAP_RESULT={wood_y:'earth',wood_n:'metal',fire_y:'water',fire_n:'wood',earth_y:'fire',earth_n:'metal',metal_y:'earth',metal_n:'water',water_y:'wood',water_n:'fire'};
+
+function calcJongGyeok(d){
+  const pr=calcParams(d);if(!pr)return{type:'none',jungPct:100,jongPct:0,jongKind:null};
+  const{counts,total,dayEl}=pr;
+  const el=d.el||{};
+  // 일간 강도: 일간 오행 비율 + 비겁 비율
+  const dayElPct=el[dayEl]||0;
+  const bigupRatio=total>0?counts.bigup/total:0;
+  const dayStrength=dayElPct*0.6+bigupRatio*40;
+  
+  // 종격 판정: 일간이 극약해야 함
+  if(dayStrength>=18)return{type:'none',jungPct:100,jongPct:0,jongKind:null};
+  
+  // 어느 세력이 지배적인지
+  const expressEl=GEN[dayEl]; // 식상 오행
+  const perceptEl=OVR[dayEl]; // 재성 오행
+  const discipEl=CTRL[dayEl]; // 관살 오행 (나를 극하는)
+  const feedEl=FEED[dayEl]; // 인성 오행
+  
+  const forces={
+    jongJae:(el[perceptEl]||0)+(counts.percept/Math.max(total,1))*30,
+    jongSal:(el[discipEl]||0)+(counts.discip/Math.max(total,1))*30,
+    jongA:(el[expressEl]||0)+(counts.express/Math.max(total,1))*30,
+    jongGang:(el[dayEl]||0)+(counts.bigup/Math.max(total,1))*30
+  };
+  
+  const maxForce=Math.max(...Object.values(forces));
+  const maxKey=Object.keys(forces).find(k=>forces[k]===maxForce);
+  
+  // 종강은 일간이 약할 때 성립 안 함 — 비겁이 강해야 하는데 이미 약하면 모순
+  if(maxKey==='jongGang')return{type:'none',jungPct:100,jongPct:0,jongKind:null};
+  
+  // 종격 강도: 일간이 약할수록, 지배 세력이 강할수록
+  const jongStrength=Math.min(100,Math.max(0,(30-dayStrength)*2+(maxForce-25)*1.5));
+  if(jongStrength<15)return{type:'none',jungPct:100,jongPct:0,jongKind:null};
+  
+  const kinds={jongJae:'종재격',jongSal:'종살격',jongA:'종아격'};
+  const jongPct=Math.min(50,Math.round(jongStrength*0.5));
+  const jungPct=100-jongPct;
+  
+  // 종격의 종 오행 (순응 대상)
+  const jongEl={jongJae:perceptEl,jongSal:discipEl,jongA:expressEl}[maxKey];
+  
+  return{type:'dual',jungPct,jongPct,jongKind:kinds[maxKey],jongEl,dayStrength,forces};
+}
+
+function calcYearning(d,face){
+  // face: 'jung' (정면) or 'jong' (종면)
+  const pr=calcParams(d);if(!pr)return{yearns:{},trapEl:null,trapName:''};
+  const{counts,total,dayEl}=pr;
+  const el=d.el||{};
+  const jong=calcJongGyeok(d);
+  const yearns={wood:0,fire:0,earth:0,metal:0,water:0};
+  
+  if(face==='jong'&&jong.type==='dual'){
+    // 종면: 과잉 오행을 더 강화해주는 쪽에 끌림
+    const jongEl=jong.jongEl;
+    yearns[jongEl]+=80;
+    yearns[GEN[jongEl]]+=40; // 종 오행을 생해주는 것도 좋음
+    // 일간 오행은 갈망 아님
+    yearns[dayEl]=Math.max(0,yearns[dayEl]-30);
+  } else {
+    // 정면 (또는 단일): 결핍 오행에 끌림
+    const feedEl=FEED[dayEl]; // 인성 — 나를 살리는
+    const sameEl=dayEl; // 비겁 — 아군
+    
+    // 결핍도 기반 갈망
+    const avg=20;
+    ['wood','fire','earth','metal','water'].forEach(e=>{
+      const deficit=avg-(el[e]||0);
+      if(deficit>0) yearns[e]+=deficit*2;
+    });
+    // 용신 보정: 인성과 비겁 추가 가중
+    yearns[feedEl]+=30;
+    yearns[sameEl]+=15;
+    // 이미 과잉인 오행은 갈망 감소
+    ['wood','fire','earth','metal','water'].forEach(e=>{
+      if((el[e]||0)>30) yearns[e]=Math.max(0,yearns[e]-((el[e]-30)*2));
+    });
+  }
+  
+  // 정규화: 최대값 100
+  const mx=Math.max(...Object.values(yearns),1);
+  ['wood','fire','earth','metal','water'].forEach(e=>{yearns[e]=Math.round(yearns[e]/mx*100);});
+  
+  // 천간합 함정
+  const dayGan=d.p[1].g;
+  const isYang=GAN_YY[dayGan.n]!==undefined?GAN_YY[dayGan.n]:true;
+  const hapKey=dayEl+'_'+(isYang?'y':'n');
+  const trapEl=CHEONGAN_HAP[hapKey]||null;
+  const hapResultEl=HAP_RESULT[hapKey]||null;
+  // 함정인 조건: 합 대상 오행이 원국에서 이미 과다(기신)
+  const isTrap=trapEl&&(el[trapEl]||0)>=25;
+  const trapHapGan={wood_y:'참나무',wood_n:'쟁기',fire_y:'끌',fire_n:'파도',earth_y:'물병',earth_n:'참나무',metal_y:'화분',metal_n:'태양',water_y:'등불',water_n:'산맥'};
+  const trapName=isTrap?(trapHapGan[hapKey]||'')+' 성좌의 유혹':'';
+  
+  return{yearns,trapEl:isTrap?trapEl:null,trapName,hapResultEl:isTrap?hapResultEl:null};
+}
+
+function calcFetishTags(d,yearning,face){
+  const tags=[];
+  const y=yearning.yearns;
+  const el=d.el||{};
+  const pr=calcParams(d);
+  if(!pr)return tags;
+  const{counts}=pr;
+  
+  // 오행별 페티시 태그 풀
+  const FETISH_POOL={
+    wood:[
+      {name:'근육 숭배',threshold:60,icon:'💪',cls:'f-wood'},
+      {name:'야생 선호',threshold:50,icon:'🌿',cls:'f-wood'},
+      {name:'포옹/밀착',threshold:40,icon:'🤗',cls:'f-wood'},
+      {name:'성장 관찰',threshold:70,icon:'🌱',cls:'f-wood'}
+    ],
+    fire:[
+      {name:'노출의 미학',threshold:60,icon:'☀️',cls:'f-fire'},
+      {name:'격렬함',threshold:50,icon:'🔥',cls:'f-fire'},
+      {name:'체온 집착',threshold:40,icon:'🌡️',cls:'f-fire'},
+      {name:'드러남의 쾌감',threshold:70,icon:'✨',cls:'f-fire'}
+    ],
+    earth:[
+      {name:'감싸기',threshold:40,icon:'🤲',cls:'f-earth'},
+      {name:'풍만 선호',threshold:50,icon:'🍑',cls:'f-earth'},
+      {name:'모성/부성 끌림',threshold:60,icon:'🏠',cls:'f-earth'},
+      {name:'감각 탐닉',threshold:70,icon:'🍯',cls:'f-earth'}
+    ],
+    metal:[
+      {name:'속박/구속',threshold:50,icon:'⛓️',cls:'f-metal'},
+      {name:'제복 선호',threshold:40,icon:'🎖️',cls:'f-metal'},
+      {name:'통제 쾌감',threshold:60,icon:'🗝️',cls:'f-metal'},
+      {name:'규율 플레이',threshold:70,icon:'📏',cls:'f-metal'}
+    ],
+    water:[
+      {name:'감각 박탈',threshold:60,icon:'🌑',cls:'f-water'},
+      {name:'오일/액체',threshold:40,icon:'💦',cls:'f-water'},
+      {name:'침잠/흐름',threshold:50,icon:'🌊',cls:'f-water'},
+      {name:'익명/비인격화',threshold:70,icon:'🎭',cls:'f-water'}
+    ]
+  };
+  
+  // 갈망 기반 태그
+  ['wood','fire','earth','metal','water'].forEach(e=>{
+    FETISH_POOL[e].forEach(f=>{
+      if(y[e]>=f.threshold){
+        const intensity=y[e]>=90?3:y[e]>=70?2:1;
+        tags.push({...f,intensity,elem:e});
+      }
+    });
+  });
+  
+  // 복합 조건 태그
+  if(y.metal>=40&&y.water>=40) tags.push({name:'오일 플레이',icon:'✨',cls:'f-combo',intensity:Math.min(3,Math.round((y.metal+y.water)/60)),elem:'combo'});
+  if(y.wood>=50&&y.metal>=30) tags.push({name:'강자의 굴복',icon:'🦁',cls:'f-combo',intensity:2,elem:'combo'});
+  if(y.fire>=40&&(el.fire||0)<=12.5) tags.push({name:'관음적 조명',icon:'👁️',cls:'f-combo',intensity:2,elem:'combo'});
+  if(y.water>=50&&y.earth>=30) tags.push({name:'자궁회귀',icon:'🫧',cls:'f-combo',intensity:1,elem:'combo'});
+  
+  // 함정 태그
+  if(yearning.trapEl){
+    const trapNames={wood:'숲의 함정',fire:'불꽃의 유혹',earth:'대지의 수렁',metal:'냉미의 유혹',water:'심연의 유혹'};
+    tags.push({name:trapNames[yearning.trapEl]||'위험한 끌림',icon:'⚠️',cls:'f-trap',intensity:2,elem:'trap'});
+  }
+  
+  // 종격 특수 태그
+  if(face==='jong'){
+    tags.push({name:'자아 용해 쾌감',icon:'💫',cls:'f-combo',intensity:2,elem:'combo'});
+    const jong=calcJongGyeok(d);
+    if(jong.jongKind==='종살격') tags.push({name:'권위 복종',icon:'👑',cls:'f-combo',intensity:2,elem:'combo'});
+    if(jong.jongKind==='종재격') tags.push({name:'감각 순응',icon:'🍷',cls:'f-combo',intensity:2,elem:'combo'});
+    if(jong.jongKind==='종아격') tags.push({name:'표현 폭발',icon:'🎆',cls:'f-combo',intensity:2,elem:'combo'});
+  }
+  
+  // H기질 연계 아키타입
+  const hVals=calcHParams(counts,pr.total,el);
+  if(hVals.possess>=5&&hVals.morality<=1&&hVals.submit>=4) tags.push({name:'얀데레',icon:'🔪',cls:'f-trap',intensity:3,elem:'combo'});
+  if(hVals.possess>=5&&hVals.submit<=1) tags.push({name:'집착형 헌신',icon:'🖤',cls:'f-combo',intensity:2,elem:'combo'});
+  if(hVals.possess<=1&&hVals.chastity<=1&&hVals.resist<=1) tags.push({name:'쾌락주의자',icon:'🍷',cls:'f-combo',intensity:2,elem:'combo'});
+  
+  // 정렬: intensity 내림차순
+  tags.sort((a,b)=>b.intensity-a.intensity);
+  return tags;
+}
+
+function calcAttractionArchetypes(d,yearning,jong,face){
+  const archs=[];
+  const y=yearning.yearns;
+  const dayEl=d.p[1].g.e;
+  const el=d.el||{};
+  
+  // 정면 아키타입
+  if(face==='jung'||jong.type==='none'){
+    const topYearn=Object.entries(y).sort((a,b)=>b[1]-a[1])[0];
+    if(topYearn){
+      const names={
+        wood:'숲의 수호자를 찾는 자',fire:'불꽃 속에서 살아나는 자',
+        earth:'대지의 품을 갈망하는 자',metal:'강철의 질서에 끌리는 자',
+        water:'심연에서 지혜를 구하는 자'
+      };
+      archs.push({icon:EL_EMOJI[topYearn[0]],name:names[topYearn[0]]||'방랑자'});
+    }
+    // 일간 기반 보조 아키타입
+    const dayArchs={
+      fire:{icon:'☀️',name:'태양의 관찰자'},wood:{icon:'🌳',name:'숲의 보호자'},
+      earth:{icon:'⛰️',name:'대지의 포용자'},metal:{icon:'⚔️',name:'칼날의 심판자'},
+      water:{icon:'🌊',name:'심연의 탐구자'}
+    };
+    if(dayArchs[dayEl])archs.push(dayArchs[dayEl]);
+  }
+  
+  // 종면 아키타입
+  if(face==='jong'&&jong.type==='dual'){
+    const jongArchs={
+      '종재격':{icon:'🍷',name:'감각에 녹아드는 자'},
+      '종살격':{icon:'⛓️',name:'심연의 자발적 익사자'},
+      '종아격':{icon:'🎆',name:'폭발하는 해방자'}
+    };
+    if(jongArchs[jong.jongKind]) archs.push(jongArchs[jong.jongKind]);
+    archs.push({icon:'💫',name:'자아의 경계를 녹이는 자'});
+  }
+  
+  // 함정 아키타입
+  if(yearning.trapEl){
+    archs.push({icon:'⚠️',name:`${EL_WORLD[yearning.trapEl]}의 유혹에 약한 자`});
+  }
+  
+  return archs;
+}
+
+function calcIdealPartner(d,yearning,face){
+  const dayEl=d.p[1].g.e;if(!dayEl)return{good:[],bad:[]};
+  const el=d.el||{};
+  const y=yearning.yearns;
+  const feedEl=FEED[dayEl];
+  const ovrEl=OVR[dayEl];
+  const ctrlEl=CTRL[dayEl];
+  
+  // 성좌·주신 매핑
+  const EL2GAN_Y={wood:'참나무',fire:'태양',earth:'산맥',metal:'칼날',water:'파도'};
+  const EL2GAN_N={wood:'화분',fire:'등불',earth:'쟁기',metal:'끌',water:'물병'};
+  const EL2JI_Y={wood:'프레간',fire:'솔란',earth:'레그나스',metal:'크리시스',water:'노크탄'};
+  const EL2JI_N={wood:'플로렌',fire:'벨리스',earth:'그란디르',metal:'스펠라',water:'레바'};
+  function pillarName(ganName,jiName){return ganName+'·'+jiName;}
+  
+  const good=[],bad=[];
+  
+  if(face==='jong'){
+    const jong=calcJongGyeok(d);
+    if(jong.jongEl){
+      const je=jong.jongEl;
+      good.push({pillar:pillarName(EL2GAN_Y[je],EL2JI_Y[je]),reason:`${EL_WORLD[je]}의 기세 강화 — 순응의 완성`});
+      good.push({pillar:pillarName(EL2GAN_N[je],EL2JI_N[je]),reason:`${EL_WORLD[je]}의 기세를 부드럽게 강화`});
+      good.push({pillar:pillarName(EL2GAN_Y[FEED[je]],EL2JI_Y[FEED[je]]),reason:`${EL_WORLD[je]}을(를) 살려주는 ${EL_WORLD[FEED[je]]}의 기운`});
+      bad.push({pillar:pillarName(EL2GAN_Y[dayEl],EL2JI_Y[feedEl]),reason:'자아 강화 — 순응 구조 파괴 위험'});
+    }
+  } else {
+    const topYearns=Object.entries(y).sort((a,b)=>b[1]-a[1]).slice(0,2);
+    topYearns.forEach(([e,v])=>{
+      if(v>=40){
+        good.push({pillar:pillarName(EL2GAN_Y[e],EL2JI_Y[e]),reason:`${EL_WORLD[e]}의 기운 — 가장 필요한 에너지`});
+        good.push({pillar:pillarName(EL2GAN_N[e],EL2JI_N[e]),reason:`${EL_WORLD[e]}의 기운 (부드러운 형태)`});
+      }
+    });
+    const overEls=Object.entries(el).filter(([k,v])=>v>=30).map(([k])=>k);
+    overEls.forEach(e=>{
+      bad.push({pillar:pillarName(EL2GAN_Y[e],EL2JI_Y[e]),reason:`${EL_WORLD[e]} 과잉 강화 — 부담 증폭`});
+    });
+    if(yearning.trapEl){
+      const te=yearning.trapEl;
+      bad.push({pillar:pillarName(EL2GAN_Y[te],EL2JI_N[te]),reason:`성좌 합의 함정 — 자아 소멸 위험`});
+    }
+  }
+  
+  return{good:good.slice(0,3),bad:bad.slice(0,2)};
+}
+
+function generateAttractionSynopsis(d,yearning,jong,fetishes,face){
+  const dayEl=d.p[1].g.e;if(!dayEl)return'';
+  const dayName=d.p[1].g.n;
+  const el=d.el||{};
+  const y=yearning.yearns;
+  const topY=Object.entries(y).sort((a,b)=>b[1]-a[1])[0];
+  const parts=[];
+  
+  if(face==='jong'&&jong.type==='dual'){
+    parts.push(`<span class="as-el" style="color:${EC[dayEl]}">${dayName}</span>자리의 숨겨진 이면.`);
+    parts.push(`강한 흐름에 자아를 맡기고 <span class="as-hl">${EL_WORLD_ADJ[jong.jongEl]||'미지의 힘'}에 녹아드는 쾌감</span>을 이해하는 편이다.`);
+    if(jong.jongKind==='종살격') parts.push(`<span class="as-hl">압도적 권위 앞에서 무릎 꿇는 순간</span>에 역설적 해방감을 느낀다.`);
+    if(jong.jongKind==='종재격') parts.push(`<span class="as-hl">감각의 홍수 속에 자아 경계가 녹는</span> 상태를 갈구한다.`);
+    if(jong.jongKind==='종아격') parts.push(`모든 것을 <span class="as-hl">쏟아내고 비워내는 폭발적 해방</span>에서 쾌감을 얻는다.`);
+  } else {
+    if(topY){
+      parts.push(`<span class="as-el" style="color:${EC[topY[0]]}">${EL_WORLD_ADJ[topY[0]]}</span>에 본능적으로 끌린다.`);
+    }
+    // 상위 페티시 언급
+    const topFet=fetishes.filter(f=>f.elem!=='trap').slice(0,2);
+    if(topFet.length>0){
+      const fetNames=topFet.map(f=>`<span class="as-hl">${f.name}</span>`).join('과 ');
+      parts.push(`${fetNames}에서 깊은 쾌감을 느끼는 편이다.`);
+    }
+    // 함정 경고
+    if(yearning.trapEl){
+      parts.push(`<span class="as-el" style="color:${EC[yearning.trapEl]}">${EL_WORLD[yearning.trapEl]}</span>의 아름다움에 강하게 이끌릴 수 있으나, 그것은 <span class="as-hl">자아를 녹이는 함정</span>이다.`);
+    }
+  }
+  return parts.join(' ');
+}
+
+function renderFaceColumn(container,d,face,jong){
+  const yearning=calcYearning(d,face);
+  const fetishes=calcFetishTags(d,yearning,face);
+  const archetypes=calcAttractionArchetypes(d,yearning,jong,face);
+  const partners=calcIdealPartner(d,yearning,face);
+  const synopsis=generateAttractionSynopsis(d,yearning,jong,fetishes,face);
+  const el=d.el||{};
+  let h='';
+  
+  // 갈망 기운
+  h+=`<div class="attr-sec-title">갈망 기운</div>`;
+  const yEntries=Object.entries(yearning.yearns).sort((a,b)=>b[1]-a[1]);
+  yEntries.forEach(([e,v])=>{
+    const isOver=(el[e]||0)>=30;
+    h+=`<div class="attr-yearn-row" style="${isOver?'opacity:.4':''}">
+      <div class="attr-yearn-emoji">${EL_EMOJI[e]}</div>
+      <div class="attr-yearn-bar"><div class="attr-yearn-fill" style="width:${v}%;background:${EC[e]}"></div></div>
+      <div class="attr-yearn-lbl" style="color:${EC[e]}">${v>0?v+'%':isOver?'과잉':'-'}</div>
+    </div>`;
+  });
+  
+  // 페티시 태그
+  if(fetishes.length>0){
+    h+=`<div class="attr-sec-title">페티시 경향</div><div class="attr-fetish-wrap">`;
+    fetishes.forEach(f=>{
+      const stars='★'.repeat(f.intensity);
+      h+=`<span class="attr-fetish ${f.cls}">${f.icon} ${f.name} <span class="af-star">${stars}</span></span>`;
+    });
+    h+=`</div>`;
+  }
+  
+  // 아키타입
+  if(archetypes.length>0){
+    h+=`<div class="attr-sec-title">끌림 아키타입</div><div class="attr-arche-wrap">`;
+    archetypes.forEach(a=>{h+=`<span class="attr-arche">${a.icon} ${a.name}</span>`;});
+    h+=`</div>`;
+  }
+  
+  // 파트너 추천
+  if(partners.good.length>0||partners.bad.length>0){
+    h+=`<div class="attr-sec-title">이상적 파트너</div>`;
+    partners.good.forEach(p=>{
+      h+=`<div class="attr-partner-row good"><span class="attr-partner-icon">✅</span><span class="attr-partner-name">${p.pillar}</span><span class="attr-partner-reason">${p.reason}</span></div>`;
+    });
+    partners.bad.forEach(p=>{
+      h+=`<div class="attr-partner-row bad"><span class="attr-partner-icon">⚠️</span><span class="attr-partner-name">${p.pillar}</span><span class="attr-partner-reason">${p.reason}</span></div>`;
+    });
+  }
+  
+  // 시놉시스
+  if(synopsis){
+    h+=`<div class="attr-synopsis">${synopsis}</div>`;
+  }
+  
+  container.innerHTML=h;
+}
+
+function renderAttraction(d){
+  const sec=document.getElementById('attract-sec');
+  if(!sec)return;
+  const dayEl=d.p[1].g.e;
+  if(!dayEl){sec.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px;font-size:11px;">원국 데이터가 부족합니다.</div>';return;}
+  
+  const jong=calcJongGyeok(d);
+  let h='';
+  
+  if(jong.type==='dual'){
+    // 이중 프로필 — 병렬 표시
+    const jungCol=EC[dayEl]||'var(--fire)';
+    const jongCol=jong.jongEl?EC[jong.jongEl]:'var(--water)';
+    const jongKindName={'종재격':'욕망 순응','종살격':'권위 순응','종아격':'방출 순응'}[jong.jongKind]||jong.jongKind;
+    
+    h+=`<div style="text-align:center;margin:10px 0 4px;">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:10px;font-weight:700;color:${jungCol}">자아 ${jong.jungPct}%</span>
+        <div style="flex:0 0 120px;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;border:1px solid var(--bdr);">
+          <div style="width:${jong.jungPct}%;height:100%;background:linear-gradient(90deg,${jungCol},transparent);"></div>
+        </div>
+        <span style="font-size:10px;font-weight:700;color:${jongCol}">그림자 ${jong.jongPct}%</span>
+      </div>
+      <div style="font-size:8px;color:var(--dim);">${jongKindName} 경향 감지 — 이중 끌림 프로필</div>
+    </div>`;
+    
+    h+=`<div class="attr-dual">
+      <div class="attr-face face-jung">
+        <div class="attr-face-label jung">자 아</div>
+        <div class="attr-face-pct">"나는 나다"</div>
+        <div class="attr-face-desc">${d.p[1].g.n} 성좌가 저항하는 모드<br>결핍을 채우는 보완형 끌림</div>
+        <div id="attract-jung"></div>
+      </div>
+      <div class="attr-face face-jong">
+        <div class="attr-face-label jong">그 림 자</div>
+        <div class="attr-face-pct">"녹겠다"</div>
+        <div class="attr-face-desc">기세에 순응하는 모드<br>흐름을 강화하는 동류형 끌림</div>
+        <div id="attract-jong"></div>
+      </div>
+    </div>`;
+    
+    // 발현 차이 설명
+    h+=`<div style="margin-top:10px;padding:10px;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;">
+      <div style="font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:6px;">발현 차이</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:8px;line-height:1.5;">
+        <div style="color:${jungCol}">자아 활성 시:<br>· 주도적, 눈이 빛남<br>· 자기 정체성 또렷<br>· 상대의 결핍을 채워줌</div>
+        <div style="color:${jongCol}">그림자 활성 시:<br>· 경계가 녹음, 눈이 풀림<br>· 자아 경계 흐려짐<br>· 상대에게 흡수되는 쾌감</div>
+      </div>
+    </div>`;
+    
+    sec.innerHTML=h;
+    // 각 면 렌더
+    renderFaceColumn(document.getElementById('attract-jung'),d,'jung',jong);
+    renderFaceColumn(document.getElementById('attract-jong'),d,'jong',jong);
+    
+  } else {
+    // 단일 프로필
+    h+=`<div class="attr-single"><div id="attract-single"></div></div>`;
+    sec.innerHTML=h;
+    renderFaceColumn(document.getElementById('attract-single'),d,'jung',jong);
+  }
 }
 
 render(npc);
